@@ -1,6 +1,6 @@
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    detect_output_language, normalize_transcription_output, remove_filler_words,
+    OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1134,12 +1134,9 @@ impl TranscriptionManager {
         };
 
         let settings = get_settings(&self.app_handle);
-        // Streaming models do not receive a decode prompt, so custom words
-        // always go through the shared fuzzy post-correction path.
         let filtered = post_process_transcription_text(
             finalized.text,
             &settings,
-            false,
             &finalized.output_language,
             &finalized.supported_languages,
         );
@@ -1246,6 +1243,14 @@ impl TranscriptionManager {
         // with INVALID_ARG, so the whisper extension must be gated on the
         // arch, not on the feature (see #1601).
         let mut model_is_whisper = false;
+        // Whether the model accepts free-text recognition context (Qwen3-ASR,
+        // via the vendored transcribe.cpp patch). Custom words are passed as
+        // background vocabulary; fuzzy post-correction still runs since the
+        // bias is soft.
+        let mut model_takes_context = false;
+        // Whether the model supports decode-time keyword boosting (Cohere,
+        // Canary-Qwen via the vendored transcribe.cpp patch).
+        let mut model_takes_boost = false;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1287,6 +1292,8 @@ impl TranscriptionManager {
                 let caps = model.capabilities();
                 model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
+                model_takes_context = model.supports(Feature::Context);
+                model_takes_boost = model.supports(Feature::KeywordBoost);
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
@@ -1329,15 +1336,24 @@ impl TranscriptionManager {
                             task: run_plan.task,
                             language: run_plan.language,
                             target_language: run_plan.target_language,
+                            context: recognition_context(
+                                &settings.custom_words,
+                                model_takes_context,
+                            ),
+                            bias_phrases: boost_phrases(&settings.custom_words, model_takes_boost),
+                            // 0 = the per-family default calibrated in transcribe.cpp.
+                            bias_strength: 0.0,
                             family,
                             ..Default::default()
                         };
 
                         debug!(
-                            "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}",
+                            "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}, context={}, boost_phrases={}",
                             run_options.task,
                             run_options.language,
-                            run_options.family.is_some()
+                            run_options.family.is_some(),
+                            run_options.context.is_some(),
+                            run_options.bias_phrases.len()
                         );
 
                         session
@@ -1488,18 +1504,8 @@ impl TranscriptionManager {
             (text, output_language, model_languages)
         };
 
-        // Apply fuzzy word correction if custom words are configured — UNLESS the
-        // words were already handed to the model as an initial prompt (whisper
-        // family). We don't pass a prompt to non-whisper models (it requires the
-        // whisper-kind run extension), so they still get fuzzy correction here,
-        // same as the ONNX engines.
-        let filtered_result = post_process_transcription_text(
-            result,
-            &settings,
-            model_is_whisper,
-            &output_language,
-            &model_languages,
-        );
+        let filtered_result =
+            post_process_transcription_text(result, &settings, &output_language, &model_languages);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1766,23 +1772,42 @@ fn transcribe_cpp_run_plan(
     }
 }
 
+/// Phrases for decode-time keyword boosting on models that support it.
+fn boost_phrases(custom_words: &[String], model_takes_boost: bool) -> Vec<String> {
+    if !model_takes_boost {
+        return Vec::new();
+    }
+    custom_words
+        .iter()
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Recognition context for models that take free-text background (Qwen3-ASR),
+/// in the "Vocabulary: …" form Qwen documents for term biasing.
+fn recognition_context(custom_words: &[String], model_takes_context: bool) -> Option<String> {
+    if !model_takes_context {
+        return None;
+    }
+    let words: Vec<&str> = custom_words
+        .iter()
+        .map(|w| w.trim())
+        .filter(|w| !w.is_empty())
+        .collect();
+    (!words.is_empty()).then(|| format!("Vocabulary: {}", words.join(", ")))
+}
+
 fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
-    custom_words_already_prompted: bool,
     output_language: &OutputLanguageEvidence,
     supported_languages: &[String],
 ) -> String {
     fail_open_text_transform(raw, |raw| {
-        let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
-            apply_custom_words(
-                &raw,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
-        } else {
-            raw
-        };
+        // Custom words bias decoding natively per model (Whisper prompt,
+        // Qwen3-ASR context, keyword boosting); no fuzzy post-correction.
+        let corrected = raw;
 
         // Last-resort language evidence: confidence-gated detection from the
         // transcribed text itself, constrained to the model's languages. Only
@@ -2149,6 +2174,27 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn boost_phrases_only_for_boost_models() {
+        let words = vec![" kubectl ".to_string(), "".to_string(), "Handy".to_string()];
+        assert!(super::boost_phrases(&words, false).is_empty());
+        assert_eq!(
+            super::boost_phrases(&words, true),
+            vec!["kubectl".to_string(), "Handy".to_string()]
+        );
+    }
+
+    #[test]
+    fn recognition_context_only_for_context_models() {
+        let words = vec!["kubectl".to_string(), " ".to_string(), "Handy".to_string()];
+        assert_eq!(super::recognition_context(&words, false), None);
+        assert_eq!(
+            super::recognition_context(&words, true).as_deref(),
+            Some("Vocabulary: kubectl, Handy")
+        );
+        assert_eq!(super::recognition_context(&[], true), None);
+    }
     use super::*;
 
     fn languages(codes: &[&str]) -> Vec<String> {
@@ -2232,7 +2278,6 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro".to_string(),
             &settings,
-            false,
             &evidence,
             &supported,
         );
@@ -2274,7 +2319,6 @@ mod tests {
         let result = post_process_transcription_text(
             "um uhm ok".to_string(),
             &settings,
-            false,
             &evidence,
             &languages(&["en", "pt"]),
         );
@@ -2294,7 +2338,6 @@ mod tests {
             "um so the weather forecast said it would probably rain throughout the whole weekend"
                 .to_string(),
             &settings,
-            false,
             &OutputLanguageEvidence::Unknown,
             &languages(&["en", "pt", "es", "de"]),
         );
@@ -2315,7 +2358,6 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro na rua ontem de manhã quando fui ao mercado".to_string(),
             &settings,
-            false,
             &OutputLanguageEvidence::Unknown,
             &languages(&["en", "pt", "es", "de"]),
         );
@@ -2401,7 +2443,6 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro".to_string(),
             &settings,
-            false,
             &evidence,
             &supported,
         );

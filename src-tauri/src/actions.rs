@@ -7,7 +7,10 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, write_settings, AppSettings, CleanupLevel, OverlayStyle,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -115,11 +118,54 @@ where
     }
 }
 
+/// Whether every dictation gets the level-based AI cleanup.
+fn uses_level_cleanup(settings: &AppSettings) -> bool {
+    settings.post_process_enabled && settings.cleanup_level != CleanupLevel::None
+}
+
 fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool {
     style == OverlayStyle::Live && is_streaming
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+/// Which prompt drives an LLM pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CleanupRequest {
+    /// The prompt selected on the Post Processing page (post-process hotkey).
+    SelectedPrompt,
+    /// The built-in cleanup prompt for a level (every dictation).
+    Level(CleanupLevel),
+}
+
+/// Run the LLM cleanup and apply the output guard. Returns `None` (so the
+/// rule-cleaned text is used) when the model fails or its output is rejected.
+async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+    request: CleanupRequest,
+) -> Option<String> {
+    let output = run_post_process_llm(settings, transcription, request).await?;
+    let output = crate::cleanup::unwrap_output(&output);
+    let level = match request {
+        CleanupRequest::Level(level) => Some(level),
+        CleanupRequest::SelectedPrompt => None,
+    };
+    match crate::cleanup::accept_cleanup(transcription, &output, level) {
+        Ok(()) => Some(output),
+        Err(reason) => {
+            warn!(
+                "Discarding LLM cleanup ({reason}); using rule-cleaned text. Output was: '{}'",
+                utils::redact_text(&output)
+            );
+            None
+        }
+    }
+}
+
+async fn run_post_process_llm(
+    settings: &AppSettings,
+    transcription: &str,
+    request: CleanupRequest,
+) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
@@ -147,27 +193,40 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         return None;
     }
 
-    let selected_prompt_id = match &settings.post_process_selected_prompt_id {
-        Some(id) => id.clone(),
-        None => {
-            debug!("Post-processing skipped because no prompt is selected");
-            return None;
+    let (prompt, user_prefix) = match request {
+        CleanupRequest::Level(level) => match crate::cleanup::level_prompt(level) {
+            Some(prompt) => (prompt.to_string(), crate::cleanup::CLEANUP_USER_PREFIX),
+            None => return None,
+        },
+        CleanupRequest::SelectedPrompt => {
+            let selected_prompt_id = match &settings.post_process_selected_prompt_id {
+                Some(id) => id.clone(),
+                None => {
+                    debug!("Post-processing skipped because no prompt is selected");
+                    return None;
+                }
+            };
+            match settings
+                .post_process_prompts
+                .iter()
+                .find(|prompt| prompt.id == selected_prompt_id)
+            {
+                Some(prompt) => (prompt.prompt.clone(), ""),
+                None => {
+                    debug!(
+                        "Post-processing skipped because prompt '{}' was not found",
+                        selected_prompt_id
+                    );
+                    return None;
+                }
+            }
         }
     };
-
-    let prompt = match settings
-        .post_process_prompts
-        .iter()
-        .find(|prompt| prompt.id == selected_prompt_id)
-    {
-        Some(prompt) => prompt.prompt.clone(),
-        None => {
-            debug!(
-                "Post-processing skipped because prompt '{}' was not found",
-                selected_prompt_id
-            );
-            return None;
-        }
+    // The app name only helps free-form custom prompts; the level prompts
+    // are tuned without it and styling is applied deterministically later.
+    let app_name = match request {
+        CleanupRequest::SelectedPrompt => crate::app_context::current().app_name,
+        CleanupRequest::Level(_) => None,
     };
 
     if prompt.trim().is_empty() {
@@ -194,8 +253,19 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
-        let user_content = transcription.to_string();
+        let system_prompt = crate::cleanup::add_context(
+            &build_system_prompt(&prompt),
+            settings,
+            app_name.as_deref(),
+        );
+        let user_content = if prompt.contains("${output}") {
+            transcription.to_string()
+        } else {
+            format!(
+                "{user_prefix}{}",
+                crate::cleanup::wrap_transcript(transcription)
+            )
+        };
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
         if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
@@ -308,8 +378,20 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         }
     }
 
-    // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
+    // Legacy mode: Replace ${output} variable in the prompt with the actual text.
+    // Prompts written as pure system prompts (no placeholder) get the wrapped
+    // transcript appended instead.
+    let prompt = crate::cleanup::add_context(&prompt, settings, app_name.as_deref());
+    let processed_prompt = if prompt.contains("${output}") {
+        prompt.replace("${output}", transcription)
+    } else {
+        format!(
+            "{}\n\n{}{}",
+            prompt,
+            user_prefix,
+            crate::cleanup::wrap_transcript(transcription)
+        )
+    };
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
@@ -397,6 +479,10 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    /// Key a voice trigger asked for after the paste ("… press enter").
+    pub submit_key: Option<crate::settings::AutoSubmitKey>,
+    /// App to bring to the front instead of pasting ("go to Claude").
+    pub switch_to_app: Option<String>,
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -440,22 +526,58 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
-    if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+    // Scratchpad rules run before the LLM so voice commands are stripped and
+    // replacements applied deterministically; the model never sees them.
+    let scratchpad = crate::scratchpad::run_rules(&final_text, &settings);
+    final_text = scratchpad.text;
+
+    // AI cleanup: the post-process hotkey uses the selected prompt; otherwise
+    // the cleanup level (when Post Processing is on) applies to every dictation.
+    let request = if post_process {
+        Some(CleanupRequest::SelectedPrompt)
+    } else if uses_level_cleanup(&settings) {
+        Some(CleanupRequest::Level(settings.cleanup_level))
+    } else {
+        None
+    };
+    if let (Some(request), None) = (request, &scratchpad.switch_to_app) {
+        if let Some(processed_text) =
+            post_process_transcription(&settings, &final_text, request).await
+        {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
-            if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                if let Some(prompt) = settings
-                    .post_process_prompts
-                    .iter()
-                    .find(|prompt| &prompt.id == prompt_id)
-                {
-                    post_process_prompt = Some(prompt.prompt.clone());
+            post_process_prompt = match request {
+                CleanupRequest::Level(level) => {
+                    crate::cleanup::level_prompt(level).map(str::to_string)
                 }
-            }
+                CleanupRequest::SelectedPrompt => settings
+                    .post_process_selected_prompt_id
+                    .as_ref()
+                    .and_then(|id| settings.post_process_prompts.iter().find(|p| &p.id == id))
+                    .map(|p| p.prompt.clone()),
+            };
         }
     } else if final_text != transcription {
+        post_processed_text = Some(final_text.clone());
+    }
+    // Deterministic styling for the destination: list layout, email layout
+    // and the category's formality. Last, so the LLM can't undo it.
+    if scratchpad.switch_to_app.is_none() {
+        let context = crate::app_context::current();
+        let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
+        final_text = crate::style::apply(
+            &final_text,
+            category,
+            settings.category_styles.get(category),
+            &settings.custom_words,
+        );
+        let mut updated = get_settings(app);
+        if crate::app_context::remember_recent(&mut updated, &context) {
+            write_settings(app, updated);
+        }
+    }
+    if post_processed_text.is_none() && final_text != transcription {
         post_processed_text = Some(final_text.clone());
     }
 
@@ -463,6 +585,8 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        submit_key: scratchpad.submit_key,
+        switch_to_app: scratchpad.switch_to_app,
     }
 }
 
@@ -485,6 +609,8 @@ impl ShortcutAction for TranscribeAction {
             }
         });
         let kickoff_elapsed = kickoff_started.elapsed();
+
+        crate::app_context::capture();
 
         let binding_id = binding_id.to_string();
         let tray_started = Instant::now();
@@ -768,7 +894,7 @@ impl ShortcutAction for TranscribeAction {
                                 utils::redact_text(&transcription)
                             );
 
-                            if post_process {
+                            if post_process || uses_level_cleanup(&get_settings(&ah)) {
                                 if use_streaming_overlay {
                                     tm.emit_stream_working(StreamWorkKind::Polishing);
                                 } else {
@@ -807,13 +933,23 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
 
-                            if processed.final_text.is_empty() {
+                            if let Some(app_path) = processed.switch_to_app {
+                                debug!("Voice control: switching to {app_path}");
+                                if let Err(e) = crate::app_switcher::activate(&app_path) {
+                                    error!("App switch failed: {e}");
+                                }
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                            } else if processed.final_text.is_empty()
+                                && processed.submit_key.is_none()
+                            {
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
+                                let submit_key = processed.submit_key;
                                 let rm_for_paste = Arc::clone(&rm);
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
@@ -823,7 +959,7 @@ impl ShortcutAction for TranscribeAction {
                                         return;
                                     }
 
-                                    match utils::paste(final_text, ah_clone.clone()) {
+                                    match utils::paste(final_text, ah_clone.clone(), submit_key) {
                                         Ok(()) => debug!(
                                             "Text pasted successfully in {:?}",
                                             paste_time.elapsed()

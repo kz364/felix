@@ -119,9 +119,28 @@ static ROOT: Lazy<CatalogRoot> = Lazy::new(|| {
         .expect("bundled catalog.json is valid JSON matching the catalog schema")
 });
 
-/// The bundled catalog, parsed once and normalised into descriptors.
-pub static CATALOG: Lazy<Vec<ModelDescriptor>> =
-    Lazy::new(|| ROOT.models.iter().map(ModelDescriptor::from).collect());
+/// Models this fork offers: only those whose custom-vocabulary biasing runs
+/// natively in the model — Whisper's decoder prompt, Qwen3-ASR's trained
+/// recognition context, and decode-time keyword boosting for Cohere and
+/// Canary-Qwen (vendored transcribe.cpp patches). Already-downloaded files of
+/// other models still resolve through [`file_in_catalog`].
+pub const SUPPORTED_MODEL_IDS: &[&str] = &[
+    "handy-computer/cohere-transcribe-03-2026-gguf",
+    "handy-computer/Qwen3-ASR-1.7B-gguf",
+    "handy-computer/Qwen3-ASR-0.6B-gguf",
+    "handy-computer/canary-qwen-2.5b-gguf",
+    "handy-computer/whisper-large-v3-turbo-gguf",
+];
+
+/// The bundled catalog, parsed once, narrowed to [`SUPPORTED_MODEL_IDS`] and
+/// normalised into descriptors.
+pub static CATALOG: Lazy<Vec<ModelDescriptor>> = Lazy::new(|| {
+    ROOT.models
+        .iter()
+        .filter(|m| SUPPORTED_MODEL_IDS.contains(&m.id.as_str()))
+        .map(ModelDescriptor::from)
+        .collect()
+});
 
 /// A mirror copy of a catalog model's default file, with the expected content
 /// hash for end-to-end verification. Mirrors are untrusted bit-pipes: the
@@ -216,6 +235,17 @@ mod tests {
     use super::*;
     use crate::managers::model_capabilities::KNOWN_ARCHES;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn supported_models_are_all_in_the_bundled_catalog() {
+        for id in SUPPORTED_MODEL_IDS {
+            assert!(
+                ROOT.models.iter().any(|m| m.id == *id),
+                "{id} missing from catalog.json"
+            );
+        }
+        assert_eq!(CATALOG.len(), SUPPORTED_MODEL_IDS.len());
+    }
 
     #[test]
     fn catalog_parses_and_is_nonempty() {

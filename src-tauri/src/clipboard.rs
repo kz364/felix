@@ -771,8 +771,24 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
-pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
-    let settings = get_settings(&app_handle);
+/// Paste `text` into the focused app. `submit_override` comes from a scratchpad
+/// voice trigger ("… press enter") and forces a submit key for this paste only,
+/// on top of the persistent auto-submit setting. Empty text with an override
+/// just presses the key.
+pub fn paste(
+    text: String,
+    app_handle: AppHandle,
+    submit_override: Option<AutoSubmitKey>,
+) -> Result<(), String> {
+    let mut settings = get_settings(&app_handle);
+    if let Some(key) = submit_override {
+        settings.auto_submit = true;
+        settings.auto_submit_key = key;
+        if text.is_empty() {
+            info!("Voice trigger with no text: sending {:?} only", key);
+            return with_enigo(&app_handle, |enigo| send_return_key(enigo, key));
+        }
+    }
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
     let paste_delay_after_ms = settings.paste_delay_after_ms;

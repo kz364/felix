@@ -16,7 +16,10 @@
     "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "voiceControl": "Voice Control",
+    "vocabulary": "Vocabulary",
+    "style": "Style"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -256,6 +259,14 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
+      },
+      "autoGain": {
+        "label": "Automatic Gain",
+        "description": "Boosts quiet speech (whispering, clip-on or distant mics) before silence detection, up to +30 dB, without lifting room noise."
+      },
+      "inputGain": {
+        "title": "Input Gain",
+        "description": "Fixed boost or cut applied to the microphone before transcription."
       }
     },
     "advanced": {
@@ -377,7 +388,7 @@
       },
       "customWords": {
         "title": "Custom Words",
-        "description": "Help supported models recognize names and specialized terms. Fuzzy correction is currently limited to words using A–Z and numbers.",
+        "description": "Names and jargon the speech model should favor while it transcribes (Whisper's prompt, Qwen3-ASR's context, or tuned keyword boosting for Cohere and Canary-Qwen). Technical terms with digits, dashes or several capitals, like GLM-5.3, are also rewritten to your exact spelling when they come out as \"GLM 5.3\" or \"G L M five point three\".",
         "placeholder": "Add a word",
         "add": "Add",
         "remove": "Remove {{word}}",
@@ -398,6 +409,16 @@
       "fillerWordRemoval": {
         "title": "Remove Filler Words",
         "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+      },
+      "textReplacements": {
+        "title": "Replacements",
+        "description": "Rules applied to the raw transcript before voice commands and AI cleanup. Plain text matches whole words, ignoring case (\"cube cuddle\" → \"kubectl\"). Wrap a rule in slashes for a regex: /\\bcasp[ae]r\\b/ → Kaspar; use $1 for capture groups.",
+        "fromPlaceholder": "heard",
+        "toPlaceholder": "replace with",
+        "add": "Add",
+        "remove": "Remove replacement {{from}}",
+        "duplicate": "There is already a replacement for \"{{from}}\"",
+        "item": "{{from}} → {{to}}"
       }
     },
     "postProcessing": {
@@ -452,6 +473,28 @@
         "cancel": "Cancel",
         "selectToEdit": "Select a prompt above to view and edit its details.",
         "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
+      },
+      "cleanup": {
+        "title": "AI Cleanup",
+        "description": "Applied to every dictation by the AI provider below (on-device Apple Intelligence by default). Runs after your vocabulary rules and voice commands, and before the style for the app you're in.",
+        "intro": "How much the AI edits what you said. If it would change the meaning, drop details or invent numbers, the edit is discarded and the rules-only text is pasted instead.",
+        "levels": {
+          "none": {
+            "title": "None",
+            "description": "Transcribes what you said, with only your vocabulary and correction rules applied.",
+            "example": "yeah so I was thinking we could we could grab dinner at like seven no actually eight since Sam's running late"
+          },
+          "light": {
+            "title": "Light",
+            "description": "Removes fillers and repeats, applies self-corrections, fixes punctuation and numbers. Keeps your wording.",
+            "example": "Yeah, so I was thinking we could grab dinner at 8 since Sam's running late."
+          },
+          "medium": {
+            "title": "Medium",
+            "description": "Light, plus tightens phrasing for clarity while keeping every detail.",
+            "example": "We could grab dinner at 8, since Sam's running late."
+          }
+        }
       }
     },
     "history": {
@@ -543,7 +586,7 @@
       },
       "postProcessingToggle": {
         "label": "Post Processing",
-        "description": "Enable AI-powered text refinement after transcription"
+        "description": "Use an AI model to clean up dictations (see AI Cleanup below) and enable the post-processing shortcut with custom prompts."
       },
       "muteWhileRecording": {
         "label": "Mute While Recording",
@@ -635,6 +678,115 @@
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
+      }
+    },
+    "voiceControl": {
+      "toggle": {
+        "label": "Voice Control Mode",
+        "description": "Spoken commands in dictation: trigger phrases that press keys, \"new line\" / \"new paragraph\", spoken flags like \"dash dash force\", and switching apps by voice."
+      },
+      "triggers": {
+        "groupTitle": "Trigger Phrases",
+        "groupDescription": "End a dictation with a trigger phrase to press a key after pasting. Say \"new line\" or \"new paragraph\" anywhere to break lines. Matching ignores capitalization and punctuation, and runs before cleanup.",
+        "title": "Trigger Phrases",
+        "description": "Phrases that, said at the very end of a dictation, are removed and replaced by a key press after the paste.",
+        "placeholder": "press enter",
+        "add": "Add",
+        "remove": "Remove trigger {{phrase}}",
+        "duplicate": "\"{{phrase}}\" is already a trigger",
+        "item": "\"{{phrase}}\" → {{key}}"
+      },
+      "appSwitcher": {
+        "groupTitle": "App Switcher",
+        "groupDescription": "Say \"go to\", \"switch to\" or \"open\" followed by an app as the whole dictation to bring that app to the front instead of typing.",
+        "toggleLabel": "Switch Apps by Voice",
+        "toggleDescription": "When a dictation is only \"go to <app>\", open that app instead of pasting the text. Anything that doesn't match an app is pasted as usual.",
+        "anyInstalledLabel": "Match Any Installed App",
+        "anyInstalledDescription": "Recognize apps in /Applications by name (\"go to Safari\"), in addition to the names you add below. Close mishearings like \"cloud\" for Claude are accepted.",
+        "aliasesTitle": "App Names",
+        "aliasesDescription": "Your own spoken names for apps, e.g. \"chat\" → Claude. These are checked before installed app names.",
+        "phrasePlaceholder": "chat",
+        "appPlaceholder": "Choose app…",
+        "add": "Add",
+        "remove": "Remove app name {{phrase}}",
+        "duplicate": "\"{{phrase}}\" is already an app name",
+        "item": "\"{{phrase}}\" → {{app}}"
+      }
+    },
+    "vocabulary": {
+      "biasing": {
+        "title": "Biasing",
+        "description": "Stage 1: words the speech model should favor while transcribing. Technical terms are also snapped to your exact spelling afterwards."
+      },
+      "rules": {
+        "title": "Correction Rules",
+        "description": "Stage 2, on the raw transcript: fixed rewrites for anything the model still gets wrong. Runs before voice commands and AI cleanup."
+      },
+      "teach": {
+        "title": "Teach a Word",
+        "description": "Say a vocabulary word a few times, spoken and whispered, to see what your current model hears. Mishearings your rules don't already fix can be added as a correction rule.",
+        "pickWord": "Choose a word…",
+        "start": "Teach",
+        "dialogTitle": "Teach \"{{word}}\"",
+        "dialogDescription": "Each take goes through the same path as a real dictation: your current model with biasing, then your correction rules.",
+        "close": "Close",
+        "takeLabel": "Take {{n}} of {{total}}",
+        "sayNormally": "Say \"{{word}}\" at your normal volume.",
+        "sayWhispered": "Whisper \"{{word}}\".",
+        "record": "Record",
+        "stop": "Stop",
+        "transcribing": "Transcribing…",
+        "spokenTag": "Spoken",
+        "whisperedTag": "Whispered",
+        "nothing": "(nothing heard)",
+        "allRecognized": "\"{{word}}\" came through correctly every time. No rule needed.",
+        "suggestRule": "Rewrite these mishearings to \"{{word}}\":",
+        "variantItem": "\"{{variant}}\" → {{word}}",
+        "commonWord": "common word: would also rewrite normal speech",
+        "addRule": "Add Correction Rule",
+        "again": "Try Again",
+        "done": "Done",
+        "ruleAdded": "Added a correction rule for \"{{word}}\""
+      }
+    },
+    "style": {
+      "categories": {
+        "personal": "Personal messages",
+        "work": "Work messages",
+        "email": "Email",
+        "other": "Everything else"
+      },
+      "formality": {
+        "title": "Formality",
+        "description": "Capitalization and punctuation for each kind of app. Applied last, after AI cleanup, so it's always honored.",
+        "levels": {
+          "formal": "Formal",
+          "casual": "Casual",
+          "very_casual": "Very casual"
+        },
+        "example": {
+          "formal": "Hey, are you free for lunch tomorrow? Let's do 12 if that works for you.",
+          "casual": "Hey are you free for lunch tomorrow? Let's do 12 if that works for you",
+          "very_casual": "hey are you free for lunch tomorrow? let's do 12 if that works for you"
+        }
+      },
+      "apps": {
+        "title": "Apps & Websites",
+        "description": "Which category each app or website belongs to. Websites are detected in Safari, Chrome, Arc, Brave, Edge and Vivaldi (macOS asks once per browser). Email also gets greeting and sign-off on their own lines.",
+        "recentTitle": "Recently used, not assigned",
+        "clearRecent": "Clear",
+        "kind": {
+          "app": "App",
+          "website": "Website"
+        },
+        "addApp": "Add App",
+        "addAppDescription": "Pick an installed app, then set its category in the list below.",
+        "pickApp": "Choose an app…",
+        "addSite": "Add Website",
+        "addSiteDescription": "A domain like mail.google.com. Subdomains match too.",
+        "invalidSite": "Enter a domain like example.com",
+        "add": "Add",
+        "remove": "Remove {{name}}"
       }
     }
   },

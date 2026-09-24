@@ -14,7 +14,7 @@ use cpal::{
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler},
+    audio::{AudioVisualiser, FrameResampler, GainConfig, InputGain},
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -92,6 +92,8 @@ pub struct AudioRecorder {
     vad: Option<VadConfig>,
     level_cb: Option<LevelCallback>,
     audio_cb: Option<AudioFrameCallback>,
+    /// Pre-VAD input gain (fixed + automatic). None = pass audio through.
+    gain: Option<Arc<GainConfig>>,
     /// Which input channel to use. None = average all (original behavior).
     selected_channel: Option<usize>,
     /// Preferred stream config cached per device name. The two HAL property
@@ -114,6 +116,7 @@ impl AudioRecorder {
             vad: None,
             level_cb: None,
             audio_cb: None,
+            gain: None,
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
@@ -160,6 +163,14 @@ impl AudioRecorder {
         self
     }
 
+    /// Apply fixed and automatic input gain to every 16 kHz frame before VAD,
+    /// so quiet speech (whispering, distant or low-gain mics) isn't discarded
+    /// as silence. The config is shared, so setting changes apply live.
+    pub fn with_gain(mut self, config: Arc<GainConfig>) -> Self {
+        self.gain = Some(config);
+        self
+    }
+
     pub fn with_selected_channel(mut self, channel: Option<u16>) -> Self {
         self.set_selected_channel(channel);
         self
@@ -197,6 +208,7 @@ impl AudioRecorder {
         let level_cb = self.level_cb.clone();
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
+        let gain = self.gain.clone();
         let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
         let stream_error = Arc::clone(&self.stream_error);
@@ -326,6 +338,7 @@ impl AudioRecorder {
                         vad,
                         level_cb,
                         audio_cb,
+                        gain,
                         stream_running_at,
                     );
                     run_consumer(
@@ -628,6 +641,13 @@ pub fn is_no_input_device_error(error_message: &str) -> bool {
             && normalized.contains("coreaudio"))
 }
 
+fn apply_gain<'a>(gain: &'a mut Option<InputGain>, frame: &'a [f32]) -> &'a [f32] {
+    match gain {
+        Some(gain) => gain.process(frame),
+        None => frame,
+    }
+}
+
 /// Route one 16 kHz frame through VAD to recording and live outputs.
 /// Kept free-standing to permit disjoint borrows around resampler callbacks.
 fn handle_frame(
@@ -704,6 +724,7 @@ struct CaptureProcessor {
     vad: Option<VadConfig>,
     level_cb: Option<LevelCallback>,
     audio_cb: Option<AudioFrameCallback>,
+    gain: Option<InputGain>,
     stream_running_at: Instant,
     visualizer: AudioVisualiser,
     frame_resampler: FrameResampler,
@@ -725,6 +746,7 @@ impl CaptureProcessor {
         vad: Option<VadConfig>,
         level_cb: Option<LevelCallback>,
         audio_cb: Option<AudioFrameCallback>,
+        gain: Option<Arc<GainConfig>>,
         stream_running_at: Instant,
     ) -> Self {
         // Resample into frames sized for the active VAD backend (30 ms when
@@ -757,6 +779,7 @@ impl CaptureProcessor {
             vad,
             level_cb,
             audio_cb,
+            gain: gain.map(InputGain::new),
             stream_running_at,
             visualizer,
             frame_resampler,
@@ -830,7 +853,7 @@ impl CaptureProcessor {
         let vad_policy = self.vad_policy;
         self.frame_resampler.push(raw, |frame: &[f32]| {
             handle_frame(
-                frame,
+                apply_gain(&mut self.gain, frame),
                 vad_policy,
                 &self.vad,
                 &self.audio_cb,
@@ -873,7 +896,7 @@ impl CaptureProcessor {
         let vad_policy = self.vad_policy;
         self.frame_resampler.finish(|frame: &[f32]| {
             handle_frame(
-                frame,
+                apply_gain(&mut self.gain, frame),
                 vad_policy,
                 &self.vad,
                 &self.audio_cb,

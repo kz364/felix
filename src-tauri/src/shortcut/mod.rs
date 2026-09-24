@@ -21,9 +21,10 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
-    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
-    OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding, SoundTheme,
-    Theme, TypingTool, VadBackend, APPLE_INTELLIGENCE_PROVIDER_ID,
+    self, get_settings, AppAlias, AppRule, AppRuleKind, AutoSubmitKey, CategoryStyles,
+    CleanupLevel, ClipboardHandling, KeyboardImplementation, LLMPrompt, OverlayPosition,
+    OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding, SoundTheme, TextReplacement,
+    Theme, TypingTool, VadBackend, VoiceTrigger, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -1281,6 +1282,186 @@ pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result
 pub fn change_vad_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.vad_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+fn apply_gain_settings(app: &AppHandle, settings: &settings::AppSettings) {
+    app.state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+        .update_gain(settings.input_gain_db, settings.auto_gain_enabled);
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_input_gain_setting(app: AppHandle, gain_db: f32) -> Result<(), String> {
+    if !gain_db.is_finite() {
+        return Err("Gain must be a finite number".to_string());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.input_gain_db = gain_db.clamp(-20.0, 30.0);
+    apply_gain_settings(&app, &settings);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_gain_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.auto_gain_enabled = enabled;
+    apply_gain_settings(&app, &settings);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_voice_control_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.voice_control_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_cleanup_level_setting(app: AppHandle, level: CleanupLevel) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.cleanup_level = level;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_category_styles_setting(
+    app: AppHandle,
+    styles: CategoryStyles,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.category_styles = styles;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Replace the app/website → category assignments. Newly assigned entries
+/// drop out of the "recently used" list.
+#[tauri::command]
+#[specta::specta]
+pub fn update_app_rules(app: AppHandle, rules: Vec<AppRule>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let mut seen = std::collections::HashSet::new();
+    settings.app_rules = rules
+        .into_iter()
+        .map(|mut r| {
+            r.key = r.key.trim().to_string();
+            if r.kind == AppRuleKind::Website {
+                r.key =
+                    crate::app_context::url_host(&r.key).unwrap_or_else(|| r.key.to_lowercase());
+            }
+            r.label = if r.label.trim().is_empty() {
+                r.key.clone()
+            } else {
+                r.label.trim().to_string()
+            };
+            r
+        })
+        .filter(|r| !r.key.is_empty() && seen.insert((r.kind, r.key.clone())))
+        .collect();
+    let rules = settings.app_rules.clone();
+    settings.recent_contexts.retain(|recent| {
+        !rules
+            .iter()
+            .any(|r| r.kind == recent.kind && r.key == recent.key)
+    });
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_recent_contexts(app: AppHandle) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.recent_contexts.clear();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_app_switch_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.app_switch_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_app_switch_any_installed_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.app_switch_any_installed = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_app_aliases(app: AppHandle, aliases: Vec<AppAlias>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.app_aliases = aliases
+        .into_iter()
+        .map(|a| AppAlias {
+            phrase: a.phrase.trim().to_string(),
+            app_path: a.app_path.trim().to_string(),
+        })
+        .filter(|a| !a.phrase.is_empty() && !a.app_path.is_empty())
+        .collect();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Apps the app switcher can target, for the alias picker.
+#[tauri::command]
+#[specta::specta]
+pub fn list_installed_apps() -> Vec<crate::app_switcher::InstalledApp> {
+    crate::app_switcher::installed_apps()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_voice_triggers(app: AppHandle, triggers: Vec<VoiceTrigger>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.voice_triggers = triggers
+        .into_iter()
+        .map(|t| VoiceTrigger {
+            phrase: t.phrase.trim().to_string(),
+            key: t.key,
+        })
+        .filter(|t| !t.phrase.is_empty())
+        .collect();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_text_replacements(
+    app: AppHandle,
+    replacements: Vec<TextReplacement>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.text_replacements = replacements
+        .into_iter()
+        .map(|r| TextReplacement {
+            from: r.from.trim().to_string(),
+            to: r.to.trim().to_string(),
+        })
+        .filter(|r| !r.from.is_empty())
+        .collect();
     settings::write_settings(&app, settings);
     Ok(())
 }

@@ -21,6 +21,8 @@ import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
+import { PostProcessingToggle } from "../PostProcessingToggle";
+import { CleanupLevelPicker } from "./CleanupLevelPicker";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
   const { t } = useTranslation();
@@ -426,9 +428,22 @@ PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
 export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
+  const enabled = getSetting("post_process_enabled") || false;
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
+      <SettingsGroup>
+        <PostProcessingToggle descriptionMode="inline" grouped={true} />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("settings.postProcessing.cleanup.title")}
+        description={t("settings.postProcessing.cleanup.description")}
+      >
+        <CleanupLevelPicker disabled={!enabled} />
+      </SettingsGroup>
+
       <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
         <ShortcutInput
           shortcutId="transcribe_with_post_process"

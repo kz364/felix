@@ -2,12 +2,18 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AppAlias,
+  AppRule,
+  CategoryStyles,
+  CleanupLevel,
   AppSettings as Settings,
   AudioDevice,
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   ShortcutActivation,
+  TextReplacement,
   VadBackend,
+  VoiceTrigger,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
@@ -194,6 +200,27 @@ const settingUpdaters: {
     commands.changeTranscribeGpuDevice(value as string | null),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
+  input_gain_db: (value) => commands.changeInputGainSetting(value as number),
+  auto_gain_enabled: (value) =>
+    commands.changeAutoGainSetting(value as boolean),
+  voice_control_enabled: (value) =>
+    commands.changeVoiceControlEnabledSetting(value as boolean),
+  app_switch_enabled: (value) =>
+    commands.changeAppSwitchEnabledSetting(value as boolean),
+  app_switch_any_installed: (value) =>
+    commands.changeAppSwitchAnyInstalledSetting(value as boolean),
+  app_aliases: (value) => commands.updateAppAliases(value as AppAlias[]),
+  cleanup_level: (value) =>
+    commands.changeCleanupLevelSetting(value as CleanupLevel),
+  category_styles: (value) =>
+    commands.changeCategoryStylesSetting(value as CategoryStyles),
+  app_rules: (value) => commands.updateAppRules(value as AppRule[]),
+  // Only clearing is supported from the UI; the backend fills this list.
+  recent_contexts: () => commands.clearRecentContexts(),
+  voice_triggers: (value) =>
+    commands.updateVoiceTriggers(value as VoiceTrigger[]),
+  text_replacements: (value) =>
+    commands.updateTextReplacements(value as TextReplacement[]),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

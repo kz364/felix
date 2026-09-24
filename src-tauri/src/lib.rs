@@ -1,10 +1,13 @@
 mod actions;
+mod app_context;
+mod app_switcher;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
 mod catalog;
+mod cleanup;
 pub mod cli;
 mod clipboard;
 mod commands;
@@ -16,14 +19,18 @@ mod memory;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+mod scratchpad;
 mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod style;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
 mod utils;
+mod vocab_teach;
+mod vocabulary;
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -687,6 +694,22 @@ pub fn run(cli_args: CliArgs) {
             shortcut::delete_post_process_prompt,
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
+            vocab_teach::teach_start_recording,
+            vocab_teach::teach_stop_recording,
+            vocab_teach::teach_cancel_recording,
+            shortcut::change_input_gain_setting,
+            shortcut::change_auto_gain_setting,
+            shortcut::change_voice_control_enabled_setting,
+            shortcut::change_cleanup_level_setting,
+            shortcut::change_category_styles_setting,
+            shortcut::update_app_rules,
+            shortcut::clear_recent_contexts,
+            shortcut::change_app_switch_enabled_setting,
+            shortcut::change_app_switch_any_installed_setting,
+            shortcut::update_app_aliases,
+            shortcut::list_installed_apps,
+            shortcut::update_voice_triggers,
+            shortcut::update_text_replacements,
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,

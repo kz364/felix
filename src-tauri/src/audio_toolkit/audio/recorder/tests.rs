@@ -58,6 +58,7 @@ fn resampler_frame_size_follows_the_vad_backend() {
         Some(Arc::new(move |frame: &[f32]| {
             observed.lock().unwrap().push(frame.len())
         })),
+        None,
         Instant::now(),
     );
 
@@ -72,7 +73,7 @@ fn resampler_frame_size_follows_the_vad_backend() {
 
 #[test]
 fn idle_chunks_are_discarded_without_reaching_the_recording() {
-    let mut processor = CaptureProcessor::new(16_000, None, None, None, Instant::now());
+    let mut processor = CaptureProcessor::new(16_000, None, None, None, None, Instant::now());
     processor.process_raw_chunk(&[1.0; 480], ChunkDisposition::Discard);
     assert!(processor.finish_recording().is_empty());
 }
@@ -84,7 +85,7 @@ fn shutdown_is_processed_without_audio_samples() {
     let (done_tx, done_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
         run_consumer(
-            CaptureProcessor::new(48_000, None, None, None, Instant::now()),
+            CaptureProcessor::new(48_000, None, None, None, None, Instant::now()),
             consumer,
             cmd_rx,
             Arc::new(CaptureTransportState::default()),
@@ -248,6 +249,7 @@ fn repeated_start_stop_cycles_resume_capture_without_leaking_samples() {
             Some(Arc::new(move |frame: &[f32]| {
                 streamed_cb.lock().unwrap().extend_from_slice(frame)
             })),
+            None,
             Instant::now(),
         );
         run_consumer(
@@ -356,7 +358,7 @@ fn missing_callback_at_stop_marks_stream_for_rebuild_and_returns_samples() {
     let worker_transport = Arc::clone(&transport);
     let worker = thread::spawn(move || {
         run_consumer(
-            CaptureProcessor::new(16_000, None, None, None, Instant::now()),
+            CaptureProcessor::new(16_000, None, None, None, None, Instant::now()),
             consumer,
             cmd_rx,
             worker_transport,

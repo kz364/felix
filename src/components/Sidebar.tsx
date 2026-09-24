@@ -1,6 +1,16 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
+import {
+  AudioLines,
+  BookA,
+  Palette,
+  Cog,
+  FlaskConical,
+  History,
+  Info,
+  Sparkles,
+  Cpu,
+} from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
@@ -12,6 +22,9 @@ import {
   AboutSettings,
   PostProcessingSettings,
   ModelsSettings,
+  VoiceControlSettings,
+  VocabularySettings,
+  StyleSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -50,6 +63,18 @@ export const SECTIONS_CONFIG = {
     component: ModelsSettings,
     enabled: () => true,
   },
+  style: {
+    labelKey: "sidebar.style",
+    icon: Palette,
+    component: StyleSettings,
+    enabled: () => true,
+  },
+  vocabulary: {
+    labelKey: "sidebar.vocabulary",
+    icon: BookA,
+    component: VocabularySettings,
+    enabled: () => true,
+  },
   advanced: {
     labelKey: "sidebar.advanced",
     icon: Cog,
@@ -60,7 +85,13 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.postProcessing",
     icon: Sparkles,
     component: PostProcessingSettings,
-    enabled: (settings) => settings?.post_process_enabled ?? false,
+    enabled: () => true,
+  },
+  voicecontrol: {
+    labelKey: "sidebar.voiceControl",
+    icon: AudioLines,
+    component: VoiceControlSettings,
+    enabled: () => true,
   },
   debug: {
     labelKey: "sidebar.debug",

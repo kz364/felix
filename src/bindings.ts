@@ -312,6 +312,131 @@ async updateCustomWords(words: string[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async teachStartRecording() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("teach_start_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async teachStopRecording(word: string) : Promise<Result<TeachTake, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("teach_stop_recording", { word }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async teachCancelRecording() : Promise<void> {
+    await TAURI_INVOKE("teach_cancel_recording");
+},
+async changeInputGainSetting(gainDb: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_input_gain_setting", { gainDb }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAutoGainSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_gain_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeVoiceControlEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_control_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCleanupLevelSetting(level: CleanupLevel) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_cleanup_level_setting", { level }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCategoryStylesSetting(styles: CategoryStyles) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_category_styles_setting", { styles }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Replace the app/website → category assignments. Newly assigned entries
+ * drop out of the "recently used" list.
+ */
+async updateAppRules(rules: AppRule[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_app_rules", { rules }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearRecentContexts() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_recent_contexts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAppSwitchEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_app_switch_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAppSwitchAnyInstalledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_app_switch_any_installed_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateAppAliases(aliases: AppAlias[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_app_aliases", { aliases }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Apps the app switcher can target, for the alias picker.
+ */
+async listInstalledApps() : Promise<InstalledApp[]> {
+    return await TAURI_INVOKE("list_installed_apps");
+},
+async updateVoiceTriggers(triggers: VoiceTrigger[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_voice_triggers", { triggers }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateTextReplacements(replacements: TextReplacement[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_text_replacements", { replacements }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Temporarily unregister all bindings while the user is recording a
  * shortcut in the UI. This avoids firing actions while keys are recorded.
@@ -943,6 +1068,36 @@ streamTextEvent: "stream-text-event"
 /** user-defined types **/
 
 /**
+ * A spoken name for an app the app switcher can bring to the front
+ * ("chat" → /Applications/Claude.app).
+ */
+export type AppAlias = { phrase: string; app_path: string }
+/**
+ * Destination category of the app or website being dictated into.
+ */
+export type AppCategory = "personal" | "work" | "email" | "other"
+/**
+ * Assigns an app or website to a category.
+ */
+export type AppRule = { kind: AppRuleKind; 
+/**
+ * Bundle identifier ("com.tinyspeck.slackmacgap") or domain ("slack.com").
+ */
+key: string; 
+/**
+ * Display name.
+ */
+label: string; category: AppCategory }
+export type AppRuleKind = 
+/**
+ * Matched by bundle identifier.
+ */
+"app" | 
+/**
+ * Matched by website domain (and its subdomains) in a supported browser.
+ */
+"website"
+/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -1004,11 +1159,66 @@ vad_backend?: VadBackend;
  * not gated on this — that follows model capability. Migrated from the old
  * `overlay_position` (position `none` → style `None`).
  */
-overlay_style?: OverlayStyle }
+overlay_style?: OverlayStyle; 
+/**
+ * Fixed pre-VAD input gain in dB (-20..=30).
+ */
+input_gain_db?: number; 
+/**
+ * Automatic gain control ahead of VAD for quiet speech and weak mics.
+ */
+auto_gain_enabled?: boolean; 
+/**
+ * Voice Control mode: end-of-dictation key triggers, spoken
+ * "new line" / "new paragraph", and the app switcher.
+ */
+voice_control_enabled?: boolean; voice_triggers?: VoiceTrigger[]; text_replacements?: TextReplacement[]; 
+/**
+ * "go to <app>" as a whole dictation brings that app to the front.
+ */
+app_switch_enabled?: boolean; 
+/**
+ * Also match any installed app by its name, not only `app_aliases`.
+ */
+app_switch_any_installed?: boolean; app_aliases?: AppAlias[]; 
+/**
+ * AI cleanup level for every dictation (needs Post Processing on).
+ */
+cleanup_level?: CleanupLevel; 
+/**
+ * Formality per destination category.
+ */
+category_styles?: CategoryStyles; 
+/**
+ * App and website → category assignments.
+ */
+app_rules?: AppRule[]; 
+/**
+ * Recently dictated-into apps/sites without an assignment, newest first,
+ * offered in the Style page for one-click assignment.
+ */
+recent_contexts?: AppRule[] }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type CategoryStyles = { personal: Formality; work: Formality; email: Formality; other: Formality }
+/**
+ * How much the AI cleanup rewrites a dictation.
+ */
+export type CleanupLevel = 
+/**
+ * No AI cleanup: rules only.
+ */
+"none" | 
+/**
+ * Fillers, repeats, self-corrections, punctuation, numbers.
+ */
+"light" | 
+/**
+ * Light plus tightening for clarity and concision.
+ */
+"medium"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 
@@ -1018,6 +1228,10 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+/**
+ * Capitalization/punctuation style applied per category.
+ */
+export type Formality = "formal" | "casual" | "very_casual"
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -1029,6 +1243,11 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+export type InstalledApp = { name: string; path: string; 
+/**
+ * CFBundleIdentifier, used to assign the app to a style category.
+ */
+bundle_id: string | null }
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Counts only — key identity is deliberately never captured.
@@ -1164,6 +1383,37 @@ export type StreamTextEvent = { committed: string; tentative: string }
  */
 export type StreamWorkKind = "transcribing" | "polishing"
 /**
+ * Result of one teaching take.
+ */
+export type TeachTake = { 
+/**
+ * What the model transcribed (native biasing applied).
+ */
+heard: string; 
+/**
+ * After canonical vocabulary forms and correction rules.
+ */
+corrected: string; 
+/**
+ * Whether the corrected text already contains the word.
+ */
+recognized: boolean; 
+/**
+ * Normalized mis-hearing to offer as a rule ("quinn"), if any.
+ */
+variant: string | null; 
+/**
+ * The variant is an ordinary English word; a rule for it would rewrite
+ * normal speech, so the UI leaves it unticked by default.
+ */
+variant_is_common_word: boolean }
+/**
+ * Exact, case-insensitive whole-phrase substitution applied before cleanup,
+ * for mis-hearings fuzzy custom-word matching can't reach
+ * (e.g. "cube cuddle" → "kubectl").
+ */
+export type TextReplacement = { from: string; to: string }
+/**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
@@ -1171,6 +1421,11 @@ export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
+/**
+ * A spoken phrase that, said at the very end of a dictation, is removed from
+ * the text and replaced by a key press after the paste.
+ */
+export type VoiceTrigger = { phrase: string; key: AutoSubmitKey }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

@@ -4,7 +4,7 @@ use crate::audio_toolkit::{
         frames_for_duration_ms, EarshotVad, SmoothedVad, VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS,
         VAD_PREFILL_MS, VAD_STREAMING_HANGOVER_MS,
     },
-    AudioRecorder, SileroVad, VadPolicy, VoiceActivityDetector,
+    AudioRecorder, GainConfig, SileroVad, VadPolicy, VoiceActivityDetector,
 };
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
@@ -282,6 +282,7 @@ fn create_audio_recorder(
     app_handle: &tauri::AppHandle,
     selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
+    gain_config: Arc<GainConfig>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let detector: Box<dyn VoiceActivityDetector> = match backend {
         VadBackend::Silero => {
@@ -335,6 +336,7 @@ fn create_audio_recorder(
             streaming_hangover_frames,
         )
         .with_selected_channel(selected_channel)
+        .with_gain(gain_config)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -385,6 +387,8 @@ pub struct AudioRecordingManager {
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
+    /// Shared with every recorder this manager builds; updated live from settings.
+    gain_config: Arc<GainConfig>,
     /// Lock-free mirror of "is the state in {Recording, Stopping}",
     /// maintained by `set_state()`. The hot-path `is_recording()` reads THIS
     /// instead of the std `state` mutex, so a UI poll can no longer deadlock
@@ -430,6 +434,7 @@ impl AudioRecordingManager {
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
+            gain_config: GainConfig::new(settings.input_gain_db, settings.auto_gain_enabled),
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
@@ -620,6 +625,13 @@ impl AudioRecordingManager {
         }
     }
 
+    /// Apply input gain settings to the live capture stream.
+    pub fn update_gain(&self, gain_db: f32, auto_gain: bool) {
+        self.gain_config.set_gain_db(gain_db);
+        self.gain_config.set_auto_gain(auto_gain);
+        debug!("Input gain updated: fixed={gain_db:.1} dB, auto={auto_gain}");
+    }
+
     pub fn preload_vad(&self) -> Result<(), anyhow::Error> {
         let mut recorder_opt = self.recorder.lock().unwrap();
         if recorder_opt.is_none() {
@@ -629,6 +641,7 @@ impl AudioRecordingManager {
                 &self.app_handle,
                 settings.selected_channel,
                 Arc::clone(&self.stream_router),
+                Arc::clone(&self.gain_config),
             )?);
         }
         Ok(())
@@ -879,6 +892,7 @@ impl AudioRecordingManager {
             &self.app_handle,
             settings.selected_channel,
             Arc::clone(&self.stream_router),
+            Arc::clone(&self.gain_config),
         )?;
         let was_open = *self.is_open.lock().unwrap();
 
