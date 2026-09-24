@@ -233,6 +233,28 @@ pub async fn set_selected_microphone(app: AppHandle, device_name: String) -> Res
         .map_err(|e| format!("Failed to update selected device: {}", e))
 }
 
+/// Set the preferred-microphone priority list and reopen capture if needed.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_preferred_microphones(
+    app: AppHandle,
+    names: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    let mut seen = std::collections::HashSet::new();
+    settings.preferred_microphones = names
+        .into_iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty() && n != "default" && seen.insert(n.clone()))
+        .collect();
+    write_settings(&app, settings);
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || rm.update_selected_device())
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
+        .map_err(|e| format!("Failed to update microphone: {}", e))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_selected_microphone(app: AppHandle) -> Result<String, String> {

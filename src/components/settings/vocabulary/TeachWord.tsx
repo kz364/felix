@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { commands, type TeachTake, type TextReplacement } from "@/bindings";
+import { commands, type TeachTake } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
@@ -24,15 +24,11 @@ const TAKE_MODES = [
 
 type Phase = "idle" | "recording" | "processing";
 
-const escapeRegex = (text: string) =>
-  text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&").replace(/\s+/g, "\\s+");
-
 export const TeachWord: React.FC<TeachWordProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
-    const { getSetting, updateSetting } = useSettings();
+    const { getSetting, refreshSettings } = useSettings();
     const customWords = getSetting("custom_words") || [];
-    const replacements = getSetting("text_replacements") || [];
 
     const [word, setWord] = useState<string | null>(null);
     const [open, setOpen] = useState(false);
@@ -60,7 +56,13 @@ export const TeachWord: React.FC<TeachWordProps> = React.memo(
       );
     }, [variants]);
 
+    const discardTakes = () => {
+      const files = takes.map((take) => take.clip.file);
+      if (files.length > 0) commands.teachDiscardClips(files);
+    };
+
     const reset = () => {
+      discardTakes();
       setTakes([]);
       setPhase("idle");
     };
@@ -85,7 +87,10 @@ export const TeachWord: React.FC<TeachWordProps> = React.memo(
     const stopTake = async () => {
       if (!word) return;
       setPhase("processing");
-      const result = await commands.teachStopRecording(word);
+      const result = await commands.teachStopRecording(
+        word,
+        mode === "whisper",
+      );
       setPhase("idle");
       if (result.status === "error") {
         toast.error(result.error);
@@ -94,18 +99,26 @@ export const TeachWord: React.FC<TeachWordProps> = React.memo(
       setTakes((prev) => [...prev, result.data]);
     };
 
-    const addRule = () => {
-      if (!word || selected.size === 0) return;
-      const pattern = Array.from(selected).map(escapeRegex).join("|");
-      const rule: TextReplacement = {
-        from: `/\\b(?:${pattern})\\b/`,
-        to: word,
-      };
-      if (!replacements.some((r) => r.from === rule.from)) {
-        updateSetting("text_replacements", [...replacements, rule]);
+    // Save clips and results (kept for re-checking after model changes).
+    const save = async () => {
+      if (!word) return;
+      const all = variants.map((v) => v.text);
+      const result = await commands.teachSaveWord(
+        word,
+        takes.map((take) => take.clip),
+        takes.map((take) => take.heard),
+        all,
+        all.filter((v) => !selected.has(v)),
+      );
+      if (result.status === "error") {
+        toast.error(result.error);
+        return;
       }
-      toast.success(t("settings.vocabulary.teach.ruleAdded", { word }));
-      close();
+      await refreshSettings();
+      toast.success(t("settings.vocabulary.teach.saved", { word }));
+      setTakes([]);
+      setPhase("idle");
+      setOpen(false);
     };
 
     const wordOptions = customWords.map((w) => ({ value: w, label: w }));
@@ -155,13 +168,13 @@ export const TeachWord: React.FC<TeachWordProps> = React.memo(
                   <Button
                     variant="primary"
                     size="md"
-                    onClick={addRule}
+                    onClick={save}
                     disabled={selected.size === 0}
                   >
                     {t("settings.vocabulary.teach.addRule")}
                   </Button>
                 ) : (
-                  <Button variant="primary" size="md" onClick={close}>
+                  <Button variant="primary" size="md" onClick={save}>
                     {t("settings.vocabulary.teach.done")}
                   </Button>
                 )}

@@ -727,6 +727,8 @@ struct CaptureProcessor {
     gain: Option<InputGain>,
     stream_running_at: Instant,
     visualizer: AudioVisualiser,
+    /// Gain-scaled copy of the raw chunk fed to the level meter.
+    visual_scratch: Vec<f32>,
     frame_resampler: FrameResampler,
     max_drain_samples: usize,
     first_chunk_logged: bool,
@@ -782,6 +784,7 @@ impl CaptureProcessor {
             gain: gain.map(InputGain::new),
             stream_running_at,
             visualizer,
+            visual_scratch: Vec::new(),
             frame_resampler,
             max_drain_samples,
             first_chunk_logged: false,
@@ -844,7 +847,18 @@ impl CaptureProcessor {
             return;
         }
 
-        if let Some(buckets) = self.visualizer.feed(raw) {
+        // The level meter shows the signal after input gain, so quiet speech
+        // (whispering) visibly moves the bars once the AGC has boosted it.
+        let display_gain = self.gain.as_ref().map_or(1.0, InputGain::current_gain);
+        let levels = if display_gain > 1.01 {
+            self.visual_scratch.clear();
+            self.visual_scratch
+                .extend(raw.iter().map(|s| (s * display_gain).clamp(-1.0, 1.0)));
+            self.visualizer.feed(&self.visual_scratch)
+        } else {
+            self.visualizer.feed(raw)
+        };
+        if let Some(buckets) = levels {
             if let Some(callback) = &self.level_cb {
                 callback(buckets);
             }

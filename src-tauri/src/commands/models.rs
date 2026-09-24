@@ -143,6 +143,7 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
             "Model selection changed to {} (not loading — unload set to Immediately).",
             model_id
         );
+        crate::vocab_teach::recheck_in_background(app, false);
         return Ok(());
     }
 
@@ -155,6 +156,8 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
         return Err(e.to_string());
     }
 
+    // Taught words have model-specific mishearings: reload or recompute them.
+    crate::vocab_teach::recheck_in_background(app, false);
     Ok(())
 }
 

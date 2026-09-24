@@ -37,6 +37,11 @@ const LIMITER_KNEE: f32 = 0.8;
 pub struct GainConfig {
     gain_db_bits: AtomicU32,
     auto_gain: AtomicBool,
+    /// AGC state learned so far (f32 bits; 0 = none yet). Kept here rather
+    /// than per stream because on-demand recording reopens the stream every
+    /// dictation — without this, each whisper would start un-boosted.
+    learned_speech_level: AtomicU32,
+    learned_noise_floor: AtomicU32,
 }
 
 impl GainConfig {
@@ -44,6 +49,8 @@ impl GainConfig {
         Arc::new(Self {
             gain_db_bits: AtomicU32::new(gain_db.to_bits()),
             auto_gain: AtomicBool::new(auto_gain),
+            learned_speech_level: AtomicU32::new(0),
+            learned_noise_floor: AtomicU32::new(0),
         })
     }
 
@@ -76,13 +83,25 @@ pub struct InputGain {
 
 impl InputGain {
     pub fn new(config: Arc<GainConfig>) -> Self {
-        Self {
+        let learned = |a: &AtomicU32| {
+            let v = f32::from_bits(a.load(Ordering::Relaxed));
+            (v > 0.0).then_some(v)
+        };
+        let noise_floor = learned(&config.learned_noise_floor).unwrap_or(1e-3);
+        let speech_level = learned(&config.learned_speech_level);
+        let mut gain = Self {
             config,
-            noise_floor: 1e-3,
-            speech_level: None,
+            noise_floor,
+            speech_level,
             applied_gain: 1.0,
             scratch: Vec::new(),
+        };
+        // Start at the learned gain so the first frames are already boosted.
+        if gain.config.auto_gain() {
+            gain.applied_gain =
+                db_to_linear(gain.config.gain_db()) * gain.auto_gain_for_current_state();
         }
+        gain
     }
 
     /// Current total linear gain (fixed × automatic), for diagnostics.
@@ -137,14 +156,21 @@ impl InputGain {
         }
 
         if rms > self.noise_floor * SPEECH_OVER_NOISE {
-            self.speech_level = Some(match self.speech_level {
+            let level = match self.speech_level {
                 None => rms,
                 // Fast attack so a loud syllable is caught within a few frames,
                 // slow release so gain doesn't pump between words.
                 Some(level) if rms > level => level * 0.7 + rms * 0.3,
                 Some(level) => level * 0.97 + rms * 0.03,
-            });
+            };
+            self.speech_level = Some(level);
+            self.config
+                .learned_speech_level
+                .store(level.to_bits(), Ordering::Relaxed);
         }
+        self.config
+            .learned_noise_floor
+            .store(self.noise_floor.to_bits(), Ordering::Relaxed);
 
         self.auto_gain_for_current_state()
     }
@@ -265,6 +291,25 @@ mod tests {
             gain.process(&loud);
         }
         assert!((gain.current_gain() - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn learned_gain_carries_over_to_a_new_stream() {
+        let config = GainConfig::new(0.0, true);
+        let mut first = InputGain::new(Arc::clone(&config));
+        let mut seed = 5;
+        for _ in 0..40 {
+            first.process(&noise(0.0003, 512, &mut seed));
+        }
+        let whisper = sine(0.007, 512);
+        for _ in 0..40 {
+            first.process(&whisper);
+        }
+        let learned = first.current_gain();
+        assert!(learned > 5.0);
+        // Next dictation: a fresh stream starts at the learned gain.
+        let second = InputGain::new(config);
+        assert!((second.current_gain() - learned).abs() / learned < 0.2);
     }
 
     #[test]

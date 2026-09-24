@@ -18,7 +18,7 @@ use crate::utils::{
 };
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
@@ -118,6 +118,108 @@ where
     }
 }
 
+/// Whether custom instructions apply to the current destination.
+fn has_custom_instructions(settings: &AppSettings) -> bool {
+    if !settings.custom_instructions.trim().is_empty() {
+        return true;
+    }
+    let context = crate::app_context::current();
+    let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
+    !settings
+        .category_instructions
+        .get(category)
+        .trim()
+        .is_empty()
+}
+
+/// The level prompt plus the user's instructions for the current destination.
+fn level_prompt_with_instructions(settings: &AppSettings, level: CleanupLevel) -> Option<String> {
+    let prompt = crate::cleanup::level_prompt(level)?;
+    let context = crate::app_context::current();
+    let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
+    Some(
+        match crate::cleanup::instructions_block(
+            &settings.custom_instructions,
+            settings.category_instructions.get(category),
+        ) {
+            Some(block) => format!("{prompt}\n\n{block}"),
+            None => prompt.to_string(),
+        },
+    )
+}
+
+/// While the user speaks, load Apple Intelligence with the exact
+/// instructions the cleanup will use, so the model and prompt are ready when
+/// the transcript arrives (~120 ms of its ~500 ms time to first token). A
+/// mismatch (e.g. settings changed mid-dictation) just falls back to a cold
+/// session.
+fn prewarm_cleanup(settings: &AppSettings) {
+    if uses_level_cleanup(settings)
+        && settings.post_process_provider_id == crate::local_llm::LOCAL_PROVIDER_ID
+    {
+        let settings = settings.clone();
+        std::thread::spawn(move || {
+            if crate::app_context::current()
+                .bundle_id
+                .is_some_and(|b| crate::app_context::is_browser(&b))
+            {
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            let Some(prompt) = level_prompt_with_instructions(&settings, settings.cleanup_level)
+            else {
+                return;
+            };
+            let model = settings
+                .post_process_models
+                .get(crate::local_llm::LOCAL_PROVIDER_ID)
+                .cloned()
+                .unwrap_or_default();
+            crate::local_llm::prewarm(
+                model,
+                crate::cleanup::add_context(&build_system_prompt(&prompt), &settings, None),
+                crate::cleanup::CLEANUP_USER_PREFIX.to_string(),
+                settings.local_model_keep_loaded,
+            );
+        });
+        return;
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        if !uses_level_cleanup(settings)
+            || settings.post_process_provider_id != APPLE_INTELLIGENCE_PROVIDER_ID
+        {
+            return;
+        }
+        let settings = settings.clone();
+        std::thread::spawn(move || {
+            // Browsers resolve the tab's website (and so its category's
+            // instructions) in the background; give that a moment.
+            let in_browser = crate::app_context::current()
+                .bundle_id
+                .is_some_and(|b| crate::app_context::is_browser(&b));
+            if in_browser {
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            let Some(prompt) = level_prompt_with_instructions(&settings, settings.cleanup_level)
+            else {
+                return;
+            };
+            if !apple_intelligence::check_apple_intelligence_availability() {
+                return;
+            }
+            let system_prompt =
+                crate::cleanup::add_context(&build_system_prompt(&prompt), &settings, None);
+            apple_intelligence::prewarm_session(
+                &system_prompt,
+                crate::cleanup::CLEANUP_USER_PREFIX,
+            );
+            debug!("Prewarmed Apple Intelligence for cleanup");
+        });
+    }
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    let _ = settings;
+}
+
 /// Whether every dictation gets the level-based AI cleanup.
 fn uses_level_cleanup(settings: &AppSettings) -> bool {
     settings.post_process_enabled && settings.cleanup_level != CleanupLevel::None
@@ -149,7 +251,9 @@ async fn post_process_transcription(
         CleanupRequest::Level(level) => Some(level),
         CleanupRequest::SelectedPrompt => None,
     };
-    match crate::cleanup::accept_cleanup(transcription, &output, level) {
+    let has_instructions =
+        matches!(request, CleanupRequest::Level(_)) && has_custom_instructions(settings);
+    match crate::cleanup::accept_cleanup(transcription, &output, level, has_instructions) {
         Ok(()) => Some(output),
         Err(reason) => {
             warn!(
@@ -194,8 +298,8 @@ async fn run_post_process_llm(
     }
 
     let (prompt, user_prefix) = match request {
-        CleanupRequest::Level(level) => match crate::cleanup::level_prompt(level) {
-            Some(prompt) => (prompt.to_string(), crate::cleanup::CLEANUP_USER_PREFIX),
+        CleanupRequest::Level(level) => match level_prompt_with_instructions(settings, level) {
+            Some(prompt) => (prompt, crate::cleanup::CLEANUP_USER_PREFIX),
             None => return None,
         },
         CleanupRequest::SelectedPrompt => {
@@ -266,6 +370,29 @@ async fn run_post_process_llm(
                 crate::cleanup::wrap_transcript(transcription)
             )
         };
+
+        if provider.id == crate::local_llm::LOCAL_PROVIDER_ID {
+            return match crate::local_llm::complete(
+                &model,
+                &system_prompt,
+                &user_content,
+                settings.local_model_keep_loaded,
+            )
+            .await
+            {
+                Ok(result) if !result.trim().is_empty() => {
+                    Some(strip_invisible_chars(strip_think_block(&result)))
+                }
+                Ok(_) => {
+                    debug!("Local model returned an empty response");
+                    None
+                }
+                Err(err) => {
+                    error!("Local model post-processing failed: {}", err);
+                    None
+                }
+            };
+        }
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
         if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
@@ -536,7 +663,13 @@ pub(crate) async fn process_transcription_output(
     let request = if post_process {
         Some(CleanupRequest::SelectedPrompt)
     } else if uses_level_cleanup(&settings) {
-        Some(CleanupRequest::Level(settings.cleanup_level))
+        let has_instructions = has_custom_instructions(&settings);
+        if crate::cleanup::needs_ai_cleanup(&final_text, settings.cleanup_level, has_instructions) {
+            Some(CleanupRequest::Level(settings.cleanup_level))
+        } else {
+            debug!("Dictation already clean; skipping the AI pass");
+            None
+        }
     } else {
         None
     };
@@ -611,6 +744,8 @@ impl ShortcutAction for TranscribeAction {
         let kickoff_elapsed = kickoff_started.elapsed();
 
         crate::app_context::capture();
+        crate::dictation_log::capture_at_start();
+        prewarm_cleanup(&get_settings(app));
 
         let binding_id = binding_id.to_string();
         let tray_started = Instant::now();
@@ -829,14 +964,24 @@ impl ShortcutAction for TranscribeAction {
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
                 } else {
-                    // Save WAV concurrently with transcription
+                    // Save WAV concurrently with transcription — only when audio
+                    // is being kept. History entries are saved either way.
+                    let keep_audio = get_settings(&ah).recording_retention_days > 0;
                     let sample_count = samples.len();
                     let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
-                    let samples_for_wav = samples.clone();
+                    let samples_for_wav = if keep_audio {
+                        samples.clone()
+                    } else {
+                        Vec::new()
+                    };
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
-                        crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
+                        if keep_audio {
+                            crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
+                        } else {
+                            Ok(())
+                        }
                     });
 
                     // Transcribe concurrently with WAV save. If a live stream was
@@ -857,6 +1002,7 @@ impl ShortcutAction for TranscribeAction {
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
+                        Ok(Ok(())) if !keep_audio => false,
                         Ok(Ok(())) => {
                             match crate::audio_toolkit::verify_wav_file(
                                 &wav_path_for_verify,
@@ -920,17 +1066,16 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             }
 
-                            // Save to history if WAV was saved
-                            if wav_saved {
-                                if let Err(err) = hm.save_entry(
-                                    file_name,
-                                    transcription,
-                                    post_process,
-                                    processed.post_processed_text.clone(),
-                                    processed.post_process_prompt.clone(),
-                                ) {
-                                    error!("Failed to save history entry: {}", err);
-                                }
+                            // Save to history; the audio reference only when kept.
+                            let entry_file = if wav_saved { file_name } else { String::new() };
+                            if let Err(err) = hm.save_entry(
+                                entry_file,
+                                transcription,
+                                post_process,
+                                processed.post_processed_text.clone(),
+                                processed.post_process_prompt.clone(),
+                            ) {
+                                error!("Failed to save history entry: {}", err);
                             }
 
                             if let Some(app_path) = processed.switch_to_app {
@@ -959,11 +1104,47 @@ impl ShortcutAction for TranscribeAction {
                                         return;
                                     }
 
-                                    match utils::paste(final_text, ah_clone.clone(), submit_key) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
+                                    // Fit the text to what's around the cursor and
+                                    // remember the field for the dictation log.
+                                    let settings = get_settings(&ah_clone);
+                                    // Nothing focused that takes text: show it
+                                    // instead of pasting into the void.
+                                    if !final_text.is_empty()
+                                        && settings.result_popup_enabled
+                                        && crate::text_field::paste_target()
+                                            == crate::text_field::PasteTarget::NoText
+                                    {
+                                        info!("No text field focused; showing the dictation instead of pasting");
+                                        crate::overlay::show_result_overlay(&ah_clone, final_text);
+                                        set_tray_state(&ah_clone, TrayIconState::Idle);
+                                        return;
+                                    }
+                                    let before = (!final_text.is_empty())
+                                        .then(crate::text_field::focused_field)
+                                        .flatten();
+                                    let final_text = match (&before, settings.context_aware_paste) {
+                                        (Some(field), true) => crate::text_field::adapt_to_context(
+                                            &final_text,
+                                            &field.text_before_cursor(40),
+                                            &field.text_after_cursor(10),
+                                            &settings.custom_words,
                                         ),
+                                        _ => final_text,
+                                    };
+                                    let pasted_text = final_text.clone();
+                                    match utils::paste(final_text, ah_clone.clone(), submit_key) {
+                                        Ok(()) => {
+                                            debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            );
+                                            if !pasted_text.is_empty() {
+                                                crate::dictation_log::record_after_paste(
+                                                    pasted_text,
+                                                    before,
+                                                );
+                                            }
+                                        }
                                         Err(e) => {
                                             error!("Failed to paste transcription: {}", e);
                                             let _ = ah_clone.emit("paste-error", ());
@@ -993,7 +1174,8 @@ impl ShortcutAction for TranscribeAction {
                             // Surface the failure to the UI (toast). The full
                             // message is also in handy.log via the line above.
                             let _ = ah.emit("transcription-error", err.to_string());
-                            // Save entry with empty text so user can retry
+                            // Save entry with empty text so user can retry (if the
+                            // audio was kept).
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
                                     file_name,

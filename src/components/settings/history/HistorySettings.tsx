@@ -387,8 +387,12 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
           </IconButton>
           <IconButton
             onClick={handleRetranscribe}
-            disabled={retrying}
-            title={t("settings.history.retranscribe")}
+            disabled={retrying || !entry.has_audio}
+            title={
+              entry.has_audio
+                ? t("settings.history.retranscribe")
+                : t("settings.history.retention.noAudioForEntry")
+            }
           >
             <RotateCcw
               width={16}
@@ -439,7 +443,9 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      {entry.has_audio && (
+        <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      )}
     </div>
   );
 };

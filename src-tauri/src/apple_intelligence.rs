@@ -29,6 +29,20 @@ extern "C" {
     ) -> *mut AppleLLMResponse;
 }
 
+extern "C" {
+    fn prewarm_apple_session(system_prompt: *const c_char, prompt_prefix: *const c_char);
+}
+
+/// Prewarm a session for the next `process_text_with_system_prompt` call with
+/// the same system prompt. Returns immediately.
+pub fn prewarm_session(system_prompt: &str, prompt_prefix: &str) {
+    let (Ok(system), Ok(prefix)) = (CString::new(system_prompt), CString::new(prompt_prefix))
+    else {
+        return;
+    };
+    unsafe { prewarm_apple_session(system.as_ptr(), prefix.as_ptr()) };
+}
+
 /// Process text with Apple Intelligence using separate system prompt and user content
 pub fn process_text_with_system_prompt(
     system_prompt: &str,

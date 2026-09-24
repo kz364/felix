@@ -264,6 +264,21 @@ async setPostProcessProvider(providerId: string) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async getLocalModelStatus() : Promise<LocalModelStatus> {
+    return await TAURI_INVOKE("get_local_model_status");
+},
+/**
+ * Install whatever is missing (Ollama, then the model), then start the
+ * server if the local provider is selected.
+ */
+async installLocalModel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_local_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async fetchPostProcessModels(providerId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("fetch_post_process_models", { providerId }) };
@@ -320,9 +335,9 @@ async teachStartRecording() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async teachStopRecording(word: string) : Promise<Result<TeachTake, string>> {
+async teachStopRecording(word: string, whispered: boolean) : Promise<Result<TeachTake, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("teach_stop_recording", { word }) };
+    return { status: "ok", data: await TAURI_INVOKE("teach_stop_recording", { word, whispered }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -330,6 +345,50 @@ async teachStopRecording(word: string) : Promise<Result<TeachTake, string>> {
 },
 async teachCancelRecording() : Promise<void> {
     await TAURI_INVOKE("teach_cancel_recording");
+},
+/**
+ * Delete clips of an abandoned teaching session.
+ */
+async teachDiscardClips(files: string[]) : Promise<void> {
+    await TAURI_INVOKE("teach_discard_clips", { files });
+},
+/**
+ * Save a teaching session for the current model, replacing any earlier one
+ * for the same word (its old clips are deleted).
+ */
+async teachSaveWord(word: string, clips: TeachClip[], heard: string[], variants: string[], excluded: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("teach_save_word", { word, clips, heard, variants, excluded }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async teachDeleteWord(word: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("teach_delete_word", { word }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Change which mishearings of a word are rewritten for the current model.
+ */
+async teachSetExcluded(word: string, excluded: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("teach_set_excluded", { word, excluded }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Re-run saved clips on the current model. `force` recomputes words that
+ * already have results for it; otherwise only missing ones are computed.
+ */
+async teachRecheck(force: boolean) : Promise<void> {
+    await TAURI_INVOKE("teach_recheck", { force });
 },
 async changeInputGainSetting(gainDb: number) : Promise<Result<null, string>> {
     try {
@@ -355,9 +414,102 @@ async changeVoiceControlEnabledSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+async changeContextAwarePasteSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_context_aware_paste_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeResultPopupEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_result_popup_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLocalModelKeepLoadedSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_local_model_keep_loaded_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeResultPopupSecondsSetting(seconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_result_popup_seconds_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Resize the result popup to the card the overlay measured.
+ */
+async fitResultOverlay(height: number) : Promise<void> {
+    await TAURI_INVOKE("fit_result_overlay", { height });
+},
+/**
+ * Close the result popup (close button or countdown).
+ */
+async dismissResultOverlay() : Promise<void> {
+    await TAURI_INVOKE("dismiss_result_overlay");
+},
+/**
+ * Copy the popup's text so it can be pasted where it was meant to go.
+ */
+async copyResultText(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_result_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Most recent dictations first.
+ */
+async getRecentDictations() : Promise<DictationRecord[]> {
+    return await TAURI_INVOKE("get_recent_dictations");
+},
+async changeHistoryRetentionDaysSetting(days: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_history_retention_days_setting", { days }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeRecordingRetentionDaysSetting(days: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_recording_retention_days_setting", { days }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeCleanupLevelSetting(level: CleanupLevel) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_cleanup_level_setting", { level }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCustomInstructionsSetting(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_custom_instructions_setting", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCategoryInstructionsSetting(instructions: CategoryInstructions) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_category_instructions_setting", { instructions }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -382,6 +534,13 @@ async updateAppRules(rules: AppRule[]) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Every installed app, known website, override and recently used app/site,
+ * with its category — for the Style page.
+ */
+async listAppCategories() : Promise<CategorizedEntry[]> {
+    return await TAURI_INVOKE("list_app_categories");
 },
 async clearRecentContexts() : Promise<Result<null, string>> {
     try {
@@ -884,6 +1043,17 @@ async setSelectedMicrophone(deviceName: string) : Promise<Result<null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Set the preferred-microphone priority list and reopen capture if needed.
+ */
+async updatePreferredMicrophones(names: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_preferred_microphones", { names }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSelectedMicrophone() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_selected_microphone") };
@@ -1134,10 +1304,53 @@ hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: nu
  */
 whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; 
 /**
+ * Microphones in priority order: the first one connected at recording
+ * start is used, ahead of `selected_microphone`. Entries are kept while
+ * disconnected.
+ */
+preferred_microphones?: string[]; 
+/**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
+/**
+ * Legacy count limit (upstream); superseded by `history_retention_days`.
+ */
+history_limit?: number; 
+/**
+ * Days to keep dictation text in History (0 = forever). Starred entries
+ * are always kept.
+ */
+history_retention_days?: number; 
+/**
+ * Days to keep the audio of each dictation (0 = never save audio).
+ */
+recording_retention_days?: number; 
+/**
+ * "Teach a word" sessions: saved clips (kept regardless of the retention
+ * above) and, per transcription model, the mishearings to rewrite.
+ */
+taught_words?: TaughtWord[]; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
+/**
+ * Adapt pasted text to the characters around the cursor (spacing,
+ * mid-sentence casing), read via Accessibility.
+ */
+context_aware_paste?: boolean; 
+/**
+ * When nothing can take the text (no text field focused), show it in
+ * the overlay instead of pasting.
+ */
+result_popup_enabled?: boolean; 
+/**
+ * Seconds before that popup closes on its own; 0 keeps it until closed.
+ */
+result_popup_seconds?: number; 
+/**
+ * Keep the local cleanup model in memory. Off loads it when a
+ * dictation starts and frees it when idle (less RAM, slower cleanups).
+ */
+local_model_keep_loaded?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -1186,11 +1399,21 @@ app_switch_any_installed?: boolean; app_aliases?: AppAlias[];
  */
 cleanup_level?: CleanupLevel; 
 /**
+ * The user's own instructions, one per line, added to the Clarity
+ * prompt with priority over its rules (same single pass).
+ */
+custom_instructions?: string; 
+/**
+ * Extra instructions per destination category.
+ */
+category_instructions?: CategoryInstructions; 
+/**
  * Formality per destination category.
  */
 category_styles?: CategoryStyles; 
 /**
- * App and website → category assignments.
+ * User overrides of the automatic app/website → category assignment
+ * (see `app_categories`).
  */
 app_rules?: AppRule[]; 
 /**
@@ -1202,6 +1425,18 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * An app or website with its automatic and effective category.
+ */
+export type CategorizedEntry = { kind: AppRuleKind; key: string; label: string; category: AppCategory; automatic: AppCategory; overridden: boolean; 
+/**
+ * Dictated into recently.
+ */
+recent: boolean }
+/**
+ * Custom instructions per destination category (one per line).
+ */
+export type CategoryInstructions = { personal: string; work: string; email: string; other: string }
 export type CategoryStyles = { personal: Formality; work: Formality; email: Formality; other: Formality }
 /**
  * How much the AI cleanup rewrites a dictation.
@@ -1221,6 +1456,15 @@ export type CleanupLevel =
 "medium"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
+export type DictationRecord = { id: number; timestamp_ms: number; app_name: string | null; bundle_id: string | null; url_host: string | null; 
+/**
+ * Exactly what was pasted (after context adaptation).
+ */
+pasted_text: string; first_word: string | null; last_word: string | null; at_start: FieldState | null; before_paste: FieldState | null; after_paste: FieldState | null; 
+/**
+ * `None` when the field couldn't be read or changed unexpectedly.
+ */
+inserted: InsertedSpan | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1228,12 +1472,17 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type FieldState = { role: string; text: string; selection: Selection | null }
 /**
  * Capitalization/punctuation style applied per category.
  */
 export type Formality = "formal" | "casual" | "very_casual"
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
+/**
+ * Whether this entry's audio is still on disk (retry and playback).
+ */
+has_audio: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
@@ -1243,6 +1492,11 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * Where the dictation landed in the field (UTF-16 offsets, as the
+ * Accessibility API uses them).
+ */
+export type InsertedSpan = { start: number; length: number; text: string }
 export type InstalledApp = { name: string; path: string; 
 /**
  * CFBundleIdentifier, used to assign the app to a style category.
@@ -1255,6 +1509,11 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LocalModelStatus = { 
+/**
+ * llama-server and the ollama CLI are available.
+ */
+runtime_installed: boolean; model: string; model_installed: boolean; installing: boolean }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
@@ -1283,6 +1542,22 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * What one transcription model made of a taught word's clips.
+ */
+export type ModelVariants = { model_id: string; 
+/**
+ * Transcript of each clip, in clip order.
+ */
+heard: string[]; 
+/**
+ * Normalized mishearings ("quinn") that get rewritten to the word.
+ */
+variants: string[]; 
+/**
+ * Mishearings the user chose not to rewrite (e.g. common words).
+ */
+excluded: string[] }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -1330,6 +1605,7 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
+export type Selection = { location: number; length: number }
 /**
  * How the transcribe shortcut's key events drive a recording.
  */
@@ -1382,6 +1658,15 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+export type TaughtWord = { word: string; clips: TeachClip[]; by_model: ModelVariants[] }
+/**
+ * One recorded take of a taught word.
+ */
+export type TeachClip = { 
+/**
+ * WAV file name in the vocab clips directory.
+ */
+file: string; whispered: boolean }
 /**
  * Result of one teaching take.
  */
@@ -1404,9 +1689,13 @@ recognized: boolean;
 variant: string | null; 
 /**
  * The variant is an ordinary English word; a rule for it would rewrite
- * normal speech, so the UI leaves it unticked by default.
+ * normal speech, so it is excluded by default.
  */
-variant_is_common_word: boolean }
+variant_is_common_word: boolean; 
+/**
+ * Saved clip for this take.
+ */
+clip: TeachClip }
 /**
  * Exact, case-insensitive whole-phrase substitution applied before cleanup,
  * for mis-hearings fuzzy custom-word matching can't reach

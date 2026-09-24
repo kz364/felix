@@ -4,6 +4,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { CustomWords } from "../CustomWords";
 import { TextReplacements } from "../TextReplacements";
 import { TeachWord } from "./TeachWord";
+import { TaughtWords } from "./TaughtWords";
 
 export const VocabularySettings: React.FC = () => {
   const { t } = useTranslation();
@@ -16,6 +17,7 @@ export const VocabularySettings: React.FC = () => {
       >
         <CustomWords descriptionMode="tooltip" grouped />
         <TeachWord descriptionMode="tooltip" grouped />
+        <TaughtWords />
       </SettingsGroup>
       <SettingsGroup
         title={t("settings.vocabulary.rules.title")}

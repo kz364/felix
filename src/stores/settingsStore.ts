@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppAlias,
   AppRule,
+  CategoryInstructions,
   CategoryStyles,
   CleanupLevel,
   AppSettings as Settings,
@@ -114,6 +115,12 @@ const settingUpdaters: {
         ? "default"
         : (value as string),
     ),
+  preferred_microphones: async (value) => {
+    const result = await commands.updatePreferredMicrophones(value as string[]);
+    if (result.status === "error") {
+      throw new Error(result.error);
+    }
+  },
   selected_channel: async (value) => {
     const result = await commands.setSelectedChannel(
       (value as number | null | undefined) ?? null,
@@ -160,12 +167,24 @@ const settingUpdaters: {
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),
   history_limit: (value) => commands.updateHistoryLimit(value as number),
+  history_retention_days: (value) =>
+    commands.changeHistoryRetentionDaysSetting(value as number),
+  recording_retention_days: (value) =>
+    commands.changeRecordingRetentionDaysSetting(value as number),
   post_process_enabled: (value) =>
     commands.changePostProcessEnabledSetting(value as boolean),
   post_process_selected_prompt_id: (value) =>
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>
     commands.changeMuteWhileRecordingSetting(value as boolean),
+  context_aware_paste: (value) =>
+    commands.changeContextAwarePasteSetting(value as boolean),
+  local_model_keep_loaded: (value) =>
+    commands.changeLocalModelKeepLoadedSetting(value as boolean),
+  result_popup_enabled: (value) =>
+    commands.changeResultPopupEnabledSetting(value as boolean),
+  result_popup_seconds: (value) =>
+    commands.changeResultPopupSecondsSetting(value as number),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),
@@ -212,6 +231,10 @@ const settingUpdaters: {
   app_aliases: (value) => commands.updateAppAliases(value as AppAlias[]),
   cleanup_level: (value) =>
     commands.changeCleanupLevelSetting(value as CleanupLevel),
+  custom_instructions: (value) =>
+    commands.changeCustomInstructionsSetting(value as string),
+  category_instructions: (value) =>
+    commands.changeCategoryInstructionsSetting(value as CategoryInstructions),
   category_styles: (value) =>
     commands.changeCategoryStylesSetting(value as CategoryStyles),
   app_rules: (value) => commands.updateAppRules(value as AppRule[]),

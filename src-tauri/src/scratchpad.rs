@@ -36,6 +36,7 @@ pub fn run_rules(text: &str, settings: &AppSettings) -> ScratchpadOutput {
     }
 
     let text = crate::vocabulary::apply_canonical_forms(text, &settings.custom_words);
+    let text = crate::vocab_teach::apply_taught_rules(&text, settings);
     let mut text = apply_text_replacements(&text, &settings.text_replacements);
     let mut submit_key = None;
 

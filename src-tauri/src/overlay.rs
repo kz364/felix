@@ -53,12 +53,19 @@ const OVERLAY_HEIGHT: f64 = 50.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
+// Result popup (text shown when there was nowhere to paste). Width matches
+// --ov-result-w plus slack; the height is a first guess that the overlay
+// corrects with `fit_result_overlay` once it has measured the card.
+const OVERLAY_RESULT_WIDTH: f64 = 424.0;
+const OVERLAY_RESULT_HEIGHT: f64 = 140.0;
+const OVERLAY_RESULT_MAX_HEIGHT: f64 = 320.0;
+
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if state == "streaming" {
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    match state {
+        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
+        "result" => (OVERLAY_RESULT_WIDTH, OVERLAY_RESULT_HEIGHT),
+        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
 
@@ -514,6 +521,7 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
         // Invalidate any delayed hide still in flight from a previous session
         // (see `hide_recording_overlay`).
         OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+        RESULT_DISMISSED.store(false, Ordering::SeqCst);
 
         #[cfg(target_os = "linux")]
         let shown_with_layer_shell = if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
@@ -628,6 +636,136 @@ pub fn show_transcribing_overlay(app_handle: &AppHandle) {
 /// Shows the processing overlay window
 pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
+}
+
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct ResultPopup {
+    pub text: String,
+    /// Auto-close delay; 0 = stays until closed.
+    pub timeout_ms: u32,
+}
+
+/// Logical screen rect (x, y, w, h) of the result popup while it's shown,
+/// for the hover watch.
+static RESULT_RECT: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::Mutex::new(None);
+
+/// Show dictated text in the overlay when there was nowhere to paste it: the
+/// pill grows into a card with the text, Copy and close buttons, and an
+/// auto-close countdown that pauses while the pointer is over it. Shown even
+/// when the recording overlay is turned off, since the text would otherwise
+/// be lost from view.
+pub fn show_result_overlay(app_handle: &AppHandle, text: String) {
+    let seconds = settings::get_settings(app_handle).result_popup_seconds;
+    let payload = ResultPopup {
+        text,
+        timeout_ms: seconds.saturating_mul(1000),
+    };
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        // Text first, so the overlay has it when it switches state.
+        let _ = handle.emit_to("recording_overlay", "result-text", payload);
+        show_overlay_state_on_main(&handle, "result");
+        let (width, height) = overlay_dimensions("result");
+        remember_result_rect(&handle, width, height);
+        watch_result_hover(&handle);
+    });
+}
+
+fn remember_result_rect(app_handle: &AppHandle, width: f64, height: f64) {
+    #[cfg(not(target_os = "windows"))]
+    let rect =
+        calculate_overlay_position(app_handle, width, height).map(|(x, y)| (x, y, width, height));
+    #[cfg(target_os = "windows")]
+    let rect = {
+        let _ = (app_handle, width, height);
+        None
+    };
+    *RESULT_RECT.lock().unwrap() = rect;
+}
+
+/// Tell the overlay when the pointer enters or leaves the popup. The panel
+/// never becomes key (so it can't steal focus from the app being dictated
+/// into), which means the webview doesn't reliably get hover events; poll
+/// the cursor instead. Stops when the overlay is shown for anything else or
+/// hidden.
+fn watch_result_hover(app_handle: &AppHandle) {
+    let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+    let handle = app_handle.clone();
+    std::thread::spawn(move || {
+        let mut inside = false;
+        while OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
+            && !RESULT_DISMISSED.load(Ordering::SeqCst)
+        {
+            let rect = *RESULT_RECT.lock().unwrap();
+            let now_inside = match (rect, input::get_cursor_position(&handle)) {
+                (Some((x, y, w, h)), Some(cursor)) => {
+                    let (cx, cy) = (cursor.0 as f64, cursor.1 as f64);
+                    cx >= x && cx < x + w && cy >= y && cy < y + h
+                }
+                _ => false,
+            };
+            if now_inside != inside {
+                inside = now_inside;
+                let _ = handle.emit_to("recording_overlay", "result-hover", inside);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    });
+}
+
+static RESULT_DISMISSED: AtomicBool = AtomicBool::new(false);
+
+/// Resize the result popup to the card the overlay measured.
+#[tauri::command]
+#[specta::specta]
+pub fn fit_result_overlay(app: AppHandle, height: f64) {
+    let height = height.clamp(OVERLAY_HEIGHT, OVERLAY_RESULT_MAX_HEIGHT);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("recording_overlay") else {
+            return;
+        };
+        let width = OVERLAY_RESULT_WIDTH;
+        #[cfg(target_os = "linux")]
+        if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
+            let position = settings::get_settings(&handle).overlay_position;
+            if let Ok(gtk_window) = window.gtk_window() {
+                configure_layer_shell_surface(&gtk_window, position, width, height);
+            }
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(error) = place_windows_overlay(&handle, &window, width, height) {
+                log::error!("Failed to fit result overlay: {error}");
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+            if let Some((x, y)) = calculate_overlay_position(&handle, width, height) {
+                let _ =
+                    window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+            }
+        }
+        remember_result_rect(&handle, width, height);
+    });
+}
+
+/// Close the result popup (close button or countdown).
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_result_overlay(app: AppHandle) {
+    RESULT_DISMISSED.store(true, Ordering::SeqCst);
+    *RESULT_RECT.lock().unwrap() = None;
+    hide_recording_overlay(&app);
+}
+
+/// Copy the popup's text so it can be pasted where it was meant to go.
+#[tauri::command]
+#[specta::specta]
+pub fn copy_result_text(app: AppHandle, text: String) -> Result<(), String> {
+    crate::clipboard::write_text_to_clipboard(&app, &text)
 }
 
 /// Updates the overlay window position based on current settings

@@ -158,6 +158,11 @@ transcribe-cpp = { version = "0.2.3", default-features = false, features = ["met
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
+# Device-list change notifications, so preferred-microphone resolution can
+# reuse a cached scan instead of re-enumerating (~34 ms) on every recording.
+objc2-core-audio = "0.3"
+# Accessibility (AXUIElement) reads of the focused text field.
+core-foundation = "0.10"
 objc2-service-management = "0.3.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]

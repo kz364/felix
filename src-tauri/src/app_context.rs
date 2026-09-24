@@ -14,6 +14,8 @@ pub struct DictationContext {
     pub bundle_id: Option<String>,
     /// Host of the active browser tab ("mail.google.com"), when known.
     pub url_host: Option<String>,
+    /// The app's declared App Store category (`LSApplicationCategoryType`).
+    pub declared_category: Option<String>,
 }
 
 static CURRENT: Lazy<Arc<Mutex<DictationContext>>> =
@@ -38,11 +40,14 @@ pub fn is_browser(bundle_id: &str) -> bool {
 
 /// Record the frontmost app now and start reading the browser URL.
 pub fn capture() {
-    let (app_name, bundle_id) = frontmost_app();
+    let (app_name, bundle_id, bundle_path) = frontmost_app();
     let ctx = DictationContext {
         app_name,
         bundle_id: bundle_id.clone(),
         url_host: None,
+        declared_category: bundle_path
+            .as_deref()
+            .and_then(crate::app_categories::declared_category_at),
     };
     log::debug!("Dictation context: {:?}", ctx);
     *CURRENT.lock().unwrap() = ctx;
@@ -65,22 +70,41 @@ pub fn current() -> DictationContext {
     CURRENT.lock().unwrap().clone()
 }
 
+/// Bundle id of the frontmost app, and whether it builds its Accessibility
+/// tree lazily (Chromium browsers, Electron apps, Firefox).
+pub fn frontmost_bundle() -> (Option<String>, bool) {
+    let (_, bundle_id, path) = frontmost_app();
+    let lazy_ax = bundle_id
+        .as_deref()
+        .is_some_and(|b| CHROMIUM_BROWSERS.contains(&b) || b.starts_with("org.mozilla."))
+        || path.is_some_and(|p| {
+            std::path::Path::new(&p)
+                .join("Contents/Frameworks/Electron Framework.framework")
+                .exists()
+        });
+    (bundle_id, lazy_ax)
+}
+
+/// Name, bundle id and bundle path of the frontmost app.
 #[cfg(target_os = "macos")]
-fn frontmost_app() -> (Option<String>, Option<String>) {
+fn frontmost_app() -> (Option<String>, Option<String>, Option<String>) {
     use objc2_app_kit::NSWorkspace;
     let workspace = NSWorkspace::sharedWorkspace();
     match workspace.frontmostApplication() {
         Some(app) => (
             app.localizedName().map(|s| s.to_string()),
             app.bundleIdentifier().map(|s| s.to_string()),
+            app.bundleURL()
+                .and_then(|url| url.path())
+                .map(|p| p.to_string()),
         ),
-        None => (None, None),
+        None => (None, None, None),
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn frontmost_app() -> (Option<String>, Option<String>) {
-    (None, None)
+fn frontmost_app() -> (Option<String>, Option<String>, Option<String>) {
+    (None, None, None)
 }
 
 #[cfg(target_os = "macos")]
@@ -126,70 +150,88 @@ pub fn url_host(url: &str) -> Option<String> {
     (!host.is_empty() && host.contains('.')).then_some(host)
 }
 
-fn host_matches(host: &str, domain: &str) -> bool {
-    let domain = domain.trim().trim_start_matches("www.").to_lowercase();
-    !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+use crate::app_categories::host_matches;
+
+/// Where a context's category came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CategorySource {
+    Override,
+    Automatic,
 }
 
-/// Category for a context: website rules win inside a browser, then app
-/// rules, else Other. Returns the matching rule, if any.
-pub fn resolve<'a>(
-    ctx: &DictationContext,
-    rules: &'a [AppRule],
-) -> (AppCategory, Option<&'a AppRule>) {
+/// Category for a context: the user's overrides (website, then app) win,
+/// then automatic categorization (known website, then the app).
+pub fn resolve(ctx: &DictationContext, overrides: &[AppRule]) -> (AppCategory, CategorySource) {
     if let Some(host) = &ctx.url_host {
         // Most specific domain first ("mail.google.com" over "google.com").
-        if let Some(rule) = rules
+        if let Some(rule) = overrides
             .iter()
             .filter(|r| r.kind == AppRuleKind::Website && host_matches(host, &r.key))
             .max_by_key(|r| r.key.len())
         {
-            return (rule.category, Some(rule));
+            return (rule.category, CategorySource::Override);
         }
     }
     if let Some(bundle_id) = &ctx.bundle_id {
-        if let Some(rule) = rules
+        if let Some(rule) = overrides
             .iter()
             .find(|r| r.kind == AppRuleKind::App && r.key == *bundle_id)
         {
-            return (rule.category, Some(rule));
+            return (rule.category, CategorySource::Override);
         }
     }
-    (AppCategory::Other, None)
+    if let Some(category) = ctx
+        .url_host
+        .as_deref()
+        .and_then(crate::app_categories::auto_website_category)
+    {
+        return (category, CategorySource::Automatic);
+    }
+    let category = ctx.bundle_id.as_deref().map_or(AppCategory::Other, |id| {
+        crate::app_categories::auto_app_category(
+            id,
+            ctx.app_name.as_deref().unwrap_or_default(),
+            ctx.declared_category.as_deref(),
+        )
+    });
+    (category, CategorySource::Automatic)
 }
 
-/// The rule the Style page should offer for an unassigned context: the
-/// website when in a browser tab, otherwise the app.
-pub fn unassigned_entry(ctx: &DictationContext) -> Option<AppRule> {
+/// The entry the Style page shows for a context: the website when in a
+/// browser tab, otherwise the app. `category` is the automatic one.
+pub fn context_entry(ctx: &DictationContext) -> Option<AppRule> {
     if let Some(host) = &ctx.url_host {
         return Some(AppRule {
             kind: AppRuleKind::Website,
             key: host.clone(),
             label: host.clone(),
-            category: AppCategory::Other,
+            category: crate::app_categories::auto_website_category(host)
+                .unwrap_or(AppCategory::Other),
         });
     }
     let bundle_id = ctx.bundle_id.clone()?;
     if bundle_id == "com.pais.handy" {
         return None;
     }
+    let label = ctx.app_name.clone().unwrap_or_else(|| bundle_id.clone());
     Some(AppRule {
         kind: AppRuleKind::App,
-        label: ctx.app_name.clone().unwrap_or_else(|| bundle_id.clone()),
+        category: crate::app_categories::auto_app_category(
+            &bundle_id,
+            &label,
+            ctx.declared_category.as_deref(),
+        ),
+        label,
         key: bundle_id,
-        category: AppCategory::Other,
     })
 }
 
-/// Remember an unassigned context (newest first, max 12). Returns true when
-/// the list changed and settings need saving.
+/// Remember a recently dictated-into app or site (newest first, max 12) so
+/// the Style page can show it. Returns true when settings need saving.
 pub fn remember_recent(settings: &mut AppSettings, ctx: &DictationContext) -> bool {
-    let Some(entry) = unassigned_entry(ctx) else {
+    let Some(entry) = context_entry(ctx) else {
         return false;
     };
-    if resolve(ctx, &settings.app_rules).1.is_some() {
-        return false;
-    }
     if settings.recent_contexts.first().map(|r| (&r.kind, &r.key))
         == Some((&entry.kind, &entry.key))
     {
@@ -206,13 +248,22 @@ pub fn remember_recent(settings: &mut AppSettings, ctx: &DictationContext) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::default_app_rules;
 
     fn ctx(bundle: &str, host: Option<&str>) -> DictationContext {
         DictationContext {
             app_name: Some("App".into()),
             bundle_id: Some(bundle.into()),
             url_host: host.map(str::to_string),
+            declared_category: None,
+        }
+    }
+
+    fn rule(kind: AppRuleKind, key: &str, category: AppCategory) -> AppRule {
+        AppRule {
+            kind,
+            key: key.into(),
+            label: key.into(),
+            category,
         }
     }
 
@@ -231,50 +282,71 @@ mod tests {
     }
 
     #[test]
-    fn resolves_websites_before_apps() {
-        let rules = default_app_rules();
+    fn automatic_categories() {
+        let none: Vec<AppRule> = vec![];
         assert_eq!(
-            resolve(&ctx("com.google.Chrome", Some("mail.google.com")), &rules).0,
+            resolve(&ctx("com.google.Chrome", Some("mail.google.com")), &none).0,
             AppCategory::Email
         );
         assert_eq!(
-            resolve(&ctx("com.google.Chrome", Some("docs.google.com")), &rules).0,
+            resolve(&ctx("com.google.Chrome", Some("docs.google.com")), &none).0,
             AppCategory::Other
         );
         assert_eq!(
-            resolve(&ctx("com.tinyspeck.slackmacgap", None), &rules).0,
+            resolve(&ctx("com.tinyspeck.slackmacgap", None), &none).0,
             AppCategory::Work
         );
         assert_eq!(
-            resolve(&ctx("com.apple.MobileSMS", None), &rules).0,
+            resolve(&ctx("com.apple.MobileSMS", None), &none).0,
             AppCategory::Personal
         );
-        assert_eq!(
-            resolve(&ctx("com.unknown.app", None), &rules).0,
-            AppCategory::Other
-        );
+        let mut declared = ctx("com.example.social", None);
+        declared.declared_category = Some("public.app-category.social-networking".into());
+        assert_eq!(resolve(&declared, &none).0, AppCategory::Personal);
     }
 
     #[test]
-    fn subdomains_match_but_lookalikes_do_not() {
-        let rules = vec![AppRule {
-            kind: AppRuleKind::Website,
-            key: "notion.so".into(),
-            label: "Notion".into(),
-            category: AppCategory::Work,
-        }];
+    fn overrides_win_over_automatic() {
+        let overrides = vec![
+            rule(
+                AppRuleKind::App,
+                "com.tinyspeck.slackmacgap",
+                AppCategory::Personal,
+            ),
+            rule(AppRuleKind::Website, "docs.google.com", AppCategory::Work),
+        ];
         assert_eq!(
-            resolve(&ctx("com.apple.Safari", Some("team.notion.so")), &rules).0,
+            resolve(&ctx("com.tinyspeck.slackmacgap", None), &overrides),
+            (AppCategory::Personal, CategorySource::Override)
+        );
+        assert_eq!(
+            resolve(
+                &ctx("com.google.Chrome", Some("docs.google.com")),
+                &overrides
+            ),
+            (AppCategory::Work, CategorySource::Override)
+        );
+        // Subdomains match, lookalikes don't.
+        assert_eq!(
+            resolve(
+                &ctx("com.apple.Safari", Some("x.docs.google.com")),
+                &overrides
+            )
+            .0,
             AppCategory::Work
         );
         assert_eq!(
-            resolve(&ctx("com.apple.Safari", Some("notnotion.so")), &rules).0,
+            resolve(
+                &ctx("com.apple.Safari", Some("notdocs.google.com")),
+                &overrides
+            )
+            .0,
             AppCategory::Other
         );
     }
 
     #[test]
-    fn recent_contexts_dedupe_and_skip_assigned() {
+    fn recent_contexts_dedupe() {
         let mut settings = crate::settings::get_default_settings();
         assert!(remember_recent(
             &mut settings,
@@ -283,10 +355,6 @@ mod tests {
         assert!(!remember_recent(
             &mut settings,
             &ctx("com.example.editor", None)
-        ));
-        assert!(!remember_recent(
-            &mut settings,
-            &ctx("com.tinyspeck.slackmacgap", None)
         ));
         assert!(remember_recent(
             &mut settings,

@@ -1,4 +1,5 @@
 mod actions;
+mod app_categories;
 mod app_context;
 mod app_switcher;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -11,9 +12,12 @@ mod cleanup;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod dictation_log;
 mod helpers;
 mod input;
 mod llm_client;
+mod local_llm;
+mod local_llm_install;
 mod managers;
 mod memory;
 mod overlay;
@@ -25,6 +29,7 @@ mod settings;
 mod shortcut;
 mod signal_handle;
 mod style;
+mod text_field;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -209,6 +214,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         AudioRecordingManager::new(app_handle, transcription_manager.stream_router())
             .expect("Failed to initialize recording manager"),
     );
+    recording_manager.warm_device_cache();
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
@@ -225,6 +231,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
+
+    // Taught words need results for the current model (it may have changed
+    // since they were taught, e.g. by the deleted-model fallback).
+    vocab_teach::recheck_in_background(app_handle, false);
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -688,6 +698,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_post_process_api_key_setting,
             shortcut::change_post_process_model_setting,
             shortcut::set_post_process_provider,
+            local_llm_install::get_local_model_status,
+            local_llm_install::install_local_model,
             shortcut::fetch_post_process_models,
             shortcut::add_post_process_prompt,
             shortcut::update_post_process_prompt,
@@ -697,12 +709,30 @@ pub fn run(cli_args: CliArgs) {
             vocab_teach::teach_start_recording,
             vocab_teach::teach_stop_recording,
             vocab_teach::teach_cancel_recording,
+            vocab_teach::teach_discard_clips,
+            vocab_teach::teach_save_word,
+            vocab_teach::teach_delete_word,
+            vocab_teach::teach_set_excluded,
+            vocab_teach::teach_recheck,
             shortcut::change_input_gain_setting,
             shortcut::change_auto_gain_setting,
             shortcut::change_voice_control_enabled_setting,
+            shortcut::change_context_aware_paste_setting,
+            shortcut::change_result_popup_enabled_setting,
+            shortcut::change_local_model_keep_loaded_setting,
+            shortcut::change_result_popup_seconds_setting,
+            overlay::fit_result_overlay,
+            overlay::dismiss_result_overlay,
+            overlay::copy_result_text,
+            dictation_log::get_recent_dictations,
+            shortcut::change_history_retention_days_setting,
+            shortcut::change_recording_retention_days_setting,
             shortcut::change_cleanup_level_setting,
+            shortcut::change_custom_instructions_setting,
+            shortcut::change_category_instructions_setting,
             shortcut::change_category_styles_setting,
             shortcut::update_app_rules,
+            shortcut::list_app_categories,
             shortcut::clear_recent_contexts,
             shortcut::change_app_switch_enabled_setting,
             shortcut::change_app_switch_any_installed_setting,
@@ -765,6 +795,7 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::open_microphone_privacy_settings,
             commands::audio::get_available_microphones,
             commands::audio::set_selected_microphone,
+            commands::audio::update_preferred_microphones,
             commands::audio::get_selected_microphone,
             commands::audio::get_available_output_devices,
             commands::audio::set_selected_output_device,
@@ -1031,6 +1062,7 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
+            local_llm::sync_with_settings(&settings::get_settings(&app_handle));
 
             // Secure Input monitor (macOS): detects stuck secure input that
             // silently blocks keyed shortcuts, warns the user, and activates
@@ -1132,6 +1164,7 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            local_llm::stop();
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();
             }

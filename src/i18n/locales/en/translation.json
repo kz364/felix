@@ -267,6 +267,18 @@
       "inputGain": {
         "title": "Input Gain",
         "description": "Fixed boost or cut applied to the microphone before transcription."
+      },
+      "preferredMicrophones": {
+        "title": "Preferred Microphones",
+        "description": "Used in this order whenever they're connected, ahead of the Microphone setting above and the system default. Disconnected ones stay on the list, and Handy switches back automatically when they return.",
+        "pick": "Add a connected microphone…",
+        "add": "Add",
+        "inUse": "In use",
+        "connected": "Connected",
+        "disconnected": "Not connected",
+        "moveUp": "Move {{name}} up",
+        "moveDown": "Move {{name}} down",
+        "remove": "Remove {{name}}"
       }
     },
     "advanced": {
@@ -419,6 +431,18 @@
         "remove": "Remove replacement {{from}}",
         "duplicate": "There is already a replacement for \"{{from}}\"",
         "item": "{{from}} → {{to}}"
+      },
+      "contextAwarePaste": {
+        "label": "Fit to Surrounding Text",
+        "description": "Before pasting, look at the text around the cursor: add a space after a word or punctuation, and lowercase the first word when continuing a sentence. Works in fields that expose their text to Accessibility."
+      },
+      "resultPopup": {
+        "label": "Show Text When There's Nowhere to Paste",
+        "description": "If no text field is focused when a dictation finishes, show it in a card instead of pasting, with a Copy button. Apps whose text fields can't be detected (terminals, some editors) always get the paste.",
+        "timeoutTitle": "Close Text Card After",
+        "timeoutDescription": "How long the card stays up. Moving the pointer over it pauses the countdown.",
+        "seconds": "{{count}} seconds",
+        "never": "Keep until closed"
       }
     },
     "postProcessing": {
@@ -447,6 +471,7 @@
         "model": {
           "title": "Model",
           "descriptionCustom": "Provide the model identifier expected by your custom endpoint.",
+          "descriptionLocal": "qwen3.5:4b is the most accurate. qwen3.5:2b-q4_K_M needs about half the memory but is a bit less careful. Any Ollama model or a path to a .gguf file also works.",
           "descriptionDefault": "Choose a model exposed by the selected provider.",
           "placeholderWithOptions": "Search or select a model",
           "placeholderNoOptions": "Type a model name",
@@ -475,8 +500,8 @@
         "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
       },
       "cleanup": {
-        "title": "AI Cleanup",
-        "description": "Applied to every dictation by the AI provider below (on-device Apple Intelligence by default). Runs after your vocabulary rules and voice commands, and before the style for the app you're in.",
+        "title": "Clarity",
+        "description": "How much the on-device AI edits each dictation. Runs after your vocabulary rules and voice commands, and before the style for the app you're in.",
         "intro": "How much the AI edits what you said. If it would change the meaning, drop details or invent numbers, the edit is discarded and the rules-only text is pasted instead.",
         "levels": {
           "none": {
@@ -495,6 +520,42 @@
             "example": "We could grab dinner at 8, since Sam's running late."
           }
         }
+      },
+      "instructions": {
+        "title": "Custom Instructions",
+        "description": "Your own rules, one per line, applied in the same pass as Clarity and taking priority over it.",
+        "needsClarity": "Set Clarity to Light or Medium to use custom instructions; with None there's no AI pass.",
+        "everywhere": "Instructions for every app",
+        "placeholder": "e.g. Use British spelling\nNever use exclamation marks",
+        "perCategory": "Per category",
+        "configured_one": "({{count}} set)",
+        "configured_other": "({{count}} set)",
+        "examples": {
+          "personal": "e.g. Keep it short and friendly",
+          "work": "e.g. Spell product names exactly as in my vocabulary",
+          "email": "e.g. Sign off with \"Best, Kaspar\"",
+          "other": "e.g. Keep technical terms and code exactly as spoken"
+        }
+      },
+      "shortcut": {
+        "title": "Prompt Shortcut",
+        "description": "A separate shortcut that runs a prompt of your own instead of Clarity, for one-off transformations like translating or summarizing a dictation."
+      },
+      "local": {
+        "title": "Local model",
+        "ready": "{{model}} is installed and runs on this Mac.",
+        "needsOllama": "Install Ollama and download {{model}} to clean up dictations on this Mac, with nothing sent to the cloud.",
+        "needsModel": "Download {{model}} to clean up dictations on this Mac.",
+        "installAll": "Install Ollama and {{model}}",
+        "installModel": "Download {{model}}",
+        "downloadingOllama": "Installing Ollama…",
+        "downloadingModel": "Downloading {{model}}…",
+        "progress": "{{done}} of {{total}} GB",
+        "keepLoaded": {
+          "label": "Keep model loaded",
+          "description": "Keeps the model in memory (about 3–4 GB for the default model) so cleanup starts instantly.",
+          "warning": "The model will load when you start dictating and unload after it's idle. Expect slower cleanup, especially on short dictations, but less memory in use."
+        }
       }
     },
     "history": {
@@ -511,7 +572,18 @@
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
       "transcribing": "Transcribing...",
-      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
+      "retention": {
+        "textTitle": "Keep Dictation History",
+        "textDescription": "How long dictated text stays on the History page. Starred entries are always kept.",
+        "audioTitle": "Keep Audio Recordings",
+        "audioDescription": "Audio is only needed to replay or re-transcribe a dictation. Off by default; nothing is written to disk when set to Don't keep.",
+        "days_one": "{{count}} day",
+        "days_other": "{{count}} days",
+        "forever": "Forever",
+        "noAudio": "Don't keep",
+        "noAudioForEntry": "No audio was kept for this dictation"
+      }
     },
     "debug": {
       "title": "Debug",
@@ -724,7 +796,7 @@
       },
       "teach": {
         "title": "Teach a Word",
-        "description": "Say a vocabulary word a few times, spoken and whispered, to see what your current model hears. Mishearings your rules don't already fix can be added as a correction rule.",
+        "description": "Say a vocabulary word a few times, spoken and whispered. The clips are kept so the word can be re-checked automatically whenever you switch transcription models; mishearings are rewritten to the word.",
         "pickWord": "Choose a word…",
         "start": "Teach",
         "dialogTitle": "Teach \"{{word}}\"",
@@ -739,14 +811,24 @@
         "spokenTag": "Spoken",
         "whisperedTag": "Whispered",
         "nothing": "(nothing heard)",
-        "allRecognized": "\"{{word}}\" came through correctly every time. No rule needed.",
+        "allRecognized": "\"{{word}}\" came through correctly every time. The clips are saved so it gets re-checked if you switch models.",
         "suggestRule": "Rewrite these mishearings to \"{{word}}\":",
         "variantItem": "\"{{variant}}\" → {{word}}",
         "commonWord": "common word: would also rewrite normal speech",
-        "addRule": "Add Correction Rule",
+        "addRule": "Save and Rewrite These",
         "again": "Try Again",
-        "done": "Done",
-        "ruleAdded": "Added a correction rule for \"{{word}}\""
+        "done": "Save",
+        "saved": "Saved \"{{word}}\""
+      },
+      "taught": {
+        "title": "Taught Words",
+        "recheckAll": "Re-check on Current Model",
+        "clips_one": "{{count}} clip",
+        "clips_other": "{{count}} clips",
+        "delete": "Delete",
+        "checking": "Checking on the current model…",
+        "recognized": "Recognized correctly on the current model.",
+        "rewrites": "On the current model, rewrite:"
       }
     },
     "style": {
@@ -771,23 +853,22 @@
         }
       },
       "apps": {
-        "title": "Apps & Websites",
-        "description": "Which category each app or website belongs to. Websites are detected in Safari, Chrome, Arc, Brave, Edge and Vivaldi (macOS asks once per browser). Email also gets greeting and sign-off on their own lines.",
-        "recentTitle": "Recently used, not assigned",
-        "clearRecent": "Clear",
-        "kind": {
-          "app": "App",
-          "website": "Website"
-        },
-        "addApp": "Add App",
-        "addAppDescription": "Pick an installed app, then set its category in the list below.",
-        "pickApp": "Choose an app…",
-        "addSite": "Add Website",
-        "addSiteDescription": "A domain like mail.google.com. Subdomains match too.",
+        "addSite": "Add a Website",
+        "addSiteDescription": "For a site not listed: its domain (subdomains match too). Websites are detected in Safari, Chrome, Arc, Brave, Edge and Vivaldi; macOS asks once per browser.",
         "invalidSite": "Enter a domain like example.com",
         "add": "Add",
-        "remove": "Remove {{name}}"
-      }
+        "categoryFor": "Category",
+        "moveTo": "Move to",
+        "automaticTag": "(automatic)",
+        "overridden": "Changed from automatic",
+        "noMatches": "No matches.",
+        "empty": "Nothing here yet.",
+        "moreApps_one": "…and {{count}} other app. Search to find it.",
+        "moreApps_other": "…and {{count}} other apps. Search to find them."
+      },
+      "title": "Style by App",
+      "intro": "Apps and websites are sorted into categories automatically. Each category has its own formality, applied as the last step before pasting. Click an app to move it.",
+      "search": "Find an app or website…"
     }
   },
   "footer": {
@@ -854,7 +935,14 @@
   },
   "overlay": {
     "transcribing": "Transcribing...",
-    "processing": "Processing..."
+    "processing": "Processing...",
+    "result": {
+      "title": "Nowhere to paste",
+      "close": "Close",
+      "copy": "Copy",
+      "copied": "Copied",
+      "paused": "Paused"
+    }
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} may be blocking 1 shortcut",

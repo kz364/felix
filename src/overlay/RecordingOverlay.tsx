@@ -11,8 +11,20 @@ import type {
 } from "@/bindings";
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
+import { ResultCard } from "./ResultCard";
 
-type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
+/** `result-text` event payload (overlay.rs `ResultPopup`). */
+interface ResultPopup {
+  text: string;
+  timeout_ms: number;
+}
+
+type OverlayState =
+  | "recording"
+  | "streaming"
+  | "transcribing"
+  | "processing"
+  | "result";
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
@@ -43,6 +55,12 @@ const RecordingOverlay: React.FC = () => {
   // True once live text overflows the cap. A top overlay fades its top edge only
   // while overflowing, so the resting first line stays crisp flush under the pill.
   const [overflowing, setOverflowing] = useState(false);
+  // Dictation shown in the result card (nowhere to paste it).
+  const [result, setResult] = useState<ResultPopup>({
+    text: "",
+    timeout_ms: 0,
+  });
+  const [resultSession, setResultSession] = useState(0);
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -94,6 +112,14 @@ const RecordingOverlay: React.FC = () => {
         setCaptureReady(false);
       });
 
+      const unlistenResult = await listen<ResultPopup>(
+        "result-text",
+        (event) => {
+          setResult(event.payload);
+          setResultSession((s) => s + 1);
+        },
+      );
+
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
         setCaptureReady(true);
@@ -124,6 +150,7 @@ const RecordingOverlay: React.FC = () => {
       return () => {
         unlistenShow();
         unlistenHide();
+        unlistenResult();
         unlistenReady();
         unlistenLevel();
         unlistenStream();
@@ -226,6 +253,20 @@ const RecordingOverlay: React.FC = () => {
       <div className="sbase-r">{showCancel && cancelBtn}</div>
     </div>
   );
+
+  // ---- Result: the pill grown into a box with text nobody could receive ----
+  if (state === "result") {
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        <ResultCard
+          key={resultSession}
+          text={result.text}
+          timeoutMs={result.timeout_ms}
+          session={resultSession}
+        />
+      </div>
+    );
+  }
 
   // ---- Live overlay: a pill that sculpts open into a panel ----
   if (state === "streaming") {

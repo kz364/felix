@@ -21,10 +21,11 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
-    self, get_settings, AppAlias, AppRule, AppRuleKind, AutoSubmitKey, CategoryStyles,
-    CleanupLevel, ClipboardHandling, KeyboardImplementation, LLMPrompt, OverlayPosition,
-    OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding, SoundTheme, TextReplacement,
-    Theme, TypingTool, VadBackend, VoiceTrigger, APPLE_INTELLIGENCE_PROVIDER_ID,
+    self, get_settings, AppAlias, AppCategory, AppRule, AppRuleKind, AutoSubmitKey,
+    CategoryInstructions, CategoryStyles, CleanupLevel, ClipboardHandling, KeyboardImplementation,
+    LLMPrompt, OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding,
+    SoundTheme, TextReplacement, Theme, TypingTool, VadBackend, VoiceTrigger,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -1005,6 +1006,7 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;
     settings::write_settings(&app, settings.clone());
+    crate::local_llm::sync_with_settings(&settings);
 
     // Register or unregister the post-processing shortcut
     if let Some(binding) = settings
@@ -1100,6 +1102,7 @@ pub fn change_post_process_model_setting(
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_models.insert(provider_id, model);
+    crate::local_llm::sync_with_settings(&settings);
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1110,6 +1113,7 @@ pub fn set_post_process_provider(app: AppHandle, provider_id: String) -> Result<
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_provider_id = provider_id;
+    crate::local_llm::sync_with_settings(&settings);
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1215,6 +1219,10 @@ pub async fn fetch_post_process_models(
         {
             return Err("Apple Intelligence is only available on Apple silicon Macs running macOS 15 or later.".to_string());
         }
+    }
+
+    if provider.id == crate::local_llm::LOCAL_PROVIDER_ID {
+        return Ok(crate::local_llm::available_models());
     }
 
     // Get API key
@@ -1323,11 +1331,96 @@ pub fn change_voice_control_enabled_setting(app: AppHandle, enabled: bool) -> Re
     Ok(())
 }
 
+fn apply_history_retention(app: &AppHandle) {
+    let hm = app.state::<std::sync::Arc<crate::managers::history::HistoryManager>>();
+    if let Err(e) = hm.cleanup_old_entries() {
+        error!("History cleanup failed: {e}");
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_context_aware_paste_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.context_aware_paste = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_local_model_keep_loaded_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.local_model_keep_loaded = enabled;
+    crate::local_llm::sync_with_settings(&settings);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_result_popup_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.result_popup_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_result_popup_seconds_setting(app: AppHandle, seconds: u32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.result_popup_seconds = seconds.min(600);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_history_retention_days_setting(app: AppHandle, days: u32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.history_retention_days = days;
+    settings::write_settings(&app, settings);
+    apply_history_retention(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_recording_retention_days_setting(app: AppHandle, days: u32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.recording_retention_days = days;
+    settings::write_settings(&app, settings);
+    apply_history_retention(&app);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_cleanup_level_setting(app: AppHandle, level: CleanupLevel) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.cleanup_level = level;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_custom_instructions_setting(app: AppHandle, text: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.custom_instructions = text;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_category_instructions_setting(
+    app: AppHandle,
+    instructions: CategoryInstructions,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.category_instructions = instructions;
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1376,6 +1469,100 @@ pub fn update_app_rules(app: AppHandle, rules: Vec<AppRule>) -> Result<(), Strin
     });
     settings::write_settings(&app, settings);
     Ok(())
+}
+
+/// An app or website with its automatic and effective category.
+#[derive(Serialize, Debug, Clone, Type)]
+pub struct CategorizedEntry {
+    pub kind: AppRuleKind,
+    pub key: String,
+    pub label: String,
+    pub category: AppCategory,
+    pub automatic: AppCategory,
+    pub overridden: bool,
+    /// Dictated into recently.
+    pub recent: bool,
+}
+
+/// Every installed app, known website, override and recently used app/site,
+/// with its category — for the Style page.
+#[tauri::command]
+#[specta::specta]
+pub fn list_app_categories(app: AppHandle) -> Vec<CategorizedEntry> {
+    let settings = settings::get_settings(&app);
+    let mut entries: Vec<CategorizedEntry> = Vec::new();
+    let mut push = |kind: AppRuleKind, key: String, label: String, automatic: AppCategory| {
+        if entries.iter().any(|e| e.kind == kind && e.key == key) {
+            return;
+        }
+        let over = settings
+            .app_rules
+            .iter()
+            .find(|r| r.kind == kind && r.key == key);
+        let recent = settings
+            .recent_contexts
+            .iter()
+            .any(|r| r.kind == kind && r.key == key);
+        entries.push(CategorizedEntry {
+            kind,
+            category: over.map_or(automatic, |r| r.category),
+            overridden: over.is_some(),
+            recent,
+            key,
+            label,
+            automatic,
+        });
+    };
+    for rule in &settings.recent_contexts {
+        push(
+            rule.kind,
+            rule.key.clone(),
+            rule.label.clone(),
+            rule.category,
+        );
+    }
+    for installed in crate::app_switcher::installed_apps() {
+        let Some(bundle_id) = installed.bundle_id else {
+            continue;
+        };
+        if bundle_id == "com.pais.handy" {
+            continue;
+        }
+        let declared = crate::app_categories::declared_category_at(&installed.path);
+        let automatic = crate::app_categories::auto_app_category(
+            &bundle_id,
+            &installed.name,
+            declared.as_deref(),
+        );
+        push(AppRuleKind::App, bundle_id, installed.name, automatic);
+    }
+    for (domain, _name, category) in crate::app_categories::KNOWN_WEBSITES {
+        push(
+            AppRuleKind::Website,
+            domain.to_string(),
+            domain.to_string(),
+            *category,
+        );
+    }
+    for rule in &settings.app_rules {
+        let automatic = match rule.kind {
+            AppRuleKind::Website => crate::app_categories::auto_website_category(&rule.key)
+                .unwrap_or(AppCategory::Other),
+            AppRuleKind::App => AppCategory::Other,
+        };
+        push(rule.kind, rule.key.clone(), rule.label.clone(), automatic);
+    }
+    // Websites are labelled by domain: "Outlook" twice, or "Discord" next to
+    // the Discord app, would be ambiguous.
+    for entry in entries
+        .iter_mut()
+        .filter(|e| e.kind == AppRuleKind::Website)
+    {
+        entry.label = entry.key.clone();
+    }
+    // Apps first, then websites, each alphabetically.
+    entries.sort_by_key(|e| (e.kind == AppRuleKind::Website, e.label.to_lowercase()));
+    entries
 }
 
 #[tauri::command]

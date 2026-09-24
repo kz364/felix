@@ -2,12 +2,6 @@ import Dispatch
 import Foundation
 import FoundationModels
 
-@available(macOS 26.0, *)
-@Generable
-private struct CleanedTranscript: Sendable {
-    let cleanedText: String
-}
-
 // MARK: - Swift implementation for Apple LLM integration
 // This file is compiled via Cargo build script for Apple Silicon targets
 
@@ -33,6 +27,63 @@ private func truncatedText(_ text: String, limit: Int) -> String {
         return text
     }
     return words.prefix(limit).joined(separator: " ")
+}
+
+// MARK: - Prewarmed session
+
+/// One session prewarmed while the user is still speaking, handed to the next
+/// request with the same instructions. Sessions keep their transcript, so each
+/// is used once.
+private final class WarmSessionStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instructions: String?
+    private var session: AnyObject?
+
+    func put(_ session: AnyObject, instructions: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.session = session
+        self.instructions = instructions
+    }
+
+    func take(instructions: String) -> AnyObject? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard self.instructions == instructions, let session = session else {
+            return nil
+        }
+        self.session = nil
+        self.instructions = nil
+        return session
+    }
+}
+
+private let warmSessions = WarmSessionStore()
+
+/// Create and prewarm a session for the next cleanup. Loading the model and
+/// the instructions ahead of time saves ~100 ms of the ~500 ms before the
+/// first output token; also caching the fixed start of the user message
+/// saves ~20 ms more (fm/prefill.swift in the eval scratchpad).
+@_cdecl("prewarm_apple_session")
+public func prewarmAppleSession(
+    _ systemPrompt: UnsafePointer<CChar>,
+    _ promptPrefix: UnsafePointer<CChar>
+) {
+    let instructions = String(cString: systemPrompt)
+    let prefix = String(cString: promptPrefix)
+    guard #available(macOS 26.0, *) else { return }
+    let model = SystemLanguageModel.default
+    guard model.availability == .available else { return }
+
+    let session = LanguageModelSession(model: model, instructions: instructions)
+    session.prewarm()
+    if !prefix.isEmpty {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            session.prewarm(promptPrefix: Prompt(prefix))
+        }
+    }
+    warmSessions.put(session, instructions: instructions)
 }
 
 @_cdecl("is_apple_intelligence_available")
@@ -89,22 +140,13 @@ public func processTextWithSystemPrompt(
     Task.detached(priority: .userInitiated) {
         defer { semaphore.signal() }
         do {
-            let session = LanguageModelSession(
-                model: model,
-                instructions: swiftSystemPrompt
-            )
-            var output: String
-
-            do {
-                let structured = try await session.respond(
-                    to: swiftUserContent,
-                    generating: CleanedTranscript.self
-                )
-                output = structured.content.cleanedText
-            } catch {
-                let fallbackGeneration = try await session.respond(to: swiftUserContent)
-                output = fallbackGeneration.content
-            }
+            let session =
+                (warmSessions.take(instructions: swiftSystemPrompt) as? LanguageModelSession)
+                ?? LanguageModelSession(model: model, instructions: swiftSystemPrompt)
+            // Plain text generation: ~10% faster than guided generation of a
+            // wrapper struct, with the same cleanup quality in the prompt
+            // eval (scripts/cleanup-eval).
+            var output = try await session.respond(to: swiftUserContent).content
 
             if tokenLimit > 0 {
                 output = truncatedText(output, limit: tokenLimit)

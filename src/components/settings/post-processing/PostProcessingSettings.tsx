@@ -23,6 +23,8 @@ import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
 import { PostProcessingToggle } from "../PostProcessingToggle";
 import { CleanupLevelPicker } from "./CleanupLevelPicker";
+import { CustomInstructions } from "./CustomInstructions";
+import { LocalModelSetup } from "./LocalModelSetup";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
   const { t } = useTranslation();
@@ -52,7 +54,7 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
             {t("settings.postProcessing.api.appleIntelligence.unavailable")}
           </Alert>
         ) : null
-      ) : (
+      ) : state.isLocalProvider ? null : (
         <>
           {state.selectedProvider?.id === "custom" && (
             <SettingContainer
@@ -104,7 +106,9 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
           description={
             state.isCustomProvider
               ? t("settings.postProcessing.api.model.descriptionCustom")
-              : t("settings.postProcessing.api.model.descriptionDefault")
+              : state.isLocalProvider
+                ? t("settings.postProcessing.api.model.descriptionLocal")
+                : t("settings.postProcessing.api.model.descriptionDefault")
           }
           descriptionMode="tooltip"
           layout="stacked"
@@ -141,6 +145,8 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
           </div>
         </SettingContainer>
       )}
+
+      {state.isLocalProvider && <LocalModelSetup model={state.model} />}
     </>
   );
 };
@@ -426,10 +432,32 @@ export const PostProcessingSettingsPrompts = React.memo(
 );
 PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
+const Disclosure: React.FC<{
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}> = ({ title, summary, children }) => (
+  <details className="group rounded-lg border border-mid-gray/20">
+    <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium">
+      <span>{title}</span>
+      {summary && (
+        <span className="text-xs font-normal text-text/60">{summary}</span>
+      )}
+    </summary>
+    <div className="pb-2">{children}</div>
+  </details>
+);
+
 export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const enabled = getSetting("post_process_enabled") || false;
+  const level = getSetting("cleanup_level") ?? "light";
+  const providerId = getSetting("post_process_provider_id") || "";
+  const providerLabel =
+    (getSetting("post_process_providers") || []).find(
+      (p) => p.id === providerId,
+    )?.label ?? "";
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
@@ -444,21 +472,35 @@ export const PostProcessingSettings: React.FC = () => {
         <CleanupLevelPicker disabled={!enabled} />
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
+      <SettingsGroup
+        title={t("settings.postProcessing.instructions.title")}
+        description={
+          level === "none"
+            ? t("settings.postProcessing.instructions.needsClarity")
+            : t("settings.postProcessing.instructions.description")
+        }
+      >
+        <CustomInstructions disabled={!enabled} />
+      </SettingsGroup>
+
+      <Disclosure
+        title={t("settings.postProcessing.api.title")}
+        summary={providerLabel}
+      >
+        <PostProcessingSettingsApi />
+      </Disclosure>
+
+      <Disclosure title={t("settings.postProcessing.shortcut.title")}>
+        <p className="px-4 pb-2 text-xs text-text/60">
+          {t("settings.postProcessing.shortcut.description")}
+        </p>
         <ShortcutInput
           shortcutId="transcribe_with_post_process"
           descriptionMode="tooltip"
           grouped={true}
         />
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.postProcessing.api.title")}>
-        <PostProcessingSettingsApi />
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
         <PostProcessingSettingsPrompts />
-      </SettingsGroup>
+      </Disclosure>
     </div>
   );
 };
