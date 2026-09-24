@@ -134,7 +134,7 @@ fn has_custom_instructions(settings: &AppSettings) -> bool {
 
 /// The level prompt plus the user's instructions for the current destination.
 fn level_prompt_with_instructions(settings: &AppSettings, level: CleanupLevel) -> Option<String> {
-    let prompt = crate::cleanup::level_prompt(level)?;
+    let prompt = crate::cleanup::level_prompt_for(settings, level)?;
     let context = crate::app_context::current();
     let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
     Some(
@@ -610,6 +610,10 @@ pub(crate) struct ProcessedTranscription {
     pub submit_key: Option<crate::settings::AutoSubmitKey>,
     /// App to bring to the front instead of pasting ("go to Claude").
     pub switch_to_app: Option<String>,
+    /// Where the text goes, when the assistant wrote it.
+    pub placement: Option<crate::assistant::Placement>,
+    /// Why the assistant couldn't help; the dictation is shown, not pasted.
+    pub assistant_error: Option<String>,
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -633,6 +637,70 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
     }
 }
 
+/// Felix's "start a Claude Code session": runs in the background (it waits on
+/// the Claude app) and says how it went on the result card.
+fn start_claude_session(app: &AppHandle, project: String, prompt: String, send: bool) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let result = crate::agent_skills::start_claude_session(&project, &prompt, send);
+        info!("Claude session skill took {:?}", started.elapsed());
+        let (title, text) = match result {
+            Ok(outcome) => {
+                let folder = outcome.folder.display().to_string();
+                let title = match (outcome.sent, send) {
+                    (true, _) => "Started a Claude Code session",
+                    (false, true) => "Opened Claude Code; press Send to start",
+                    (false, false) => "Opened Claude Code with your prompt",
+                };
+                let mut text = format!(
+                    "{} {folder}\n\n{prompt}",
+                    if outcome.created {
+                        "New project:"
+                    } else {
+                        "Project:"
+                    }
+                );
+                if !outcome.verified {
+                    warn!("Claude session: couldn't confirm the folder {folder}");
+                    text.push_str("\n\nCheck the session opened in this folder.");
+                }
+                (title.to_string(), text)
+            }
+            Err(e) => {
+                error!("Claude session failed: {e}");
+                ("Couldn't start the Claude session".to_string(), e)
+            }
+        };
+        crate::overlay::show_result_overlay_titled(&app, text, Some(title));
+    });
+}
+
+/// Felix's computer task: says it's on it, runs Codex with Cua in the
+/// background, and shows Codex's answer when it's done.
+fn run_computer_task(app: &AppHandle, task: String) {
+    let app = app.clone();
+    let name = get_settings(&app).assistant_name;
+    crate::overlay::show_result_overlay_titled(
+        &app,
+        task.clone(),
+        Some(format!("{name} is on it")),
+    );
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let result = crate::agent::run_task(&task);
+        info!("Computer task took {:?}", started.elapsed());
+        let (title, text) = match result {
+            Ok(reply) => (format!("{name} is done"), reply),
+            Err(e) => {
+                error!("Computer task failed: {e}");
+                (format!("{name} couldn't finish"), e)
+            }
+        };
+        crate::overlay::show_result_overlay_titled(&app, text, Some(title));
+    });
+}
+
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
@@ -653,10 +721,104 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
+    // Names heard as ordinary words ("cloud" for "Claude"), decided per
+    // occurrence by the local model, before rules and the assistant see it.
+    final_text = crate::soundalikes::resolve(&final_text, &settings).await;
+
     // Scratchpad rules run before the LLM so voice commands are stripped and
     // replacements applied deterministically; the model never sees them.
     let scratchpad = crate::scratchpad::run_rules(&final_text, &settings);
     final_text = scratchpad.text;
+
+    // Saying the assistant's name hands the dictation to it instead of the
+    // cleanup model.
+    if settings.assistant_enabled
+        && scratchpad.switch_to_app.is_none()
+        && crate::assistant::is_addressed(&final_text, &settings.assistant_name)
+    {
+        crate::overlay::show_assistant_overlay(app);
+        let field = crate::text_field::focused_field();
+        let context = crate::app_context::current();
+        let destination = crate::assistant::Destination {
+            app_name: context.app_name.as_deref(),
+            url_host: context.url_host.as_deref(),
+            field: field.as_ref(),
+        };
+        let started = std::time::Instant::now();
+        let result = crate::assistant::run(&settings, &final_text, &destination).await;
+        let label = format!(
+            "{} ({}, {})",
+            settings.assistant_name, settings.assistant_model, settings.assistant_effort
+        );
+        return match result {
+            Ok(crate::assistant::Edit {
+                text,
+                placement: crate::assistant::Placement::ClaudeSession { project },
+            }) => {
+                info!(
+                    "{label} starts a Claude session after {:?}",
+                    started.elapsed()
+                );
+                start_claude_session(app, project, text.clone(), settings.agent_auto_send);
+                ProcessedTranscription {
+                    final_text: String::new(),
+                    post_processed_text: Some(text),
+                    post_process_prompt: Some(label),
+                    submit_key: None,
+                    switch_to_app: None,
+                    placement: None,
+                    assistant_error: None,
+                }
+            }
+            Ok(crate::assistant::Edit {
+                text,
+                placement: crate::assistant::Placement::ComputerTask,
+            }) => {
+                info!(
+                    "{label} starts a computer task after {:?}",
+                    started.elapsed()
+                );
+                run_computer_task(app, text.clone());
+                ProcessedTranscription {
+                    final_text: String::new(),
+                    post_processed_text: Some(text),
+                    post_process_prompt: Some(label),
+                    submit_key: None,
+                    switch_to_app: None,
+                    placement: None,
+                    assistant_error: None,
+                }
+            }
+            Ok(edit) => {
+                info!(
+                    "{label} answered in {:?}: {:?}",
+                    started.elapsed(),
+                    edit.placement_kind()
+                );
+                ProcessedTranscription {
+                    final_text: edit.text.clone(),
+                    post_processed_text: Some(edit.text),
+                    post_process_prompt: Some(label),
+                    submit_key: scratchpad.submit_key,
+                    switch_to_app: None,
+                    placement: Some(edit.placement),
+                    assistant_error: None,
+                }
+            }
+            Err(e) => {
+                error!("{label} failed after {:?}: {e}", started.elapsed());
+                ProcessedTranscription {
+                    final_text,
+                    post_processed_text: None,
+                    post_process_prompt: Some(label),
+                    submit_key: None,
+                    switch_to_app: None,
+                    placement: None,
+                    assistant_error: Some(e),
+                }
+            }
+        };
+    }
 
     // AI cleanup: the post-process hotkey uses the selected prompt; otherwise
     // the cleanup level (when Post Processing is on) applies to every dictation.
@@ -682,7 +844,7 @@ pub(crate) async fn process_transcription_output(
 
             post_process_prompt = match request {
                 CleanupRequest::Level(level) => {
-                    crate::cleanup::level_prompt(level).map(str::to_string)
+                    crate::cleanup::level_prompt_for(&settings, level).map(str::to_string)
                 }
                 CleanupRequest::SelectedPrompt => settings
                     .post_process_selected_prompt_id
@@ -720,6 +882,8 @@ pub(crate) async fn process_transcription_output(
         post_process_prompt,
         submit_key: scratchpad.submit_key,
         switch_to_app: scratchpad.switch_to_app,
+        placement: None,
+        assistant_error: None,
     }
 }
 
@@ -1087,6 +1251,7 @@ impl ShortcutAction for TranscribeAction {
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else if processed.final_text.is_empty()
                                 && processed.submit_key.is_none()
+                                && processed.assistant_error.is_none()
                             {
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
@@ -1095,6 +1260,8 @@ impl ShortcutAction for TranscribeAction {
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
                                 let submit_key = processed.submit_key;
+                                let placement = processed.placement;
+                                let assistant_error = processed.assistant_error;
                                 let rm_for_paste = Arc::clone(&rm);
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
@@ -1107,6 +1274,40 @@ impl ShortcutAction for TranscribeAction {
                                     // Fit the text to what's around the cursor and
                                     // remember the field for the dictation log.
                                     let settings = get_settings(&ah_clone);
+                                    // The assistant couldn't help: show the
+                                    // dictation and why, rather than pasting a
+                                    // request as if it were text.
+                                    if let Some(error) = assistant_error {
+                                        crate::overlay::show_result_overlay_titled(
+                                            &ah_clone,
+                                            final_text,
+                                            Some(error),
+                                        );
+                                        set_tray_state(&ah_clone, TrayIconState::Idle);
+                                        return;
+                                    }
+                                    if let Some(crate::assistant::Placement::ReplaceField(
+                                        expected,
+                                    )) = &placement
+                                    {
+                                        if !crate::text_field::select_whole_field(expected) {
+                                            info!("Couldn't select the field to replace; showing the assistant's text instead");
+                                            crate::overlay::show_result_overlay_titled(
+                                                &ah_clone,
+                                                final_text,
+                                                Some(format!(
+                                                    "Couldn't replace the text, so here is {}'s version",
+                                                    settings.assistant_name
+                                                )),
+                                            );
+                                            set_tray_state(&ah_clone, TrayIconState::Idle);
+                                            return;
+                                        }
+                                    }
+                                    let inserting = matches!(
+                                        placement,
+                                        None | Some(crate::assistant::Placement::Insert)
+                                    );
                                     // Nothing focused that takes text: show it
                                     // instead of pasting into the void.
                                     if !final_text.is_empty()
@@ -1122,7 +1323,7 @@ impl ShortcutAction for TranscribeAction {
                                     let before = (!final_text.is_empty())
                                         .then(crate::text_field::focused_field)
                                         .flatten();
-                                    let final_text = match (&before, settings.context_aware_paste) {
+                                    let final_text = match (&before, settings.context_aware_paste && inserting) {
                                         (Some(field), true) => crate::text_field::adapt_to_context(
                                             &final_text,
                                             &field.text_before_cursor(40),

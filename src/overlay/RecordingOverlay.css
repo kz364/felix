@@ -477,6 +477,10 @@
 .scard.result,
 .ov-stage.top .scard.result {
   width: var(--ov-result-w);
+  /* Padding and border inside the width, or the card overflows the window
+     (OVERLAY_RESULT_WIDTH) and its sides get clipped. */
+  box-sizing: border-box;
+  max-width: 100vw;
   flex-direction: column;
   border-radius: 16px;
   padding: 10px 12px 12px;
@@ -522,12 +526,8 @@
 .rfoot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
-}
-.rhint {
-  font-size: 11px;
-  color: var(--s-faint);
 }
 .rcopy {
   -webkit-appearance: none;
@@ -569,7 +569,16 @@
   height: 100%;
   background: var(--s-accent);
   transform-origin: left center;
+  animation: rbar-drain linear forwards;
   transition: opacity 150ms ease;
+}
+@keyframes rbar-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
 }
 .scard.result.hovered .rbar i {
   opacity: 0.35;

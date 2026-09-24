@@ -10,6 +10,7 @@ import { useSettings } from "../../../hooks/useSettings";
 
 /** Payload of the backend's `local-model-install` event. */
 interface InstallProgress {
+  model: string;
   stage: "ollama" | "model" | "done" | "error";
   completed: number;
   total: number;
@@ -40,6 +41,8 @@ export const LocalModelSetup: React.FC<{ model: string }> = ({ model }) => {
 
   useEffect(() => {
     const unlisten = listen<InstallProgress>("local-model-install", (e) => {
+      // Installs of other models (from the Models tab) don't concern this row.
+      if (e.payload.model && e.payload.model !== model) return;
       setProgress(e.payload);
       if (e.payload.stage === "done" || e.payload.stage === "error") {
         void refresh();
@@ -48,12 +51,18 @@ export const LocalModelSetup: React.FC<{ model: string }> = ({ model }) => {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [refresh]);
+  }, [refresh, model]);
 
   const install = async () => {
     setError(null);
-    setProgress({ stage: "ollama", completed: 0, total: 0, message: "" });
-    const result = await commands.installLocalModel();
+    setProgress({
+      model,
+      stage: "ollama",
+      completed: 0,
+      total: 0,
+      message: "",
+    });
+    const result = await commands.installLocalModel(null);
     if (result.status === "error") setError(result.error);
     setProgress(null);
     void refresh();

@@ -638,9 +638,16 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
 }
 
+/// The assistant is working on a request (a slower, remote call).
+pub fn show_assistant_overlay(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "assistant");
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ResultPopup {
     pub text: String,
+    /// Heading instead of the default "Nowhere to paste".
+    pub title: Option<String>,
     /// Auto-close delay; 0 = stays until closed.
     pub timeout_ms: u32,
 }
@@ -655,9 +662,15 @@ static RESULT_RECT: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::
 /// when the recording overlay is turned off, since the text would otherwise
 /// be lost from view.
 pub fn show_result_overlay(app_handle: &AppHandle, text: String) {
+    show_result_overlay_titled(app_handle, text, None);
+}
+
+/// The result card with its own heading (e.g. why the assistant failed).
+pub fn show_result_overlay_titled(app_handle: &AppHandle, text: String, title: Option<String>) {
     let seconds = settings::get_settings(app_handle).result_popup_seconds;
     let payload = ResultPopup {
         text,
+        title,
         timeout_ms: seconds.saturating_mul(1000),
     };
     let handle = app_handle.clone();

@@ -18,7 +18,7 @@ export const ResultPopup: React.FC<ResultPopupProps> = React.memo(
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
     const enabled = getSetting("result_popup_enabled") ?? true;
-    const seconds = getSetting("result_popup_seconds") ?? 5;
+    const seconds = getSetting("result_popup_seconds") ?? 10;
     return (
       <>
         <ToggleSwitch

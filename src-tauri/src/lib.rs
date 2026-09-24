@@ -1,13 +1,19 @@
 mod actions;
+pub mod agent;
+pub mod agent_skills;
 mod app_categories;
 mod app_context;
 mod app_switcher;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+pub mod assistant;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
+pub mod ax_tree;
 mod catalog;
+#[cfg(target_os = "macos")]
+pub mod chatgpt;
 mod cleanup;
 pub mod cli;
 mod clipboard;
@@ -28,8 +34,10 @@ mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod soundalikes;
+mod spelling;
 mod style;
-mod text_field;
+pub mod text_field;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -700,6 +708,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_provider,
             local_llm_install::get_local_model_status,
             local_llm_install::install_local_model,
+            local_llm_install::list_local_models,
+            local_llm_install::installing_local_model,
+            local_llm_install::delete_local_model,
             shortcut::fetch_post_process_models,
             shortcut::add_post_process_prompt,
             shortcut::update_post_process_prompt,
@@ -721,6 +732,13 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_result_popup_enabled_setting,
             shortcut::change_local_model_keep_loaded_setting,
             shortcut::change_result_popup_seconds_setting,
+            shortcut::change_assistant_enabled_setting,
+            shortcut::change_assistant_name_setting,
+            shortcut::change_assistant_model_setting,
+            shortcut::change_assistant_effort_setting,
+            shortcut::change_assistant_notes_setting,
+            shortcut::change_agent_actions_setting,
+            shortcut::change_agent_auto_send_setting,
             overlay::fit_result_overlay,
             overlay::dismiss_result_overlay,
             overlay::copy_result_text,
@@ -779,6 +797,9 @@ pub fn run(cli_args: CliArgs) {
             commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
+            commands::chatgpt_sign_in,
+            commands::chatgpt_sign_out,
+            commands::chatgpt_account,
             commands::models::get_available_models,
             commands::models::get_model_info,
             commands::models::download_model,
@@ -1165,6 +1186,7 @@ pub fn run(cli_args: CliArgs) {
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
             local_llm::stop();
+            agent::stop();
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();
             }

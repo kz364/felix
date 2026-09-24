@@ -194,3 +194,40 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     log::info!("Shortcuts initialized successfully");
     Ok(())
 }
+
+/// Sign in with ChatGPT in the browser. Returns the account email.
+#[tauri::command]
+#[specta::specta]
+pub async fn chatgpt_sign_in(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::chatgpt::sign_in(|url| {
+            app.opener()
+                .open_url(url, None::<String>)
+                .map_err(|e| format!("Couldn't open the browser: {e}"))
+        })
+        .await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Sign in with ChatGPT is only available on macOS".into())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn chatgpt_sign_out() {
+    #[cfg(target_os = "macos")]
+    crate::chatgpt::sign_out();
+}
+
+/// The signed-in ChatGPT account's email, or `None` when signed out.
+#[tauri::command]
+#[specta::specta]
+pub fn chatgpt_account() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return crate::chatgpt::signed_in_as();
+    #[cfg(not(target_os = "macos"))]
+    None
+}

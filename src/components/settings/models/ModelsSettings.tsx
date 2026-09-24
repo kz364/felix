@@ -18,6 +18,7 @@ import {
   supportsLanguageCode,
 } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
+import { CleanupModels } from "./CleanupModels";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -248,6 +249,15 @@ export const ModelsSettings: React.FC = () => {
         </p>
       </div>
 
+      <div className="pt-2">
+        <h2 className="text-base font-semibold">
+          {t("settings.models.sections.transcription")}
+        </h2>
+        <p className="text-sm text-text/60">
+          {t("settings.models.sections.transcriptionDescription")}
+        </p>
+      </div>
+
       {/* Search bar — filter the catalog by name or description */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text/40 pointer-events-none" />
@@ -449,6 +459,18 @@ export const ModelsSettings: React.FC = () => {
             {t("settings.models.noModelsMatch")}
           </div>
         )}
+      </div>
+
+      <div className="pt-6 space-y-3">
+        <div>
+          <h2 className="text-base font-semibold">
+            {t("settings.models.sections.cleanup")}
+          </h2>
+          <p className="text-sm text-text/60">
+            {t("settings.models.sections.cleanupDescription")}
+          </p>
+        </div>
+        <CleanupModels />
       </div>
     </div>
   );

@@ -18,6 +18,7 @@
     "debug": "Debug",
     "about": "About",
     "voiceControl": "Voice Control",
+    "felix": "Felix",
     "vocabulary": "Vocabulary",
     "style": "Style"
   },
@@ -230,7 +231,27 @@
         "label": "Rescan",
         "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Handy"
       },
-      "noModelsMatch": "No models match this filter."
+      "noModelsMatch": "No models match this filter.",
+      "sections": {
+        "transcription": "Transcription models",
+        "transcriptionDescription": "Turn your speech into text.",
+        "cleanup": "Text cleanup models",
+        "cleanupDescription": "Clean up and format each dictation on this Mac, with nothing sent to the cloud. Downloading one installs Ollama too if it's missing."
+      },
+      "cleanup": {
+        "qwen4b": {
+          "name": "Qwen3.5 4B",
+          "description": "Most accurate. Keeps your wording and facts; about 0.3 s per cleanup."
+        },
+        "qwen2b": {
+          "name": "Qwen3.5 2B",
+          "description": "About half the memory of the 4B and a bit faster, but a little less careful. For Macs with 16 GB of memory or less, or a base M-series chip."
+        },
+        "otherDescription": "Another model installed in Ollama.",
+        "active": "In use",
+        "deleteConfirm": "Delete {{model}}? You can download it again later.",
+        "recommendedForMac": "Recommended for this Mac"
+      }
     },
     "sound": {
       "title": "Sound",
@@ -286,29 +307,7 @@
         "app": "App",
         "output": "Output",
         "transcription": "Transcription",
-        "history": "History",
-        "experimental": "Experimental"
-      },
-      "experimentalToggle": {
-        "label": "Experimental Features",
-        "description": "Enable experimental features that are still in development."
-      },
-      "lazyStreamClose": {
-        "label": "Keep Mic Open Between Transcriptions",
-        "description": "Keeps the microphone stream open for 30 seconds after recording stops, reducing latency for back-to-back transcriptions. May degrade Bluetooth audio quality while active."
-      },
-      "acceleration": {
-        "transcribe": {
-          "title": "transcribe.cpp Acceleration",
-          "description": "Hardware acceleration for transcribe.cpp (Whisper-family) models. Auto uses GPU if available (Metal on macOS, Vulkan on Windows/Linux)."
-        },
-        "ort": {
-          "title": "ONNX Acceleration",
-          "description": "Hardware acceleration for ONNX models (Parakeet, Canary, Moonshine, etc.). DirectML on Windows is experimental. Models may fail to transcribe."
-        },
-        "gpuDevice": {
-          "auto": "Auto"
-        }
+        "history": "History"
       },
       "startHidden": {
         "label": "Start Hidden",
@@ -370,10 +369,7 @@
         }
       },
       "autoSubmit": {
-        "title": "Auto Submit",
-        "description": "Automatically send the selected key combination after text insertion. Cmd+Enter applies on macOS, while Windows/Linux use Super+Enter.",
         "options": {
-          "off": "Off",
           "enter": "Enter",
           "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
@@ -648,10 +644,6 @@
         "months3": "After 3 months",
         "placeholder": "Select retention period..."
       },
-      "alwaysOnMicrophone": {
-        "label": "Always-On Microphone",
-        "description": "Keep microphone active for faster response"
-      },
       "clamshellMicrophone": {
         "title": "Clamshell Microphone",
         "description": "Microphone to use when laptop lid is closed"
@@ -667,11 +659,6 @@
       "appendTrailingSpace": {
         "label": "Append Trailing Space",
         "description": "Add a space after pasted transcription"
-      },
-      "keyboardImplementation": {
-        "title": "Keyboard Implementation",
-        "description": "Choose the keyboard shortcut backend.",
-        "bindingsReset": "Keyboard shortcuts were incompatible and reset to defaults"
       },
       "paths": {
         "appData": "App Data:",
@@ -783,6 +770,59 @@
         "remove": "Remove app name {{phrase}}",
         "duplicate": "\"{{phrase}}\" is already an app name",
         "item": "\"{{phrase}}\" → {{app}}"
+      },
+      "assistant": {
+        "groupTitle": "Assistant",
+        "warning": "Off by default. When it's on, saying the assistant's name sends that dictation and the text in the field to ChatGPT and lets it rewrite or replace what's in the field. Acting on your Mac is a separate switch below. Turn it on once you're comfortable with that.",
+        "groupDescription": "Say the assistant's name anywhere in a dictation to hand it to a ChatGPT model: \"my email is Felix put my email here\", \"Felix, reply saying I'm in\", or select text and say \"Felix, make this shorter\". The dictation and the text in the field are sent to ChatGPT.",
+        "toggleLabel": "Assistant",
+        "toggleDescription": "Listen for the assistant's name in dictations.",
+        "account": {
+          "title": "ChatGPT Account",
+          "description": "Uses your ChatGPT subscription. The sign-in is saved in a file only your Mac account can read.",
+          "signedInAs": "Signed in as {{email}}",
+          "signedIn": "Signed in",
+          "signIn": "Sign in with ChatGPT",
+          "signingIn": "Waiting for the browser...",
+          "signOut": "Sign out",
+          "failed": "ChatGPT sign-in failed: {{error}}"
+        },
+        "name": {
+          "title": "Name",
+          "description": "The word that calls the assistant. Pick a name you don't otherwise say; Felix, Marvin and Cosmo are recognized reliably by every transcription model.",
+          "invalid": "The name must be a single word"
+        },
+        "model": {
+          "title": "Model",
+          "description": "Sol writes best; Luna is faster."
+        },
+        "effort": {
+          "title": "Thinking",
+          "description": "More thinking handles harder requests but takes longer.",
+          "options": {
+            "none": "None",
+            "low": "Low",
+            "medium": "Medium",
+            "high": "High"
+          }
+        },
+        "computer": {
+          "groupTitle": "On Your Mac",
+          "groupDescription": "\"Felix, open Notes and start a packing list\" hands the task to Codex, which works your apps in the background through Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Handy.",
+          "toggle": {
+            "label": "Act on Your Mac",
+            "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
+          },
+          "autoSend": {
+            "label": "Send the First Message",
+            "description": "Send the request as soon as the session opens. Off leaves it filled in for you to check and send."
+          }
+        },
+        "notes": {
+          "title": "About You",
+          "description": "Details the assistant can fill in when you ask, such as your name, email, phone number, address and how you sign off emails.",
+          "placeholder": "Name: ...\nEmail: ...\nSigns off emails with: ..."
+        }
       }
     },
     "vocabulary": {
@@ -940,9 +980,9 @@
       "title": "Nowhere to paste",
       "close": "Close",
       "copy": "Copy",
-      "copied": "Copied",
-      "paused": "Paused"
-    }
+      "copied": "Copied"
+    },
+    "assistant": "Working on it..."
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} may be blocking 1 shortcut",

@@ -8,6 +8,7 @@ export { AboutSettings } from "./about/AboutSettings";
 export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { ModelsSettings } from "./models/ModelsSettings";
 export { VoiceControlSettings } from "./voice-control/VoiceControlSettings";
+export { FelixSettings } from "./felix/FelixSettings";
 export { VocabularySettings } from "./vocabulary/VocabularySettings";
 export { StyleSettings } from "./style/StyleSettings";
 
@@ -16,7 +17,6 @@ export { MicrophoneSelector } from "./MicrophoneSelector";
 export { ChannelSelector } from "./ChannelSelector";
 export { ClamshellMicrophoneSelector } from "./ClamshellMicrophoneSelector";
 export { OutputDeviceSelector } from "./OutputDeviceSelector";
-export { AlwaysOnMicrophone } from "./AlwaysOnMicrophone";
 export { ShortcutActivationSetting } from "./ShortcutActivation";
 export { AudioFeedback } from "./AudioFeedback";
 export { ShowOverlay } from "./ShowOverlay";

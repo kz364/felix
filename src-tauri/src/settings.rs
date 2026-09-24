@@ -204,6 +204,22 @@ pub struct TextReplacement {
     pub to: String,
 }
 
+/// A name that gets transcribed as an ordinary word that sounds like it
+/// ("Claude" as "cloud"). Each occurrence is checked against its sentence by
+/// the local model, so the ordinary word still works.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
+pub struct Soundalike {
+    /// The ordinary word the transcription writes ("cloud").
+    pub heard: String,
+    /// The name it may stand for ("Claude").
+    pub word: String,
+    /// What the name is, for the model ("Anthropic's AI assistant").
+    pub meaning: String,
+    /// Names that start with the word, in their own casing ("Claude Code").
+    #[serde(default)]
+    pub compounds: Vec<String>,
+}
+
 /// How much the AI cleanup rewrites a dictation.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
@@ -660,6 +676,31 @@ pub struct AppSettings {
     /// dictation starts and frees it when idle (less RAM, slower cleanups).
     #[serde(default = "default_local_model_keep_loaded")]
     pub local_model_keep_loaded: bool,
+    /// Saying the assistant's name anywhere in a dictation sends it, with the
+    /// text field's contents, to a ChatGPT model that writes the result.
+    #[serde(default = "default_assistant_enabled")]
+    pub assistant_enabled: bool,
+    #[serde(default = "default_assistant_name")]
+    pub assistant_name: String,
+    /// Let the assistant act on the computer (start Claude Code sessions, run
+    /// tasks in other apps), not just write into the field. Off by default.
+    #[serde(default)]
+    pub agent_actions_enabled: bool,
+    /// Send the prompt when Felix starts a Claude Code session, rather than
+    /// leaving it filled in.
+    #[serde(default = "default_agent_auto_send")]
+    pub agent_auto_send: bool,
+    #[serde(default = "default_assistant_model")]
+    pub assistant_model: String,
+    /// Reasoning effort: "none", "low", "medium" or "high".
+    #[serde(default = "default_assistant_effort")]
+    pub assistant_effort: String,
+    /// What the assistant should know about the user (name, email, address,
+    /// how they sign off), for filling in details.
+    #[serde(default)]
+    pub assistant_notes: String,
+    #[serde(default = "default_soundalikes")]
+    pub soundalikes: Vec<Soundalike>,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -898,12 +939,42 @@ fn default_result_popup_enabled() -> bool {
     true
 }
 
+/// Off until the user turns it on: it rewrites text and acts on the computer.
+fn default_assistant_enabled() -> bool {
+    false
+}
+
+fn default_agent_auto_send() -> bool {
+    true
+}
+
+pub fn default_soundalikes() -> Vec<Soundalike> {
+    vec![Soundalike {
+        heard: "cloud".to_string(),
+        word: "Claude".to_string(),
+        meaning: "Anthropic's AI assistant and its products, such as Claude Code, the Claude app and Claude models".to_string(),
+        compounds: vec!["Claude Code".to_string()],
+    }]
+}
+
+fn default_assistant_name() -> String {
+    "Felix".to_string()
+}
+
+fn default_assistant_model() -> String {
+    "gpt-6-sol".to_string()
+}
+
+fn default_assistant_effort() -> String {
+    "low".to_string()
+}
+
 fn default_local_model_keep_loaded() -> bool {
     true
 }
 
 fn default_result_popup_seconds() -> u32 {
-    5
+    10
 }
 
 fn default_history_retention_days() -> u32 {
@@ -1058,7 +1129,7 @@ fn default_model_for_provider(provider_id: &str) -> String {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
     }
     if provider_id == crate::local_llm::LOCAL_PROVIDER_ID {
-        return crate::local_llm::LOCAL_DEFAULT_MODEL.to_string();
+        return crate::local_llm::recommended_model().to_string();
     }
     String::new()
 }
@@ -1279,6 +1350,14 @@ pub fn get_default_settings() -> AppSettings {
         result_popup_enabled: default_result_popup_enabled(),
         result_popup_seconds: default_result_popup_seconds(),
         local_model_keep_loaded: default_local_model_keep_loaded(),
+        assistant_enabled: default_assistant_enabled(),
+        assistant_name: default_assistant_name(),
+        agent_actions_enabled: false,
+        agent_auto_send: default_agent_auto_send(),
+        assistant_model: default_assistant_model(),
+        assistant_effort: default_assistant_effort(),
+        assistant_notes: String::new(),
+        soundalikes: default_soundalikes(),
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
@@ -1548,6 +1627,27 @@ fn apply_settings_migrations(
         && settings.transcribe_gpu_device.is_none()
     {
         settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
+        updated = true;
+    }
+
+    // These options no longer have a control in the UI, so a stored value that
+    // differs from the default could never be changed back. Reset them.
+    if settings.auto_submit || settings.lazy_stream_close || settings.always_on_microphone {
+        settings.auto_submit = false;
+        settings.lazy_stream_close = false;
+        settings.always_on_microphone = false;
+        updated = true;
+    }
+    #[cfg(target_os = "macos")]
+    if settings.keyboard_implementation != KeyboardImplementation::default()
+        || settings.transcribe_accelerator != TranscribeAcceleratorSetting::Auto
+        || settings.transcribe_gpu_device.is_some()
+    {
+        // Handy Keys is the only backend that tells left and right modifiers
+        // apart, and Auto always picks Metal on a Mac (CPU only if it fails).
+        settings.keyboard_implementation = KeyboardImplementation::default();
+        settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
+        settings.transcribe_gpu_device = default_transcribe_gpu_device();
         updated = true;
     }
 
@@ -2053,6 +2153,8 @@ mod tests {
         assert_eq!(settings.transcribe_gpu_device, None);
     }
 
+    // On macOS the accelerator is always reset to Auto (see below).
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn gpu_device_migration_keeps_current_stable_selection() {
         let mut settings = get_default_settings();
@@ -2072,6 +2174,34 @@ mod tests {
         assert_eq!(
             settings.transcribe_gpu_device.as_deref(),
             Some("[\"vulkan\",\"id\",\"0000:01:00.0\"]")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn options_without_a_control_are_reset() {
+        let mut settings = get_default_settings();
+        settings.auto_submit = true;
+        settings.lazy_stream_close = true;
+        settings.keyboard_implementation = KeyboardImplementation::Tauri;
+        settings.transcribe_accelerator = TranscribeAcceleratorSetting::Cpu;
+
+        let raw = serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "onboarding_completed": false,
+            "whats_new_last_seen_version": default_whats_new_last_seen_version(),
+            "overlay_style": "live",
+        });
+
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert!(!settings.auto_submit && !settings.lazy_stream_close);
+        assert_eq!(
+            settings.keyboard_implementation,
+            KeyboardImplementation::HandyKeys
+        );
+        assert_eq!(
+            settings.transcribe_accelerator,
+            TranscribeAcceleratorSetting::Auto
         );
     }
 

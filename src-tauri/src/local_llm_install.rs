@@ -16,6 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -23,6 +24,15 @@ const OLLAMA_ZIP_URL: &str = "https://ollama.com/download/Ollama-darwin.zip";
 const PROGRESS_EVENT: &str = "local-model-install";
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
+/// The model being installed, for per-model progress in the UI.
+static INSTALLING_MODEL: Mutex<Option<String>> = Mutex::new(None);
+
+/// Cleanup models offered in the Models tab: (Ollama tag, approximate
+/// download size in MB). Anything else installed in Ollama is listed too.
+const RECOMMENDED: &[(&str, u32)] = &[
+    (local_llm::LOCAL_LARGE_MODEL, 3400),
+    (local_llm::LOCAL_LIGHT_MODEL, 1900),
+];
 
 #[derive(Serialize, Debug, Clone, Type)]
 pub struct LocalModelStatus {
@@ -33,9 +43,22 @@ pub struct LocalModelStatus {
     pub installing: bool,
 }
 
+#[derive(Serialize, Debug, Clone, Type)]
+pub struct LocalModelEntry {
+    /// Ollama tag, e.g. `qwen3.5:4b`.
+    pub id: String,
+    pub installed: bool,
+    pub recommended: bool,
+    /// The one that suits this Mac's memory and chip.
+    pub recommended_for_device: bool,
+    /// On-disk size when installed, else the approximate download size.
+    pub size_mb: u32,
+}
+
 /// Emitted while installing.
 #[derive(Serialize, Debug, Clone)]
 struct InstallProgress {
+    model: String,
     /// "ollama", "model", "done" or "error".
     stage: &'static str,
     /// Bytes done and total for the current stage (total 0 when unknown).
@@ -45,9 +68,11 @@ struct InstallProgress {
 }
 
 fn emit(app: &AppHandle, stage: &'static str, completed: u64, total: u64, message: &str) {
+    let model = INSTALLING_MODEL.lock().unwrap().clone().unwrap_or_default();
     let _ = app.emit(
         PROGRESS_EVENT,
         InstallProgress {
+            model,
             stage,
             completed,
             total,
@@ -62,7 +87,7 @@ fn selected_model(app: &AppHandle) -> String {
         .get(local_llm::LOCAL_PROVIDER_ID)
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| local_llm::LOCAL_DEFAULT_MODEL.to_string())
+        .unwrap_or_else(|| local_llm::recommended_model().to_string())
 }
 
 fn runtime_installed() -> bool {
@@ -81,15 +106,49 @@ pub fn get_local_model_status(app: AppHandle) -> LocalModelStatus {
     }
 }
 
-/// Install whatever is missing (Ollama, then the model), then start the
-/// server if the local provider is selected.
 #[tauri::command]
 #[specta::specta]
-pub async fn install_local_model(app: AppHandle) -> Result<(), String> {
+pub fn list_local_models() -> Vec<LocalModelEntry> {
+    local_llm::available_models()
+        .into_iter()
+        .map(|id| {
+            let recommended = RECOMMENDED.iter().find(|(tag, _)| *tag == id);
+            let on_disk = local_llm::resolve_model(&id)
+                .ok()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .map(|m| (m.len() / 1_000_000) as u32);
+            LocalModelEntry {
+                installed: on_disk.is_some(),
+                recommended: recommended.is_some(),
+                recommended_for_device: id == local_llm::recommended_model(),
+                size_mb: on_disk.or(recommended.map(|(_, mb)| *mb)).unwrap_or(0),
+                id,
+            }
+        })
+        .collect()
+}
+
+/// The model currently being installed, if any.
+#[tauri::command]
+#[specta::specta]
+pub fn installing_local_model() -> Option<String> {
+    INSTALLING_MODEL.lock().unwrap().clone()
+}
+
+/// Install whatever is missing (Ollama, then `model`, by default the
+/// selected one), then start the server if the local provider is selected.
+#[tauri::command]
+#[specta::specta]
+pub async fn install_local_model(app: AppHandle, model: Option<String>) -> Result<(), String> {
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("Already installing".into());
     }
-    let result = install(&app).await;
+    let model = model
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| selected_model(&app));
+    *INSTALLING_MODEL.lock().unwrap() = Some(model.clone());
+    let result = install(&app, &model).await;
     INSTALLING.store(false, Ordering::SeqCst);
     match &result {
         Ok(()) => {
@@ -101,19 +160,37 @@ pub async fn install_local_model(app: AppHandle) -> Result<(), String> {
             emit(&app, "error", 0, 0, e);
         }
     }
+    *INSTALLING_MODEL.lock().unwrap() = None;
     result
 }
 
-async fn install(app: &AppHandle) -> Result<(), String> {
+/// Remove an Ollama model (frees its disk space unless another model shares
+/// the weights).
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_local_model(model: String) -> Result<(), String> {
+    local_llm::stop_if_serving(&model);
+    let (_serve, host, client) = start_private_ollama().await?;
+    client
+        .delete(format!("http://{host}/api/delete"))
+        .json(&serde_json::json!({ "model": model }))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("Couldn't delete {model}: {e}"))?;
+    info!("Deleted {model}");
+    Ok(())
+}
+
+async fn install(app: &AppHandle, model: &str) -> Result<(), String> {
     if !runtime_installed() {
         install_ollama(app).await?;
     }
-    let model = selected_model(app);
-    if local_llm::resolve_model(&model).is_err() {
+    if local_llm::resolve_model(model).is_err() {
         if model.ends_with(".gguf") || model.starts_with('/') {
             return Err(format!("Model file not found: {model}"));
         }
-        pull_model(app, &model).await?;
+        pull_model(app, model).await?;
     }
     Ok(())
 }
@@ -188,13 +265,12 @@ impl Drop for ServeGuard {
     }
 }
 
-async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
+/// `ollama serve` on a spare port, stopped when the guard drops.
+async fn start_private_ollama() -> Result<(ServeGuard, String, reqwest::Client), String> {
     let cli = local_llm::find_ollama_cli().ok_or("The ollama command wasn't found")?;
     let port = local_llm::free_port().ok_or("No free local port")?;
     let host = format!("127.0.0.1:{port}");
-    info!("Pulling {model} with {}", cli.display());
-    emit(app, "model", 0, 0, &format!("Starting download of {model}"));
-    let _serve = ServeGuard(
+    let serve = ServeGuard(
         Command::new(&cli)
             .arg("serve")
             .env("OLLAMA_HOST", &host)
@@ -219,7 +295,13 @@ async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    Ok((serve, host, client))
+}
 
+async fn pull_model(app: &AppHandle, model: &str) -> Result<(), String> {
+    info!("Pulling {model}");
+    emit(app, "model", 0, 0, &format!("Starting download of {model}"));
+    let (_serve, host, client) = start_private_ollama().await?;
     let response = client
         .post(format!("http://{host}/api/pull"))
         .json(&serde_json::json!({"model": model, "stream": true}))

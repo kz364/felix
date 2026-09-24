@@ -185,6 +185,20 @@ const settingUpdaters: {
     commands.changeResultPopupEnabledSetting(value as boolean),
   result_popup_seconds: (value) =>
     commands.changeResultPopupSecondsSetting(value as number),
+  assistant_enabled: (value) =>
+    commands.changeAssistantEnabledSetting(value as boolean),
+  assistant_name: (value) =>
+    commands.changeAssistantNameSetting(value as string),
+  assistant_model: (value) =>
+    commands.changeAssistantModelSetting(value as string),
+  assistant_effort: (value) =>
+    commands.changeAssistantEffortSetting(value as string),
+  assistant_notes: (value) =>
+    commands.changeAssistantNotesSetting(value as string),
+  agent_actions_enabled: (value) =>
+    commands.changeAgentActionsSetting(value as boolean),
+  agent_auto_send: (value) =>
+    commands.changeAgentAutoSendSetting(value as boolean),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),

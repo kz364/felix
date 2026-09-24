@@ -7,6 +7,7 @@
 //!
 //! 1. Canonical spelling of technical vocabulary ("G L M five point three" →
 //!    "GLM-5.3"), then the user's correction rules ("cube cuddle" → "kubectl").
+//!    Words spelled letter by letter are joined ("K A S P A R" → "Kaspar").
 //! 2. End-of-dictation voice triggers ("… press enter"), which are stripped
 //!    from the text and turned into a key press after the paste.
 //! 3. Spoken line breaks ("new line", "new paragraph").
@@ -36,6 +37,7 @@ pub fn run_rules(text: &str, settings: &AppSettings) -> ScratchpadOutput {
     }
 
     let text = crate::vocabulary::apply_canonical_forms(text, &settings.custom_words);
+    let text = crate::spelling::apply_spelled_words(&text);
     let text = crate::vocab_teach::apply_taught_rules(&text, settings);
     let mut text = apply_text_replacements(&text, &settings.text_replacements);
     let mut submit_key = None;

@@ -268,12 +268,33 @@ async getLocalModelStatus() : Promise<LocalModelStatus> {
     return await TAURI_INVOKE("get_local_model_status");
 },
 /**
- * Install whatever is missing (Ollama, then the model), then start the
- * server if the local provider is selected.
+ * Install whatever is missing (Ollama, then `model`, by default the
+ * selected one), then start the server if the local provider is selected.
  */
-async installLocalModel() : Promise<Result<null, string>> {
+async installLocalModel(model: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("install_local_model") };
+    return { status: "ok", data: await TAURI_INVOKE("install_local_model", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listLocalModels() : Promise<LocalModelEntry[]> {
+    return await TAURI_INVOKE("list_local_models");
+},
+/**
+ * The model currently being installed, if any.
+ */
+async installingLocalModel() : Promise<string | null> {
+    return await TAURI_INVOKE("installing_local_model");
+},
+/**
+ * Remove an Ollama model (frees its disk space unless another model shares
+ * the weights).
+ */
+async deleteLocalModel(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_local_model", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -441,6 +462,62 @@ async changeLocalModelKeepLoadedSetting(enabled: boolean) : Promise<Result<null,
 async changeResultPopupSecondsSetting(seconds: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_result_popup_seconds_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAssistantEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistant_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAssistantNameSetting(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistant_name_setting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAssistantModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistant_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAssistantEffortSetting(effort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistant_effort_setting", { effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAssistantNotesSetting(notes: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistant_notes_setting", { notes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAgentActionsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_actions_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAgentAutoSendSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_auto_send_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -916,6 +993,26 @@ async initializeShortcuts() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sign in with ChatGPT in the browser. Returns the account email.
+ */
+async chatgptSignIn() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chatgpt_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chatgptSignOut() : Promise<void> {
+    await TAURI_INVOKE("chatgpt_sign_out");
+},
+/**
+ * The signed-in ChatGPT account's email, or `None` when signed out.
+ */
+async chatgptAccount() : Promise<string | null> {
+    return await TAURI_INVOKE("chatgpt_account");
+},
 async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_models") };
@@ -1350,7 +1447,31 @@ result_popup_seconds?: number;
  * Keep the local cleanup model in memory. Off loads it when a
  * dictation starts and frees it when idle (less RAM, slower cleanups).
  */
-local_model_keep_loaded?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+local_model_keep_loaded?: boolean; 
+/**
+ * Saying the assistant's name anywhere in a dictation sends it, with the
+ * text field's contents, to a ChatGPT model that writes the result.
+ */
+assistant_enabled?: boolean; assistant_name?: string; 
+/**
+ * Let the assistant act on the computer (start Claude Code sessions, run
+ * tasks in other apps), not just write into the field. Off by default.
+ */
+agent_actions_enabled?: boolean; 
+/**
+ * Send the prompt when Felix starts a Claude Code session, rather than
+ * leaving it filled in.
+ */
+agent_auto_send?: boolean; assistant_model?: string; 
+/**
+ * Reasoning effort: "none", "low", "medium" or "high".
+ */
+assistant_effort?: string; 
+/**
+ * What the assistant should know about the user (name, email, address,
+ * how they sign off), for filling in details.
+ */
+assistant_notes?: string; soundalikes?: Soundalike[]; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -1509,6 +1630,19 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LocalModelEntry = { 
+/**
+ * Ollama tag, e.g. `qwen3.5:4b`.
+ */
+id: string; installed: boolean; recommended: boolean; 
+/**
+ * The one that suits this Mac's memory and chip.
+ */
+recommended_for_device: boolean; 
+/**
+ * On-disk size when installed, else the approximate download size.
+ */
+size_mb: number }
 export type LocalModelStatus = { 
 /**
  * llama-server and the ollama CLI are available.
@@ -1626,6 +1760,28 @@ export type ShortcutActivation =
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * A name that gets transcribed as an ordinary word that sounds like it
+ * ("Claude" as "cloud"). Each occurrence is checked against its sentence by
+ * the local model, so the ordinary word still works.
+ */
+export type Soundalike = { 
+/**
+ * The ordinary word the transcription writes ("cloud").
+ */
+heard: string; 
+/**
+ * The name it may stand for ("Claude").
+ */
+word: string; 
+/**
+ * What the name is, for the model ("Anthropic's AI assistant").
+ */
+meaning: string; 
+/**
+ * Names that start with the word, in their own casing ("Claude Code").
+ */
+compounds?: string[] }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

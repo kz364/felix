@@ -5,6 +5,8 @@ import { commands } from "@/bindings";
 
 interface ResultCardProps {
   text: string;
+  /** Heading; defaults to "Nowhere to paste". */
+  title?: string | null;
   /** Auto-close delay; 0 keeps the card until it's closed. */
   timeoutMs: number;
   /** Bumped for each new result so the countdown restarts. */
@@ -18,12 +20,12 @@ interface ResultCardProps {
  */
 export const ResultCard: React.FC<ResultCardProps> = ({
   text,
+  title,
   timeoutMs,
   session,
 }) => {
   const { t } = useTranslation();
   const cardRef = useRef<HTMLDivElement>(null);
-  const [remaining, setRemaining] = useState(timeoutMs);
   // Hover comes from two places: DOM events, and the backend's cursor watch
   // (the overlay panel never becomes key, so DOM hover isn't reliable).
   const [domHover, setDomHover] = useState(false);
@@ -32,9 +34,8 @@ export const ResultCard: React.FC<ResultCardProps> = ({
   const hovered = domHover || nativeHover;
 
   useEffect(() => {
-    setRemaining(timeoutMs);
     setCopied(false);
-  }, [session, timeoutMs]);
+  }, [session]);
 
   useEffect(() => {
     const unlisten = listen<boolean>("result-hover", (e) =>
@@ -57,23 +58,6 @@ export const ResultCard: React.FC<ResultCardProps> = ({
     return () => observer.disconnect();
   }, [session]);
 
-  // Countdown, paused while hovered.
-  useEffect(() => {
-    if (timeoutMs <= 0 || hovered) return;
-    let last = performance.now();
-    const id = window.setInterval(() => {
-      const now = performance.now();
-      const step = now - last;
-      last = now;
-      setRemaining((r) => Math.max(0, r - step));
-    }, 50);
-    return () => window.clearInterval(id);
-  }, [timeoutMs, hovered, session]);
-
-  useEffect(() => {
-    if (timeoutMs > 0 && remaining <= 0) commands.dismissResultOverlay();
-  }, [remaining, timeoutMs]);
-
   const copy = async () => {
     const result = await commands.copyResultText(text);
     if (result.status === "ok") {
@@ -81,8 +65,6 @@ export const ResultCard: React.FC<ResultCardProps> = ({
       window.setTimeout(() => setCopied(false), 1500);
     }
   };
-
-  const progress = timeoutMs > 0 ? remaining / timeoutMs : 1;
 
   return (
     <div
@@ -92,7 +74,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({
       onMouseLeave={() => setDomHover(false)}
     >
       <div className="rhead">
-        <span className="rtitle">{t("overlay.result.title")}</span>
+        <span className="rtitle">{title || t("overlay.result.title")}</span>
         <button
           className="sx"
           aria-label={t("overlay.result.close")}
@@ -110,16 +92,23 @@ export const ResultCard: React.FC<ResultCardProps> = ({
       </div>
       <div className="rtext">{text}</div>
       <div className="rfoot">
-        <span className="rhint">
-          {timeoutMs > 0 && hovered ? t("overlay.result.paused") : ""}
-        </span>
         <button className={`rcopy ${copied ? "done" : ""}`} onClick={copy}>
           {copied ? t("overlay.result.copied") : t("overlay.result.copy")}
         </button>
       </div>
       {timeoutMs > 0 && (
         <div className="rbar" aria-hidden="true">
-          <i style={{ transform: `scaleX(${progress})` }} />
+          {/* The countdown is a CSS animation so it drains smoothly every
+              frame; hovering pauses it, and its end closes the card. Keyed so
+              a new result restarts it. */}
+          <i
+            key={`${session}-${timeoutMs}`}
+            style={{
+              animationDuration: `${timeoutMs}ms`,
+              animationPlayState: hovered ? "paused" : "running",
+            }}
+            onAnimationEnd={() => commands.dismissResultOverlay()}
+          />
         </div>
       )}
     </div>

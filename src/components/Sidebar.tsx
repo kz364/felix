@@ -10,6 +10,7 @@ import {
   Info,
   Sparkles,
   Cpu,
+  Bot,
 } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
@@ -23,6 +24,7 @@ import {
   PostProcessingSettings,
   ModelsSettings,
   VoiceControlSettings,
+  FelixSettings,
   VocabularySettings,
   StyleSettings,
 } from "./settings";
@@ -91,6 +93,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.voiceControl",
     icon: AudioLines,
     component: VoiceControlSettings,
+    enabled: () => true,
+  },
+  felix: {
+    labelKey: "sidebar.felix",
+    icon: Bot,
+    component: FelixSettings,
     enabled: () => true,
   },
   debug: {

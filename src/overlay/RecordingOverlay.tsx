@@ -16,6 +16,8 @@ import { ResultCard } from "./ResultCard";
 /** `result-text` event payload (overlay.rs `ResultPopup`). */
 interface ResultPopup {
   text: string;
+  /** Heading instead of "Nowhere to paste" (e.g. why the assistant failed). */
+  title: string | null;
   timeout_ms: number;
 }
 
@@ -24,6 +26,7 @@ type OverlayState =
   | "streaming"
   | "transcribing"
   | "processing"
+  | "assistant"
   | "result";
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
@@ -58,6 +61,7 @@ const RecordingOverlay: React.FC = () => {
   // Dictation shown in the result card (nowhere to paste it).
   const [result, setResult] = useState<ResultPopup>({
     text: "",
+    title: null,
     timeout_ms: 0,
   });
   const [resultSession, setResultSession] = useState(0);
@@ -261,6 +265,7 @@ const RecordingOverlay: React.FC = () => {
         <ResultCard
           key={resultSession}
           text={result.text}
+          title={result.title}
           timeoutMs={result.timeout_ms}
           session={resultSession}
         />
@@ -323,11 +328,14 @@ const RecordingOverlay: React.FC = () => {
   // ---- Minimal overlay: exactly one row at a time — waveform (recording), or a
   // spinner + label (transcribing / processing). Never both. The pill animates its
   // width between them; the cancel button is in both rows so it stays put.
-  const working = state === "transcribing" || state === "processing";
+  const working =
+    state === "transcribing" || state === "processing" || state === "assistant";
   const workLabel =
-    state === "processing"
-      ? t("overlay.processing")
-      : t("overlay.transcribing");
+    state === "assistant"
+      ? t("overlay.assistant")
+      : state === "processing"
+        ? t("overlay.processing")
+        : t("overlay.transcribing");
 
   return (
     <div

@@ -1,4 +1,5 @@
-//! On-device cleanup with a small open model (Qwen3.5 4B by default) served
+//! On-device cleanup with a small open model (Qwen3.5 2B or 4B, picked for the
+//! Mac by [`recommended_model`]) served
 //! by a llama-server process that Handy starts and owns.
 //!
 //! Why not the "Custom" OpenAI-compatible provider pointed at Ollama: the
@@ -25,9 +26,53 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const LOCAL_PROVIDER_ID: &str = "local";
-pub const LOCAL_DEFAULT_MODEL: &str = "qwen3.5:4b";
+/// The most careful cleanup, for Macs with memory and bandwidth to spare.
+pub const LOCAL_LARGE_MODEL: &str = "qwen3.5:4b";
 /// For Macs with less memory: 1.9 GB instead of 3.4 GB, a bit less careful.
 pub const LOCAL_LIGHT_MODEL: &str = "qwen3.5:2b-q4_K_M";
+
+/// The cleanup model that suits this Mac, used as the default on a new
+/// install and badged in the Models tab.
+pub fn recommended_model() -> &'static str {
+    static RECOMMENDED: Lazy<&'static str> = Lazy::new(|| {
+        let memory = sysctl("hw.memsize")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let chip = sysctl("machdep.cpu.brand_string").unwrap_or_default();
+        let model = recommended_for(memory, &chip);
+        info!(
+            "Recommended cleanup model for {} GB, {chip}: {model}",
+            memory >> 30
+        );
+        model
+    });
+    *RECOMMENDED
+}
+
+/// The 4B needs about 4 GB while loaded and writes at a speed set by memory
+/// bandwidth, which base chips have 2-5x less of than Pro/Max/Ultra. So it
+/// only suits Macs with room to spare *and* a fast chip; everything else,
+/// including 16 GB Macs that are often busy with other apps, gets the 2B.
+fn recommended_for(memory_bytes: u64, chip: &str) -> &'static str {
+    let fast_chip = ["Pro", "Max", "Ultra"]
+        .iter()
+        .any(|tier| chip.split_whitespace().any(|word| word == *tier));
+    if memory_bytes >= 24 << 30 && fast_chip {
+        LOCAL_LARGE_MODEL
+    } else {
+        LOCAL_LIGHT_MODEL
+    }
+}
+
+fn sysctl(name: &str) -> Option<String> {
+    let out = Command::new("/usr/sbin/sysctl")
+        .args(["-n", name])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
 
 const CONTEXT_TOKENS: &str = "4096";
 const MAX_OUTPUT_TOKENS: u32 = 1024;
@@ -116,10 +161,7 @@ pub fn resolve_model(model: &str) -> Result<PathBuf, String> {
 /// The recommended models (installable from settings) plus any other
 /// installed Ollama models, for the model dropdown.
 pub fn available_models() -> Vec<String> {
-    let mut models = vec![
-        LOCAL_DEFAULT_MODEL.to_string(),
-        LOCAL_LIGHT_MODEL.to_string(),
-    ];
+    let mut models = vec![LOCAL_LARGE_MODEL.to_string(), LOCAL_LIGHT_MODEL.to_string()];
     for model in installed_models() {
         if !models.contains(&model) {
             models.push(model);
@@ -276,6 +318,18 @@ fn spawn(model: &str) -> Result<Server, String> {
         model: model.to_string(),
         port,
     })
+}
+
+/// Stop the server if it's running `model` (before deleting it).
+pub fn stop_if_serving(model: &str) {
+    let serving = SERVER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|s| s.model == model);
+    if serving {
+        stop();
+    }
 }
 
 /// Stop the server (app exit, or switching away from the local provider).
@@ -498,9 +552,83 @@ async fn complete_now(model: &str, system_prompt: &str, user: &str) -> Result<St
         .ok_or_else(|| "llama-server returned no content".into())
 }
 
+/// Ask a yes/no question and return how likely the model thinks "yes" is,
+/// relative to "no", from its first answer token.
+pub async fn yes_probability(
+    model: &str,
+    system_prompt: &str,
+    user: &str,
+    keep_loaded: bool,
+) -> Result<f64, String> {
+    touch();
+    let result = yes_probability_now(model, system_prompt, user).await;
+    if !keep_loaded {
+        unload_when_idle(IDLE_UNLOAD);
+    }
+    result
+}
+
+async fn yes_probability_now(model: &str, system_prompt: &str, user: &str) -> Result<f64, String> {
+    let port = ensure_running(model).await?;
+    let prompt = render(port, system_prompt, user).await?;
+    let value = post(
+        port,
+        "/completion",
+        json!({
+            "prompt": prompt,
+            "n_predict": 1,
+            "temperature": 0,
+            "cache_prompt": true,
+            "n_probs": 10,
+            "post_sampling_probs": false,
+        }),
+    )
+    .await?;
+    yes_share(&value["completion_probabilities"][0]["top_logprobs"])
+        .ok_or_else(|| "llama-server's answer had neither yes nor no among its top tokens".into())
+}
+
+/// P(yes) / (P(yes) + P(no)) over the top tokens, any case or spacing.
+fn yes_share(top: &Value) -> Option<f64> {
+    let (mut yes, mut no) = (0.0, 0.0);
+    for candidate in top.as_array()? {
+        let p = candidate["logprob"].as_f64().map(f64::exp).unwrap_or(0.0);
+        match candidate["token"].as_str().map(|t| t.trim().to_lowercase()) {
+            Some(t) if t == "yes" => yes += p,
+            Some(t) if t == "no" => no += p,
+            _ => {}
+        }
+    }
+    (yes + no > 0.0).then(|| yes / (yes + no))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recommends_the_4b_only_for_roomy_fast_macs() {
+        use super::{recommended_for, LOCAL_LARGE_MODEL, LOCAL_LIGHT_MODEL};
+        const GB: u64 = 1 << 30;
+        assert_eq!(recommended_for(36 * GB, "Apple M4 Max"), LOCAL_LARGE_MODEL);
+        assert_eq!(recommended_for(24 * GB, "Apple M3 Pro"), LOCAL_LARGE_MODEL);
+        assert_eq!(recommended_for(24 * GB, "Apple M4"), LOCAL_LIGHT_MODEL);
+        assert_eq!(recommended_for(16 * GB, "Apple M1 Pro"), LOCAL_LIGHT_MODEL);
+        assert_eq!(recommended_for(8 * GB, "Apple M2"), LOCAL_LIGHT_MODEL);
+        assert_eq!(recommended_for(0, ""), LOCAL_LIGHT_MODEL);
+    }
+
     use super::*;
+
+    #[test]
+    fn yes_share_combines_case_and_spacing_variants() {
+        let top = json!([
+            {"token": "yes", "logprob": (0.5f64).ln()},
+            {"token": " Yes", "logprob": (0.1f64).ln()},
+            {"token": "no", "logprob": (0.4f64).ln()},
+            {"token": "maybe", "logprob": (0.1f64).ln()},
+        ]);
+        assert!((yes_share(&top).unwrap() - 0.6).abs() < 1e-9);
+        assert!(yes_share(&json!([{"token": "hmm", "logprob": -0.1}])).is_none());
+    }
 
     #[test]
     fn missing_models_explain_how_to_install() {
@@ -516,7 +644,7 @@ mod tests {
     async fn prewarmed_cleanup_reuses_the_prefix() {
         let system = "You clean up dictated text. Fix punctuation and capitalization, remove filler words. Output only the cleaned text.";
         let prefix = crate::cleanup::CLEANUP_USER_PREFIX;
-        prewarm_now(LOCAL_DEFAULT_MODEL, system, prefix)
+        prewarm_now(LOCAL_LARGE_MODEL, system, prefix)
             .await
             .unwrap();
         let user = format!(
@@ -524,7 +652,7 @@ mod tests {
             crate::cleanup::wrap_transcript("um so i think we should uh ship it on friday")
         );
         let started = Instant::now();
-        let out = complete_now(LOCAL_DEFAULT_MODEL, system, &user)
+        let out = complete_now(LOCAL_LARGE_MODEL, system, &user)
             .await
             .unwrap();
         println!("{:?} -> {out}", started.elapsed());

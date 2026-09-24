@@ -265,6 +265,12 @@ mod ax {
         fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, seconds: f32) -> AXError;
         fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
         fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *mut c_void) -> bool;
+        fn AXUIElementSetAttributeValue(
+            element: AXUIElementRef,
+            attribute: CFStringRef,
+            value: CFTypeRef,
+        ) -> AXError;
+        fn AXValueCreate(kind: u32, value: *const c_void) -> CFTypeRef;
         fn AXUIElementIsAttributeSettable(
             element: AXUIElementRef,
             attribute: CFStringRef,
@@ -347,6 +353,33 @@ mod ax {
         })
     }
 
+    /// Select `(location, length)` (UTF-16 units) in the focused field.
+    pub fn select_range(location: usize, length: usize) -> bool {
+        // SAFETY: creates a +1 system-wide element, released by Owned.
+        let system = Owned(unsafe { AXUIElementCreateSystemWide() });
+        unsafe { AXUIElementSetMessagingTimeout(system.0, 0.25) };
+        let Some(focused) = copy_attribute(system.0, "AXFocusedUIElement") else {
+            return false;
+        };
+        let range = CFRange {
+            location: location as isize,
+            length: length as isize,
+        };
+        // SAFETY: AXValueCreate copies the CFRange; the +1 result is released by Owned.
+        let value = Owned(unsafe {
+            AXValueCreate(AX_VALUE_CF_RANGE, &range as *const CFRange as *const c_void)
+        });
+        if value.0.is_null() {
+            return false;
+        }
+        let attribute = CFString::new("AXSelectedTextRange");
+        // SAFETY: focused and value are live CF objects.
+        let err = unsafe {
+            AXUIElementSetAttributeValue(focused.0, attribute.as_concrete_TypeRef(), value.0)
+        };
+        err == AX_SUCCESS
+    }
+
     const AX_ERROR_NO_VALUE: AXError = -25212;
 
     fn bool_attribute(element: AXUIElementRef, name: &str) -> Option<bool> {
@@ -408,6 +441,28 @@ pub fn focused_field() -> Option<FieldSnapshot> {
     #[cfg(not(target_os = "macos"))]
     {
         None
+    }
+}
+
+/// Select all of the focused field's text, so the next paste replaces it.
+/// Checks the field still holds `expected` (what was read before) and that
+/// the selection took, so a changed or uncooperative field isn't clobbered.
+pub fn select_whole_field(expected: &[u16]) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        match ax::focused_field() {
+            Some(field) if field.value == expected => {}
+            _ => return false,
+        }
+        if !ax::select_range(0, expected.len()) {
+            return false;
+        }
+        ax::focused_field().and_then(|f| f.selection) == Some((0, expected.len()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = expected;
+        false
     }
 }
 

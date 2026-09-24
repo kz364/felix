@@ -1792,3 +1792,73 @@ mod tests {
         }
     }
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_assistant_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.assistant_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_assistant_name_setting(app: AppHandle, name: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.split_whitespace().count() > 1 {
+        return Err("The assistant's name must be a single word".into());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.assistant_name = name.to_string();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_assistant_model_setting(app: AppHandle, model: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.assistant_model = model.trim().to_string();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_assistant_effort_setting(app: AppHandle, effort: String) -> Result<(), String> {
+    if !["none", "low", "medium", "high"].contains(&effort.as_str()) {
+        return Err(format!("Unknown reasoning effort: {effort}"));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.assistant_effort = effort;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_actions_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_actions_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_auto_send = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_assistant_notes_setting(app: AppHandle, notes: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.assistant_notes = notes;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
