@@ -1,13 +1,15 @@
 // Re-export all audio components
 mod device;
 mod gain;
+mod raw_capture;
 mod recorder;
 mod resampler;
 mod utils;
 mod visualizer;
 
 pub use device::{list_input_devices, list_output_devices, CpalDeviceInfo};
-pub use gain::{db_to_linear, GainConfig, InputGain};
+pub use gain::{db_to_linear, soft_limit, GainConfig, GainState, InputGain};
+pub use raw_capture::RawCapture;
 pub use recorder::{
     is_microphone_access_denied, is_no_input_device_error, AudioRecorder, VadPolicy,
 };

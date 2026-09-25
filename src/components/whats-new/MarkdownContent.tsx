@@ -63,7 +63,7 @@ const components: Components = {
     </h3>
   ),
   h3: ({ children }) => (
-    <h3 className="text-sm font-semibold leading-snug text-text">{children}</h3>
+    <h3 className="text-sm font-medium leading-snug text-text">{children}</h3>
   ),
   p: ({ children }) => (
     <p className="text-sm leading-relaxed text-text/80">{children}</p>
@@ -82,7 +82,7 @@ const components: Components = {
     </ol>
   ),
   br: () => <br />,
-  hr: () => <hr className="border-mid-gray/20" />,
+  hr: () => <hr className="border-stone/20" />,
   img: ({ alt, src }) => {
     if (!src || !isSafeImageSrc(src)) return null;
 
@@ -97,7 +97,7 @@ const components: Components = {
     );
   },
   blockquote: ({ children }) => (
-    <blockquote className="border-s-2 border-logo-primary/50 ps-3 text-sm leading-relaxed text-text/70">
+    <blockquote className="border-s-2 border-accent/50 ps-3 text-sm leading-relaxed text-text/70">
       {children}
     </blockquote>
   ),
@@ -113,13 +113,13 @@ const components: Components = {
     }
 
     return (
-      <code className="rounded bg-mid-gray/10 px-1 py-0.5 font-mono text-[0.85em]">
+      <code className="rounded bg-stone/10 px-1 py-0.5 font-mono text-[0.85em]">
         {children}
       </code>
     );
   },
   pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-md bg-mid-gray/10 p-3 text-xs leading-relaxed text-text/80">
+    <pre className="overflow-x-auto rounded-md bg-stone/10 p-3 text-xs leading-relaxed text-text/80">
       {children}
     </pre>
   ),
@@ -136,7 +136,7 @@ const components: Components = {
           event.preventDefault();
           void openSafeUrl(href);
         }}
-        className="text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary"
+        className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
       >
         {children}
       </a>

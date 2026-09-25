@@ -3,30 +3,28 @@ import { useTranslation } from "react-i18next";
 import {
   AudioLines,
   BookA,
-  Palette,
-  Cog,
+  Bot,
+  Cpu,
   FlaskConical,
   History,
-  Info,
-  Sparkles,
-  Cpu,
-  Bot,
+  Mic,
+  NotebookPen,
+  PenLine,
+  Settings2,
 } from "lucide-react";
-import HandyTextLogo from "./icons/HandyTextLogo";
-import HandyHand from "./icons/HandyHand";
+import Wordmark from "./icons/Wordmark";
 import { useSettings } from "../hooks/useSettings";
+import { MeetingsPage } from "./meetings/MeetingsPage";
 import {
-  GeneralSettings,
-  AdvancedSettings,
-  HistorySettings,
+  AppSettings,
   DebugSettings,
-  AboutSettings,
-  PostProcessingSettings,
-  ModelsSettings,
-  VoiceControlSettings,
+  DictationSettings,
   FelixSettings,
+  HistorySettings,
+  ModelsSettings,
   VocabularySettings,
-  StyleSettings,
+  VoiceCommandsSettings,
+  WritingSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -44,13 +42,15 @@ interface SectionConfig {
   icon: React.ComponentType<IconProps>;
   component: React.ComponentType;
   enabled: (settings: any) => boolean;
+  /** Pinned to the bottom of the sidebar with the other housekeeping pages. */
+  bottom?: boolean;
 }
 
 export const SECTIONS_CONFIG = {
-  general: {
-    labelKey: "sidebar.general",
-    icon: HandyHand,
-    component: GeneralSettings,
+  dictation: {
+    labelKey: "sidebar.dictation",
+    icon: Mic,
+    component: DictationSettings,
     enabled: () => true,
   },
   history: {
@@ -59,40 +59,22 @@ export const SECTIONS_CONFIG = {
     component: HistorySettings,
     enabled: () => true,
   },
-  models: {
-    labelKey: "sidebar.models",
-    icon: Cpu,
-    component: ModelsSettings,
-    enabled: () => true,
-  },
-  style: {
-    labelKey: "sidebar.style",
-    icon: Palette,
-    component: StyleSettings,
-    enabled: () => true,
-  },
   vocabulary: {
     labelKey: "sidebar.vocabulary",
     icon: BookA,
     component: VocabularySettings,
     enabled: () => true,
   },
-  advanced: {
-    labelKey: "sidebar.advanced",
-    icon: Cog,
-    component: AdvancedSettings,
+  writing: {
+    labelKey: "sidebar.writing",
+    icon: PenLine,
+    component: WritingSettings,
     enabled: () => true,
   },
-  postprocessing: {
-    labelKey: "sidebar.postProcessing",
-    icon: Sparkles,
-    component: PostProcessingSettings,
-    enabled: () => true,
-  },
-  voicecontrol: {
-    labelKey: "sidebar.voiceControl",
+  voice: {
+    labelKey: "sidebar.voiceCommands",
     icon: AudioLines,
-    component: VoiceControlSettings,
+    component: VoiceCommandsSettings,
     enabled: () => true,
   },
   felix: {
@@ -101,17 +83,32 @@ export const SECTIONS_CONFIG = {
     component: FelixSettings,
     enabled: () => true,
   },
+  meetings: {
+    labelKey: "sidebar.meetings",
+    icon: NotebookPen,
+    component: MeetingsPage,
+    enabled: () => true,
+  },
+  models: {
+    labelKey: "sidebar.models",
+    icon: Cpu,
+    component: ModelsSettings,
+    enabled: () => true,
+    bottom: true,
+  },
+  settings: {
+    labelKey: "sidebar.settings",
+    icon: Settings2,
+    component: AppSettings,
+    enabled: () => true,
+    bottom: true,
+  },
   debug: {
     labelKey: "sidebar.debug",
     icon: FlaskConical,
     component: DebugSettings,
     enabled: (settings) => settings?.debug_mode ?? false,
-  },
-  about: {
-    labelKey: "sidebar.about",
-    icon: Info,
-    component: AboutSettings,
-    enabled: () => true,
+    bottom: true,
   },
 } as const satisfies Record<string, SectionConfig>;
 
@@ -127,39 +124,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { t } = useTranslation();
   const { settings } = useSettings();
 
-  const availableSections = Object.entries(SECTIONS_CONFIG)
+  const sections = Object.entries(SECTIONS_CONFIG)
     .filter(([_, config]) => config.enabled(settings))
-    .map(([id, config]) => ({ id: id as SidebarSection, ...config }));
+    .map(([id, config]) => ({
+      id: id as SidebarSection,
+      bottom: "bottom" in config && config.bottom,
+      ...config,
+    }));
+
+  const item = (section: (typeof sections)[number]) => {
+    const Icon = section.icon;
+    const isActive = activeSection === section.id;
+    return (
+      <button
+        key={section.id}
+        type="button"
+        aria-current={isActive ? "page" : undefined}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 h-8 text-[13px] text-start transition-colors duration-150 cursor-pointer ${
+          isActive
+            ? "bg-surface text-text font-medium shadow-sm ring-1 ring-stone/15"
+            : "text-text/65 hover:text-text hover:bg-stone/10"
+        }`}
+        onClick={() => onSectionChange(section.id)}
+      >
+        <Icon width={16} height={16} strokeWidth={1.75} className="shrink-0" />
+        <span className="truncate" title={t(section.labelKey)}>
+          {t(section.labelKey)}
+        </span>
+      </button>
+    );
+  };
 
   return (
-    <div className="flex flex-col w-40 h-full border-e border-mid-gray/20 items-center px-2">
-      <HandyTextLogo width={120} className="m-4" />
-      <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
-        {availableSections.map((section) => {
-          const Icon = section.icon;
-          const isActive = activeSection === section.id;
-
-          return (
-            <div
-              key={section.id}
-              className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors ${
-                isActive
-                  ? "bg-logo-primary/80"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
-              }`}
-              onClick={() => onSectionChange(section.id)}
-            >
-              <Icon width={24} height={24} className="shrink-0" />
-              <p
-                className="text-sm font-medium truncate"
-                title={t(section.labelKey)}
-              >
-                {t(section.labelKey)}
-              </p>
-            </div>
-          );
-        })}
+    <nav className="flex flex-col w-52 shrink-0 h-full bg-sunken border-e border-stone/15 px-3 pb-3">
+      <div className="px-2 pt-5 pb-5">
+        <Wordmark />
       </div>
-    </div>
+      <div className="flex flex-col gap-0.5">
+        {sections.filter((s) => !s.bottom).map(item)}
+      </div>
+      <div className="mt-auto flex flex-col gap-0.5 pt-3">
+        {sections.filter((s) => s.bottom).map(item)}
+      </div>
+    </nav>
   );
 };

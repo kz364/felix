@@ -152,7 +152,7 @@ export const AppSwitcher: React.FC<AppSwitcherProps> = React.memo(
             </SettingContainer>
             {aliases.length > 0 && (
               <div
-                className={`px-4 p-2 ${grouped ? "" : "rounded-lg border border-mid-gray/20"} flex flex-wrap gap-1`}
+                className={`px-4 p-2 ${grouped ? "" : "rounded-xl border border-stone/20 bg-surface"} flex flex-wrap gap-1`}
               >
                 {aliases.map((alias) => (
                   <Button

@@ -32,6 +32,9 @@ pub enum Placement {
     ClaudeSession { project: String },
     /// Nothing pasted: do the text, a task, on the computer (Codex + Cua).
     ComputerTask,
+    /// Nothing pasted: the text reports a dictation that came out wrong;
+    /// fix the rules file (see `rules`).
+    ReportMistake,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +52,7 @@ impl Edit {
             Placement::ReplaceField(_) => "replace field",
             Placement::ClaudeSession { .. } => "claude session",
             Placement::ComputerTask => "computer task",
+            Placement::ReportMistake => "report mistake",
         }
     }
 }
@@ -94,9 +98,11 @@ Work out what they want and write the text that should end up in the field:
 - They asked you to write something (a reply, a message, a list, a summary): write it in their voice, fitting the app and what's already in the field.
 - They selected text and asked for a change: rewrite the selection.
 - They asked to change the draft already in the field (fix, shorten, rephrase, translate it): rewrite the whole field.
+- They're telling you dictation got something wrong, to fix how a word or name is written, or that it should hear something differently ("{name}, it keeps writing cloud instead of Claude", "{name}, kubectl is spelled k-u-b-e-c-t-l", "{name}, that last one came out wrong, I said…"): use "report_mistake". "text" is their report in their own words, with every detail they gave, including how it was written and what they meant. This is about how dictation transcribes, not a request to edit the field.
 {agent_rules}- There is no instruction next to your name (for example, your name alone at the end of an email): do nothing. Return the dictation exactly as they said it, without your name, with "insert_at_cursor". Don't continue, complete or polish the text, and don't touch the field.
 
 Choose where the text goes:
+- "report_mistake": nothing goes in the field; see above.
 - "insert_at_cursor": at the cursor, between the text before and after it.
 - "replace_selection": replaces the selected text. Only when there is a selection.
 - "replace_field": replaces everything in the field. Only when the field is included in full.
@@ -113,7 +119,12 @@ Rules:
 
 /// The reply format; the agent placements and "project" only when they're on.
 fn schema(agent_actions: bool) -> serde_json::Value {
-    let mut placements = vec!["insert_at_cursor", "replace_selection", "replace_field"];
+    let mut placements = vec![
+        "insert_at_cursor",
+        "replace_selection",
+        "replace_field",
+        "report_mistake",
+    ];
     let mut properties = serde_json::json!({"text": {"type": "string"}});
     let mut required = vec!["placement", "text"];
     if agent_actions {
@@ -220,6 +231,7 @@ fn parse_reply(
     let has_selection = field.is_some_and(|f| f.selection.is_some_and(|(_, len)| len > 0));
     let placement = match (reply.placement.as_str(), field) {
         ("computer_task", _) if !text.is_empty() => Placement::ComputerTask,
+        ("report_mistake", _) if !text.is_empty() => Placement::ReportMistake,
         ("start_claude_session", _) if !text.is_empty() => Placement::ClaudeSession {
             project: reply.project.trim().to_string(),
         },
@@ -457,5 +469,18 @@ mod tests {
         assert!(!schema_off.contains("computer_task") && !schema_off.contains("project"));
         let schema_on = schema(true).to_string();
         assert!(schema_on.contains("computer_task") && schema_on.contains("project"));
+    }
+
+    #[test]
+    fn mistake_reports_are_always_offered() {
+        assert!(instructions("Felix", false).contains("report_mistake"));
+        assert!(schema(false).to_string().contains("report_mistake"));
+        let edit = parse_reply(
+            r#"{"placement":"report_mistake","text":"it wrote cloud instead of Claude"}"#,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(edit.placement, Placement::ReportMistake);
     }
 }

@@ -32,6 +32,15 @@ const SILENCE_RMS: f32 = 1e-5;
 /// Where the soft limiter starts bending the waveform.
 const LIMITER_KNEE: f32 = 0.8;
 
+/// What the AGC has learned about the speaker and the room (linear RMS).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+pub struct GainState {
+    pub speech_level: Option<f32>,
+    pub noise_floor: Option<f32>,
+}
+
 /// Settings shared between the settings UI and the capture thread.
 #[derive(Debug)]
 pub struct GainConfig {
@@ -52,6 +61,32 @@ impl GainConfig {
             learned_speech_level: AtomicU32::new(0),
             learned_noise_floor: AtomicU32::new(0),
         })
+    }
+
+    /// A config that starts from already-learned levels, for replaying a
+    /// recording exactly as the AGC heard it live.
+    pub fn seeded(gain_db: f32, auto_gain: bool, state: GainState) -> Arc<Self> {
+        let config = Self::new(gain_db, auto_gain);
+        let bits = |v: Option<f32>| v.filter(|v| *v > 0.0).map_or(0, f32::to_bits);
+        config
+            .learned_speech_level
+            .store(bits(state.speech_level), Ordering::Relaxed);
+        config
+            .learned_noise_floor
+            .store(bits(state.noise_floor), Ordering::Relaxed);
+        config
+    }
+
+    /// The levels learned so far.
+    pub fn learned(&self) -> GainState {
+        let get = |a: &AtomicU32| {
+            let v = f32::from_bits(a.load(Ordering::Relaxed));
+            (v > 0.0).then_some(v)
+        };
+        GainState {
+            speech_level: get(&self.learned_speech_level),
+            noise_floor: get(&self.learned_noise_floor),
+        }
     }
 
     pub fn set_gain_db(&self, gain_db: f32) {
@@ -102,6 +137,10 @@ impl InputGain {
                 db_to_linear(gain.config.gain_db()) * gain.auto_gain_for_current_state();
         }
         gain
+    }
+
+    pub fn config(&self) -> &Arc<GainConfig> {
+        &self.config
     }
 
     /// Current total linear gain (fixed × automatic), for diagnostics.
@@ -197,7 +236,7 @@ fn rms(frame: &[f32]) -> f32 {
 }
 
 /// Linear below the knee, smoothly saturating to ±1.0 above it.
-fn soft_limit(s: f32) -> f32 {
+pub fn soft_limit(s: f32) -> f32 {
     let a = s.abs();
     if a <= LIMITER_KNEE {
         return s;

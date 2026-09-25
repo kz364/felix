@@ -4,7 +4,7 @@ use crate::audio_toolkit::{
         frames_for_duration_ms, EarshotVad, SmoothedVad, VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS,
         VAD_PREFILL_MS, VAD_STREAMING_HANGOVER_MS,
     },
-    AudioRecorder, GainConfig, SileroVad, VadPolicy, VoiceActivityDetector,
+    AudioRecorder, GainConfig, GainState, RawCapture, SileroVad, VadPolicy, VoiceActivityDetector,
 };
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
@@ -361,6 +361,7 @@ fn create_audio_recorder(
     selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
     gain_config: Arc<GainConfig>,
+    raw_capture: Arc<RawCapture>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let detector: Box<dyn VoiceActivityDetector> = match backend {
         VadBackend::Silero => {
@@ -415,6 +416,7 @@ fn create_audio_recorder(
         )
         .with_selected_channel(selected_channel)
         .with_gain(gain_config)
+        .with_raw_capture(raw_capture)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -467,6 +469,8 @@ pub struct AudioRecordingManager {
     stream_router: Arc<StreamRouter>,
     /// Shared with every recorder this manager builds; updated live from settings.
     gain_config: Arc<GainConfig>,
+    /// Benchmark recording: each dictation's audio before gain and VAD.
+    raw_capture: Arc<RawCapture>,
     /// Lock-free mirror of "is the state in {Recording, Stopping}",
     /// maintained by `set_state()`. The hot-path `is_recording()` reads THIS
     /// instead of the std `state` mutex, so a UI poll can no longer deadlock
@@ -518,6 +522,7 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             gain_config: GainConfig::new(settings.input_gain_db, settings.auto_gain_enabled),
+            raw_capture: RawCapture::new(settings.benchmark_recording),
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
@@ -555,6 +560,13 @@ impl AudioRecordingManager {
             Some(name) => DesiredMicrophone::Selected(name.clone()),
             None => DesiredMicrophone::Default,
         }
+    }
+
+    /// The microphone dictation would use now (preferred list, selection or
+    /// the system default as `None`), for a meeting recording.
+    pub fn meeting_microphone(&self) -> Option<cpal::Device> {
+        let settings = get_settings(&self.app_handle);
+        self.resolve_microphone_device(&settings).device
     }
 
     pub fn invalidate_device_cache(&self) {
@@ -793,6 +805,23 @@ impl AudioRecordingManager {
         debug!("Input gain updated: fixed={gain_db:.1} dB, auto={auto_gain}");
     }
 
+    /// Benchmark recording on or off (applies from the next recording).
+    pub fn set_benchmark_recording(&self, enabled: bool) {
+        self.raw_capture.set_enabled(enabled);
+    }
+
+    /// The last recording's audio before gain and VAD, with the gain settings
+    /// and learned levels it was recorded with. Empty unless benchmarking.
+    pub fn take_raw_recording(&self) -> (Vec<f32>, GainState, f32, bool) {
+        let (samples, state) = self.raw_capture.take();
+        (
+            samples,
+            state,
+            self.gain_config.gain_db(),
+            self.gain_config.auto_gain(),
+        )
+    }
+
     pub fn preload_vad(&self) -> Result<(), anyhow::Error> {
         let mut recorder_opt = self.recorder.lock().unwrap();
         if recorder_opt.is_none() {
@@ -803,6 +832,7 @@ impl AudioRecordingManager {
                 settings.selected_channel,
                 Arc::clone(&self.stream_router),
                 Arc::clone(&self.gain_config),
+                Arc::clone(&self.raw_capture),
             )?);
         }
         Ok(())
@@ -939,6 +969,12 @@ impl AudioRecordingManager {
         Ok(())
     }
 
+    /// Name of the microphone the stream is open on (`None` for the system
+    /// default or when closed).
+    pub fn open_device_name(&self) -> Option<String> {
+        self.open_device_name.lock().unwrap().clone()
+    }
+
     pub fn stop_microphone_stream(&self) {
         let mut open_flag = self.is_open.lock().unwrap();
         if !*open_flag {
@@ -1029,6 +1065,10 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                let settings = get_settings(&self.app_handle);
+                rec.set_vad_threshold(
+                    settings.vad_threshold_for(self.open_device_name().as_deref()),
+                );
                 match rec.start(vad_policy) {
                     Ok(receiver) => {
                         let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -1073,6 +1113,7 @@ impl AudioRecordingManager {
             settings.selected_channel,
             Arc::clone(&self.stream_router),
             Arc::clone(&self.gain_config),
+            Arc::clone(&self.raw_capture),
         )?;
         let was_open = *self.is_open.lock().unwrap();
 

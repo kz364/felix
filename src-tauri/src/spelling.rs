@@ -1,4 +1,4 @@
-//! Words spelled out letter by letter ("Kaspar, K A S P A R").
+//! Words spelled out letter by letter ("Rivera, R I V E R A").
 //!
 //! Speech recognizers write spelled letters in many ways ("S J O G R E N",
 //! "S-J-O-G-R-E-N", "Z. H. O. U.", "p e n g u i n", "double L"), so this works
@@ -169,7 +169,7 @@ fn similarity(previous: &str, spelled: &str) -> f64 {
     strsim::normalized_levenshtein(&a, &b)
 }
 
-/// Letters that recognizers swap for the same sound ("Casper"/"Kaspar").
+/// Letters that recognizers swap for the same sound ("Carla"/"Karla").
 fn same_sound(a: char, b: char) -> bool {
     const GROUPS: &[&str] = &["ckq", "csz", "jg", "fp", "iy", "aeiou"];
     a == b || GROUPS.iter().any(|g| g.contains(a) && g.contains(b))
@@ -299,15 +299,15 @@ mod tests {
             f("The file is named R E A D M E. M D."),
             "The file is named Readme. M D."
         );
-        assert_eq!(f("My name is Kaspar. K.A.S.P.A.R."), "My name is Kaspar.");
+        assert_eq!(f("My name is Rivera. R.I.V.E.R.A."), "My name is Rivera.");
         // Too short to trust a mismatch: joined, not replaced.
         assert_eq!(
-            f("My last name is Joe. Z. H. O. U."),
-            "My last name is Joe. ZHOU."
+            f("My last name is Shaw. X. I. A. O."),
+            "My last name is Shaw. XIAO."
         );
         assert_eq!(
-            f("The company is called Featherless, spelled F-E-A-T-H-E-R-L-E-S-S."),
-            "The company is called Featherless."
+            f("The company is called Lumenfold, spelled L-U-M-E-N-F-O-L-D."),
+            "The company is called Lumenfold."
         );
         assert_eq!(
             f("Send it to Chavorn. That's S I O B H A N."),

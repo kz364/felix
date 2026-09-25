@@ -40,6 +40,56 @@ enum Verdict {
     AskModel,
 }
 
+/// Where the dictation is going, for entries with app or screen hints.
+#[derive(Debug, Clone, Default)]
+pub struct Place {
+    pub app_name: Option<String>,
+    pub bundle_id: Option<String>,
+    /// The text on screen there (see `screen_context`).
+    pub screen: Option<String>,
+}
+
+impl Place {
+    pub fn current() -> Self {
+        let context = crate::app_context::current();
+        Self {
+            app_name: context.app_name,
+            bundle_id: context.bundle_id,
+            screen: crate::screen_context::peek(),
+        }
+    }
+}
+
+/// Why the name is likely here, if it is: the app, or the name on screen.
+fn name_hint(entry: &Soundalike, place: &Place) -> Option<String> {
+    let in_app = entry.name_in_apps.iter().find(|a| {
+        let a = a.trim();
+        !a.is_empty()
+            && (place
+                .app_name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(a))
+                || place
+                    .bundle_id
+                    .as_deref()
+                    .is_some_and(|b| b.eq_ignore_ascii_case(a)))
+    });
+    if let Some(app) = in_app {
+        return Some(format!("The speaker is dictating into {app}."));
+    }
+    let on_screen = entry.name_if_on_screen
+        && place.screen.as_deref().is_some_and(|screen| {
+            Regex::new(&format!(r"(?i)\b{}\b", regex::escape(entry.word.trim())))
+                .is_ok_and(|re| re.is_match(screen))
+        });
+    on_screen.then(|| {
+        format!(
+            "\"{}\" appears on screen where the speaker is typing.",
+            entry.word
+        )
+    })
+}
+
 fn pattern(heard: &str) -> Option<Regex> {
     let heard = heard.trim();
     if heard.is_empty() {
@@ -97,15 +147,30 @@ fn compound_at(text: &str, occurrence: &Occurrence, entry: &Soundalike) -> Optio
     })
 }
 
-fn verdict(text: &str, occurrence: &Occurrence, entry: &Soundalike) -> Verdict {
+fn verdict(text: &str, occurrence: &Occurrence, entry: &Soundalike, place: &Place) -> Verdict {
     let previous = text[..occurrence.start]
         .split(|c: char| !(c.is_alphanumeric() || c == '\''))
         .rfind(|w| !w.is_empty())
         .map(str::to_lowercase);
     if compound_at(text, occurrence, entry).is_some() {
         Verdict::Name
-    } else if previous.is_some_and(|w| DETERMINERS.contains(&w.as_str())) {
-        Verdict::Ordinary
+    } else if previous.is_some_and(|w| {
+        if entry.ordinary_after.is_empty() {
+            DETERMINERS.contains(&w.as_str())
+        } else {
+            entry
+                .ordinary_after
+                .iter()
+                .any(|o| o.eq_ignore_ascii_case(&w))
+        }
+    }) {
+        // "my cloud instance": the ordinary word, unless the app or the
+        // screen makes the name likely; then the model decides.
+        if name_hint(entry, place).is_some() {
+            Verdict::AskModel
+        } else {
+            Verdict::Ordinary
+        }
     } else {
         Verdict::AskModel
     }
@@ -115,15 +180,18 @@ fn system_prompt() -> &'static str {
     "You check a speech-to-text transcript for one kind of mistake: a name transcribed as an ordinary word that sounds like it. Answer yes if the marked word stands for the name, no if it means the ordinary word. Judge only from what the sentence is about. Answer with yes or no."
 }
 
-fn question(text: &str, occurrence: &Occurrence, entry: &Soundalike) -> String {
+fn question(text: &str, occurrence: &Occurrence, entry: &Soundalike, place: &Place) -> String {
     let marked = format!(
         "{}[[{}]]{}",
         &text[..occurrence.start],
         &text[occurrence.start..occurrence.end],
         &text[occurrence.end..]
     );
+    let hint = name_hint(entry, place)
+        .map(|h| format!("\n\n{h}"))
+        .unwrap_or_default();
     format!(
-        "Transcript: {marked}\n\nThe name is \"{word}\": {meaning}. It's often transcribed as \"{heard}\".\n\nDoes the word in [[ ]] stand for \"{word}\"?",
+        "Transcript: {marked}\n\nThe name is \"{word}\": {meaning}. It's often transcribed as \"{heard}\".{hint}\n\nDoes the word in [[ ]] stand for \"{word}\"?",
         word = entry.word,
         meaning = entry.meaning,
         heard = entry.heard,
@@ -181,6 +249,7 @@ fn local_model(settings: &AppSettings) -> Option<String> {
 /// if it fails.
 pub async fn resolve(text: &str, settings: &AppSettings) -> String {
     let entries = &settings.soundalikes;
+    let place = Place::current();
     let occurrences = find(text, entries);
     if occurrences.is_empty() {
         return text.to_string();
@@ -190,14 +259,14 @@ pub async fn resolve(text: &str, settings: &AppSettings) -> String {
     let mut is_name = Vec::with_capacity(occurrences.len());
     for occurrence in &occurrences {
         let entry = &entries[occurrence.entry];
-        let decided = match (verdict(text, occurrence, entry), &model) {
+        let decided = match (verdict(text, occurrence, entry, &place), &model) {
             (Verdict::Name, _) => true,
             (Verdict::Ordinary, _) | (Verdict::AskModel, None) => false,
             (Verdict::AskModel, Some(model)) => {
                 match crate::local_llm::yes_probability(
                     model,
                     system_prompt(),
-                    &question(text, occurrence, entry),
+                    &question(text, occurrence, entry, &place),
                     settings.local_model_keep_loaded,
                 )
                 .await
@@ -223,6 +292,26 @@ pub async fn resolve(text: &str, settings: &AppSettings) -> String {
     apply(text, &occurrences, &is_name, entries)
 }
 
+/// Without the model: occurrences it would decide are all taken as names
+/// (`model_says_name`) or all left. For checking rules offline.
+pub fn resolve_offline(
+    text: &str,
+    entries: &[Soundalike],
+    place: &Place,
+    model_says_name: bool,
+) -> String {
+    let occurrences = find(text, entries);
+    let is_name: Vec<bool> = occurrences
+        .iter()
+        .map(|o| match verdict(text, o, &entries[o.entry], place) {
+            Verdict::Name => true,
+            Verdict::Ordinary => false,
+            Verdict::AskModel => model_says_name,
+        })
+        .collect();
+    apply(text, &occurrences, &is_name, entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,8 +324,37 @@ mod tests {
         let entries = claude();
         find(text, &entries)
             .iter()
-            .map(|o| verdict(text, o, &entries[o.entry]))
+            .map(|o| verdict(text, o, &entries[o.entry], &Place::default()))
             .collect()
+    }
+
+    #[test]
+    fn in_claude_or_with_claude_on_screen_my_cloud_is_checked() {
+        let entries = claude();
+        let text = "restart my cloud instance";
+        let o = &find(text, &entries)[0];
+        let elsewhere = Place {
+            app_name: Some("Slack".into()),
+            ..Default::default()
+        };
+        assert_eq!(verdict(text, o, &entries[0], &elsewhere), Verdict::Ordinary);
+        let codex = Place {
+            app_name: Some("Codex".into()),
+            ..Default::default()
+        };
+        assert_eq!(verdict(text, o, &entries[0], &codex), Verdict::AskModel);
+        assert!(question(text, o, &entries[0], &codex).contains("dictating into Codex"));
+        let screen = Place {
+            app_name: Some("Slack".into()),
+            screen: Some("Sam: is Claude still running?".into()),
+            ..Default::default()
+        };
+        assert_eq!(verdict(text, o, &entries[0], &screen), Verdict::AskModel);
+        assert_eq!(
+            resolve_offline(text, &entries, &codex, true),
+            "restart my Claude instance"
+        );
+        assert_eq!(resolve_offline(text, &entries, &elsewhere, true), text);
     }
 
     #[test]
@@ -298,7 +416,7 @@ mod tests {
         let entries = claude();
         let text = "is it in the cloud or cloud code";
         let found = find(text, &entries);
-        let q = question(text, &found[1], &entries[0]);
+        let q = question(text, &found[1], &entries[0], &Place::default());
         assert!(q.contains("in the cloud or [[cloud]] code"), "{q}");
     }
 

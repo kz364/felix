@@ -14,6 +14,9 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { PageHeader } from "../../ui/PageHeader";
+import { SettingsGroup } from "../../ui/SettingsGroup";
+import { HistoryRetention } from "../HistoryRetention";
 import { copyToClipboard } from "./clipboard";
 
 const IconButton: React.FC<{
@@ -28,8 +31,8 @@ const IconButton: React.FC<{
     disabled={disabled}
     className={`p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
       active
-        ? "text-logo-primary hover:text-logo-primary/80"
-        : "text-text/50 hover:text-logo-primary"
+        ? "text-accent hover:text-accent/80"
+        : "text-text/45 hover:text-text hover:bg-stone/10"
     }`}
     title={title}
   >
@@ -48,14 +51,8 @@ const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
   onClick,
   label,
 }) => (
-  <Button
-    onClick={onClick}
-    variant="secondary"
-    size="sm"
-    className="flex items-center gap-2"
-    title={label}
-  >
-    <FolderOpen className="w-4 h-4" />
+  <Button onClick={onClick} variant="secondary" size="sm" title={label}>
+    <FolderOpen className="w-3.5 h-3.5" />
     <span>{label}</span>
   </Button>
 );
@@ -237,7 +234,7 @@ export const HistorySettings: React.FC = () => {
     );
   } else if (entries.length === 0) {
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
+      <div className="px-6 py-14 text-center font-display text-lg text-text/55">
         {t("settings.history.empty")}
       </div>
     );
@@ -245,13 +242,13 @@ export const HistorySettings: React.FC = () => {
     content = (
       <>
         <AudioPlayerGroup>
-          <div className="divide-y divide-mid-gray/20">
+          <div className="divide-y divide-stone/15">
             {entries.map((entry) => (
               <HistoryEntryComponent
                 key={entry.id}
                 entry={entry}
                 onToggleSaved={() => toggleSaved(entry.id)}
-                onCopyText={() => copyToClipboard(entry.transcription_text)}
+                onCopyText={() => copyToClipboard(pastedText(entry))}
                 getAudioUrl={getAudioUrl}
                 deleteAudio={deleteAudioEntry}
                 retryTranscription={retryHistoryEntry}
@@ -266,26 +263,32 @@ export const HistorySettings: React.FC = () => {
   }
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
-      <div className="space-y-2">
-        <div className="px-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-              {t("settings.history.title")}
-            </h2>
-          </div>
+    <div className="max-w-2xl w-full mx-auto space-y-6">
+      <PageHeader
+        title={t("settings.history.title")}
+        description={t("settings.history.description")}
+        actions={
           <OpenRecordingsButton
             onClick={openRecordingsFolder}
             label={t("settings.history.openFolder")}
           />
-        </div>
-        <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
-          {content}
-        </div>
+        }
+      />
+      <div className="bg-surface border border-stone/20 rounded-xl overflow-visible divide-y divide-stone/15">
+        {content}
       </div>
+      <SettingsGroup title={t("settings.history.keep.title")}>
+        <HistoryRetention descriptionMode="tooltip" grouped={true} />
+      </SettingsGroup>
     </div>
   );
 };
+
+/** What was pasted: the cleaned-up text when there is one, else the raw transcript. */
+const pastedText = (entry: HistoryEntry) =>
+  entry.post_processed_text?.trim()
+    ? entry.post_processed_text
+    : entry.transcription_text;
 
 interface HistoryEntryProps {
   entry: HistoryEntry;
@@ -308,7 +311,11 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const [showCopied, setShowCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
-  const hasTranscription = entry.transcription_text.trim().length > 0;
+  const [showOriginal, setShowOriginal] = useState(false);
+  const hasTranscription = pastedText(entry).trim().length > 0;
+  const hasOriginal =
+    !!entry.post_processed_text?.trim() &&
+    entry.post_processed_text !== entry.transcription_text;
 
   const handleLoadAudio = useCallback(
     () => getAudioUrl(entry.file_name),
@@ -354,9 +361,9 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
 
   return (
-    <div className="px-4 py-2 pb-5 flex flex-col gap-3">
+    <div className="px-4 pt-3 pb-4 flex flex-col gap-2">
       <div className="flex justify-between items-center">
-        <p className="text-sm font-medium">{formattedDate}</p>
+        <p className="text-xs text-text/50 tabular-nums">{formattedDate}</p>
         <div className="flex items-center">
           <IconButton
             onClick={handleCopyText}
@@ -415,7 +422,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       </div>
 
       <p
-        className={`italic text-sm pb-2 ${
+        className={`font-display text-[16px] leading-relaxed pb-1 ${
           retrying
             ? ""
             : hasTranscription
@@ -439,9 +446,27 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
         {retrying
           ? t("settings.history.transcribing")
           : hasTranscription
-            ? entry.transcription_text
+            ? pastedText(entry)
             : t("settings.history.transcriptionFailed")}
       </p>
+
+      {hasOriginal && !retrying && (
+        <div className="pb-2 -mt-1 space-y-1">
+          <button
+            onClick={() => setShowOriginal(!showOriginal)}
+            className="text-xs text-text/50 hover:text-text cursor-pointer"
+          >
+            {showOriginal
+              ? t("settings.history.hideOriginal")
+              : t("settings.history.showOriginal")}
+          </button>
+          {showOriginal && (
+            <p className="text-xs text-text/60 select-text cursor-text whitespace-pre-wrap break-words border-s-2 border-stone/20 ps-2">
+              {entry.transcription_text}
+            </p>
+          )}
+        </div>
+      )}
 
       {entry.has_audio && (
         <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />

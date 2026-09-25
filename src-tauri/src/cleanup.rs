@@ -446,6 +446,15 @@ pub fn add_context(system_prompt: &str, settings: &AppSettings, app: Option<&str
     prompt
 }
 
+/// Append what's on screen (see `screen_context`) to the instructions. It
+/// goes last, so the instructions before it stay a cached prefix.
+pub fn with_screen_context(system_prompt: String, screen: Option<&str>) -> String {
+    match screen {
+        Some(block) if !block.trim().is_empty() => format!("{system_prompt}\n\n{block}"),
+        _ => system_prompt,
+    }
+}
+
 pub fn wrap_transcript(text: &str) -> String {
     format!("<transcript>{}</transcript>", text)
 }
@@ -526,7 +535,7 @@ pub fn accept_cleanup(
     // translation) score novelty >= 0.94 while real cleanups stay <= 0.25;
     // retention catches edits that silently drop facts.
     // Custom instructions can legitimately add words ("sign off with Best,
-    // Kaspar"), so allow more new content — still far below injected tasks.
+    // Sam"), so allow more new content — still far below injected tasks.
     let max_novelty = if has_instructions { 0.75 } else { 0.5 };
     if novelty(input, output) > max_novelty && content_words(output).len() >= 3 {
         return Err("output is mostly new content");
@@ -1151,7 +1160,7 @@ mod tests {
     #[test]
     fn instructions_allow_added_sign_off_but_not_injected_tasks() {
         let input = "thanks for the update";
-        let output = "Thanks for the update.\n\nBest,\nKaspar Lee";
+        let output = "Thanks for the update.\n\nBest,\nSam Rivera";
         assert!(accept_cleanup(input, output, Some(CleanupLevel::Light), false).is_err());
         assert!(accept_cleanup(input, output, Some(CleanupLevel::Light), true).is_ok());
         assert!(accept_cleanup(
@@ -1167,8 +1176,8 @@ mod tests {
     fn instructions_are_appended_as_a_list() {
         assert_eq!(instructions_block("", " \n"), None);
         assert_eq!(
-            instructions_block("Use British spelling\n- No exclamation marks", "Sign off with Best, Kaspar"),
-            Some("The user's own instructions (these take priority over the rules above):\n- Use British spelling\n- No exclamation marks\n- Sign off with Best, Kaspar".to_string())
+            instructions_block("Use British spelling\n- No exclamation marks", "Sign off with Best, Sam"),
+            Some("The user's own instructions (these take priority over the rules above):\n- Use British spelling\n- No exclamation marks\n- Sign off with Best, Sam".to_string())
         );
     }
 

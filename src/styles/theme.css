@@ -1,48 +1,73 @@
-/* Handy Colors */
+/* Handy colours — see docs/DESIGN.md for what each token is for. */
 
 :root {
-  /* Palette source of truth. Each themed color is defined once as a
+  /* Palette source of truth. Each themed colour is defined once as a
      light/dark pair; the active tokens below and the `data-theme` overrides
-     in App.css reference these, so a hex value lives in exactly one place. */
-  --light-color-text: #0f0f0f;
-  --light-color-background: #fbfbfb;
-  --light-color-logo-primary: #faa2ca;
-  --light-color-logo-stroke: #382731;
+     reference these, so a hex value lives in exactly one place. */
+  --light-color-background: #f7f6f1;
+  --light-color-sunken: #efeee7;
+  --light-color-surface: #fffffe;
+  --light-color-text: #23221e;
+  --light-color-stone: #8b887e;
+  --light-color-accent: #4e6a12;
+  --light-color-on-accent: #fbfbf5;
+  --light-color-highlight: #f2c24b;
+  --light-color-success: #3f7a3a;
+  --light-color-warning: #a86a12;
+  --light-color-error: #c2462b;
 
-  --dark-color-text: #fbfbfb;
-  --dark-color-background: #2c2b29;
-  --dark-color-logo-primary: #f28cbb;
-  --dark-color-logo-stroke: #fad1ed;
+  --dark-color-background: #1b1b19;
+  --dark-color-sunken: #141412;
+  --dark-color-surface: #242421;
+  --dark-color-text: #edebe4;
+  --dark-color-stone: #8f8c83;
+  --dark-color-accent: #b4cc62;
+  --dark-color-on-accent: #1b1b19;
+  --dark-color-highlight: #e8b93f;
+  --dark-color-success: #8fcb84;
+  --dark-color-warning: #e9b454;
+  --dark-color-error: #f08a6e;
 
-  /* Semantic status colors. First used by SecureInputWarning; intended to
-     replace the ad-hoc yellow-500/red-500 usages (e.g. ui/Alert.tsx) over
-     time so status styling is themeable from one place. */
-  --light-color-warning: #d97706;
-  --light-color-error: #dc2626;
-  --dark-color-warning: #fbbf24;
-  --dark-color-error: #f87171;
-
-  /* Tokens that do not change between light and dark */
-  --color-background-ui: #da5893;
   --color-text-stroke: #f6f6f6;
-  --color-mid-gray: #808080;
 
   /* Active palette — defaults to light, follows the OS via the media query
-     below, or is forced by `data-theme` (see the overrides below). */
-  --color-text: var(--light-color-text);
+     below, or is forced by `data-theme`. */
   --color-background: var(--light-color-background);
-  --color-logo-primary: var(--light-color-logo-primary);
-  --color-logo-stroke: var(--light-color-logo-stroke);
+  --color-sunken: var(--light-color-sunken);
+  --color-surface: var(--light-color-surface);
+  --color-text: var(--light-color-text);
+  --color-stone: var(--light-color-stone);
+  --color-accent: var(--light-color-accent);
+  --color-on-accent: var(--light-color-on-accent);
+  --color-highlight: var(--light-color-highlight);
+  --color-success: var(--light-color-success);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
+
+  /* The SVG logo's own colours. */
+  --color-logo-primary: var(--color-accent);
+  --color-logo-stroke: var(--color-text);
+
+  /* Type */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    sans-serif;
+  --font-display:
+    ui-serif, "New York", "Iowan Old Style", Charter, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-text: var(--dark-color-text);
     --color-background: var(--dark-color-background);
-    --color-logo-primary: var(--dark-color-logo-primary);
-    --color-logo-stroke: var(--dark-color-logo-stroke);
+    --color-sunken: var(--dark-color-sunken);
+    --color-surface: var(--dark-color-surface);
+    --color-text: var(--dark-color-text);
+    --color-stone: var(--dark-color-stone);
+    --color-accent: var(--dark-color-accent);
+    --color-on-accent: var(--dark-color-on-accent);
+    --color-highlight: var(--dark-color-highlight);
+    --color-success: var(--dark-color-success);
     --color-warning: var(--dark-color-warning);
     --color-error: var(--dark-color-error);
   }
@@ -50,28 +75,35 @@
 
 /*
  * Explicit theme override, driven by the `theme` setting via
- * `document.documentElement.dataset.theme`. When set, the higher-specificity
- * attribute selectors win over the `prefers-color-scheme` media query above,
- * so a user can keep Handy light or dark regardless of the OS setting.
- * `system` (or no attribute) leaves the OS in charge.
- *
- * Lives here (not in App.css) so every window that imports the shared palette —
- * the settings window and the recording overlay alike — honours the override.
+ * `document.documentElement.dataset.theme`. The attribute selectors win over
+ * the media query above, so Handy can stay light or dark regardless of the OS.
+ * Lives here so every window that imports the palette — the settings window
+ * and the recording overlay alike — honours it.
  */
 :root[data-theme="light"] {
-  --color-text: var(--light-color-text);
   --color-background: var(--light-color-background);
-  --color-logo-primary: var(--light-color-logo-primary);
-  --color-logo-stroke: var(--light-color-logo-stroke);
+  --color-sunken: var(--light-color-sunken);
+  --color-surface: var(--light-color-surface);
+  --color-text: var(--light-color-text);
+  --color-stone: var(--light-color-stone);
+  --color-accent: var(--light-color-accent);
+  --color-on-accent: var(--light-color-on-accent);
+  --color-highlight: var(--light-color-highlight);
+  --color-success: var(--light-color-success);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
 }
 
 :root[data-theme="dark"] {
-  --color-text: var(--dark-color-text);
   --color-background: var(--dark-color-background);
-  --color-logo-primary: var(--dark-color-logo-primary);
-  --color-logo-stroke: var(--dark-color-logo-stroke);
+  --color-sunken: var(--dark-color-sunken);
+  --color-surface: var(--dark-color-surface);
+  --color-text: var(--dark-color-text);
+  --color-stone: var(--dark-color-stone);
+  --color-accent: var(--dark-color-accent);
+  --color-on-accent: var(--dark-color-on-accent);
+  --color-highlight: var(--dark-color-highlight);
+  --color-success: var(--dark-color-success);
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);
 }

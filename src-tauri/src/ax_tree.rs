@@ -127,6 +127,7 @@ mod mac {
     pub fn expose_electron_tree(pid: i32) {
         use core_foundation::boolean::CFBoolean;
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
+        unsafe { AXUIElementSetMessagingTimeout(app.0, 0.5) };
         let attribute = CFString::new("AXManualAccessibility");
         // SAFETY: app and the boolean are live CF objects.
         unsafe {

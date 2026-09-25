@@ -127,6 +127,10 @@ impl VoiceActivityDetector for SmoothedVad {
         self.hangover_frames = frames;
     }
 
+    fn set_threshold(&mut self, threshold: Option<f32>) {
+        self.inner_vad.set_threshold(threshold);
+    }
+
     /// Trailing run of withheld frames plus smoothing state. Interior
     /// withheld frames (before already-emitted speech) are not counted.
     fn tail_report(&self) -> Option<VadTailReport> {

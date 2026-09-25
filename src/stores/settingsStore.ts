@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  MeetingSettingsUpdate,
   AppAlias,
   AppRule,
   CategoryInstructions,
@@ -85,6 +86,19 @@ const DEFAULT_AUDIO_DEVICE: AudioDevice = {
   name: "Default",
   is_default: true,
 };
+
+/** Change some meeting settings, leaving the rest. */
+const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
+  commands.changeMeetingSettings({
+    llm: null,
+    cleanup: null,
+    summary_prompt: null,
+    auto_gain: null,
+    input_boost_db: null,
+    transcriber: null,
+    diarize: null,
+    ...patch,
+  });
 
 const settingUpdaters: {
   [K in keyof Settings]?: (value: Settings[K]) => Promise<unknown>;
@@ -177,6 +191,12 @@ const settingUpdaters: {
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>
     commands.changeMuteWhileRecordingSetting(value as boolean),
+  screen_context: (value) =>
+    commands.changeScreenContextSetting(value as boolean),
+  screen_context_online: (value) =>
+    commands.changeScreenContextOnlineSetting(value as boolean),
+  focus_message_box: (value) =>
+    commands.changeFocusMessageBoxSetting(value as boolean),
   context_aware_paste: (value) =>
     commands.changeContextAwarePasteSetting(value as boolean),
   local_model_keep_loaded: (value) =>
@@ -236,6 +256,8 @@ const settingUpdaters: {
   input_gain_db: (value) => commands.changeInputGainSetting(value as number),
   auto_gain_enabled: (value) =>
     commands.changeAutoGainSetting(value as boolean),
+  benchmark_recording: (value) =>
+    commands.changeBenchmarkRecordingSetting(value as boolean),
   voice_control_enabled: (value) =>
     commands.changeVoiceControlEnabledSetting(value as boolean),
   app_switch_enabled: (value) =>
@@ -258,6 +280,15 @@ const settingUpdaters: {
     commands.updateVoiceTriggers(value as VoiceTrigger[]),
   text_replacements: (value) =>
     commands.updateTextReplacements(value as TextReplacement[]),
+  meeting_llm: (value) => meetingUpdate({ llm: value ?? null }),
+  meeting_cleanup: (value) => meetingUpdate({ cleanup: value ?? null }),
+  meeting_summary_prompt: (value) =>
+    meetingUpdate({ summary_prompt: value ?? null }),
+  meeting_auto_gain: (value) => meetingUpdate({ auto_gain: value ?? null }),
+  meeting_input_boost_db: (value) =>
+    meetingUpdate({ input_boost_db: value ?? null }),
+  meeting_transcriber: (value) => meetingUpdate({ transcriber: value ?? null }),
+  meeting_diarize: (value) => meetingUpdate({ diarize: value ?? null }),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

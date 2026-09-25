@@ -123,18 +123,14 @@ export const CleanupModels: React.FC = () => {
             }}
             className={[
               "flex flex-col rounded-xl px-4 py-3 gap-2 text-left transition-all duration-200 border-2",
-              isActive
-                ? "border-logo-primary/50 bg-logo-primary/10"
-                : "border-mid-gray/20",
+              isActive ? "border-accent/50 bg-accent/10" : "border-stone/20",
               clickable
-                ? "cursor-pointer hover:border-logo-primary/50 hover:bg-logo-primary/5 hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] group"
+                ? "cursor-pointer hover:border-accent/50 hover:bg-stone/5 group"
                 : "",
             ].join(" ")}
           >
             <div className="flex items-center gap-3 flex-wrap">
-              <h3
-                className={`text-base font-semibold text-text transition-colors ${clickable ? "group-hover:text-logo-primary" : ""}`}
-              >
+              <h3 className={`text-sm font-medium text-text transition-colors`}>
                 {name}
               </h3>
               {model.recommended_for_device && !isActive && (
@@ -152,7 +148,7 @@ export const CleanupModels: React.FC = () => {
             <p className="text-text/60 text-sm leading-relaxed">
               {description}
             </p>
-            <hr className="w-full border-mid-gray/20" />
+            <hr className="w-full border-stone/20" />
             <div className="flex items-center gap-3 w-full h-5">
               <span className="text-xs text-text/50">{model.id}</span>
               <span className="flex items-center gap-1.5 ms-auto text-xs text-text/50">
@@ -171,7 +167,7 @@ export const CleanupModels: React.FC = () => {
                     e.stopPropagation();
                     void remove(model.id);
                   }}
-                  className="flex items-center gap-1.5 text-logo-primary/85 hover:text-logo-primary hover:bg-logo-primary/10"
+                  className="flex items-center gap-1.5 text-accent/85 hover:text-accent hover:bg-stone/10"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>{t("common.delete")}</span>
@@ -180,9 +176,9 @@ export const CleanupModels: React.FC = () => {
             </div>
             {isInstalling && (
               <div className="w-full mt-1">
-                <div className="w-full h-1.5 bg-mid-gray/20 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-stone/20 rounded-full overflow-hidden">
                   <div
-                    className={`h-full bg-logo-primary rounded-full transition-all duration-300 ${percent === null ? "w-1/3 animate-pulse" : ""}`}
+                    className={`h-full bg-accent rounded-full transition-all duration-300 ${percent === null ? "w-1/3 animate-pulse" : ""}`}
                     style={
                       percent !== null ? { width: `${percent}%` } : undefined
                     }

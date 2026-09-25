@@ -13,6 +13,8 @@ const SILERO_FRAME_SAMPLES: usize =
 pub struct SileroVad {
     engine: Vad,
     threshold: f32,
+    /// The threshold it was created with, restored by `set_threshold(None)`.
+    base_threshold: f32,
 }
 
 impl SileroVad {
@@ -25,6 +27,7 @@ impl SileroVad {
             engine: Vad::new(&model_path, constants::WHISPER_SAMPLE_RATE as usize)
                 .map_err(|e| anyhow::anyhow!("Failed to create VAD: {e}"))?,
             threshold,
+            base_threshold: threshold,
         })
     }
 }
@@ -52,6 +55,12 @@ impl VoiceActivityDetector for SileroVad {
 
     fn frame_samples(&self) -> usize {
         SILERO_FRAME_SAMPLES
+    }
+
+    fn set_threshold(&mut self, threshold: Option<f32>) {
+        self.threshold = threshold
+            .filter(|t| (0.0..=1.0).contains(t))
+            .unwrap_or(self.base_threshold);
     }
 
     fn reset(&mut self) {

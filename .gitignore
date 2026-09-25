@@ -48,3 +48,7 @@ __pycache__/
 
 # Cua Driver, built by scripts/build-cua-driver.sh
 src-tauri/binaries/
+
+# Private data: never commit (benchmark and meeting recordings, local fixtures)
+benchmark/
+*.local.json

@@ -45,6 +45,11 @@ pub trait VoiceActivityDetector: Send + Sync {
     /// subsequent frames. Detectors without a smoothing tail can ignore this.
     fn set_hangover_frames(&mut self, _frames: usize) {}
 
+    /// Override the speech-probability threshold for subsequent frames
+    /// (`None` restores the one it was created with). Detectors without a
+    /// probability threshold ignore it.
+    fn set_threshold(&mut self, _threshold: Option<f32>) {}
+
     /// End-of-recording diagnostic snapshot, taken after the final frame.
     /// Purely observational — implementations must not change what they emit.
     /// Detectors without smoothing state return None.

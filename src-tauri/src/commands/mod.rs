@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod history;
 pub mod models;
+pub mod rules;
 pub mod transcription;
 
 use crate::settings::{
@@ -230,4 +231,35 @@ pub fn chatgpt_account() -> Option<String> {
     return crate::chatgpt::signed_in_as();
     #[cfg(not(target_os = "macos"))]
     None
+}
+
+/// This Mac's chip and memory, and what should run on it.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ThisMac {
+    pub chip: String,
+    pub memory_gb: u32,
+    /// Speech-to-text runs well on this Mac.
+    pub local_speech: bool,
+    /// The local cleanup model (a few GB more) runs well too.
+    pub local_cleanup: bool,
+}
+
+#[specta::specta]
+#[tauri::command]
+pub fn this_mac() -> ThisMac {
+    let sysctl = |name: &str| {
+        std::process::Command::new("sysctl")
+            .args(["-n", name])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let memory_gb = (sysctl("hw.memsize").parse::<u64>().unwrap_or(0) / (1 << 30)) as u32;
+    ThisMac {
+        chip: sysctl("machdep.cpu.brand_string"),
+        memory_gb,
+        local_speech: memory_gb >= 8,
+        local_cleanup: memory_gb >= 24,
+    }
 }

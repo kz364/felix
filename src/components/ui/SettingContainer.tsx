@@ -48,8 +48,8 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
   };
 
   const containerClasses = grouped
-    ? "px-4 p-2"
-    : "px-4 p-2 rounded-lg border border-mid-gray/20";
+    ? "px-4 py-3"
+    : "px-4 py-3 rounded-xl border border-stone/20 bg-surface";
 
   if (layout === "stacked") {
     if (descriptionMode === "tooltip") {
@@ -69,7 +69,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
               onClick={toggleTooltip}
             >
               <svg
-                className="w-4 h-4 text-mid-gray cursor-help hover:text-logo-primary transition-colors duration-200 select-none"
+                className="w-3.5 h-3.5 text-text/50 cursor-help hover:text-text transition-colors duration-150 select-none"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -110,7 +110,9 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
           <h3 className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}>
             {title}
           </h3>
-          <p className={`text-sm ${disabled ? "opacity-50" : ""}`}>
+          <p
+            className={`mt-0.5 text-[13px] leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
+          >
             {description}
           </p>
         </div>
@@ -121,13 +123,13 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
 
   // Horizontal layout (default)
   const horizontalContainerClasses = grouped
-    ? "flex items-center justify-between min-h-12 px-4 p-2"
-    : "flex items-center justify-between min-h-12 px-4 p-2 rounded-lg border border-mid-gray/20";
+    ? "flex items-center justify-between gap-6 min-h-[52px] px-4 py-2.5"
+    : "flex items-center justify-between gap-6 min-h-[52px] px-4 py-2.5 rounded-xl border border-stone/20 bg-surface";
 
   if (descriptionMode === "tooltip") {
     return (
       <div className={horizontalContainerClasses}>
-        <div className="max-w-2/3">
+        <div className="min-w-0 max-w-2/3">
           <div className="flex items-center gap-2">
             <h3
               className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}
@@ -142,7 +144,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
               onClick={toggleTooltip}
             >
               <svg
-                className="w-4 h-4 text-mid-gray cursor-help hover:text-logo-primary transition-colors duration-200 select-none"
+                className="w-3.5 h-3.5 text-text/50 cursor-help hover:text-text transition-colors duration-150 select-none"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -180,11 +182,13 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
 
   return (
     <div className={horizontalContainerClasses}>
-      <div className="max-w-2/3">
+      <div className="min-w-0 max-w-2/3">
         <h3 className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}>
           {title}
         </h3>
-        <p className={`text-sm ${disabled ? "opacity-50" : ""}`}>
+        <p
+          className={`mt-0.5 text-[13px] leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
+        >
           {description}
         </p>
       </div>

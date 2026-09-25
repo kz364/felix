@@ -23,7 +23,7 @@ const MODELS = [
 const EFFORTS = ["none", "low", "medium", "high"] as const;
 
 /** ChatGPT sign-in state and button. */
-const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
+export const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
   descriptionMode,
   grouped,
 }) => {

@@ -27,21 +27,21 @@ export const CleanupLevelPicker: React.FC<{ disabled?: boolean }> = ({
               disabled={disabled || isUpdating("cleanup_level")}
               onClick={() => updateSetting("cleanup_level", level)}
               aria-pressed={selected}
-              className={`text-start rounded-lg border p-3 flex flex-col gap-2 transition-colors disabled:opacity-50 ${
+              className={`text-start rounded-xl border p-3 flex flex-col gap-2 transition-colors disabled:opacity-50 ${
                 selected
-                  ? "border-logo-primary bg-logo-primary/10"
-                  : "border-mid-gray/30 hover:border-mid-gray/60"
+                  ? "border-accent bg-accent/5 ring-[3px] ring-accent/15"
+                  : "border-stone/25 bg-surface hover:border-stone/50"
               }`}
             >
-              <span className="font-semibold">
+              <span className="text-sm font-medium">
                 {t(`settings.postProcessing.cleanup.levels.${level}.title`)}
               </span>
-              <span className="text-xs text-text/70">
+              <span className="text-xs leading-snug text-text/60">
                 {t(
                   `settings.postProcessing.cleanup.levels.${level}.description`,
                 )}
               </span>
-              <span className="mt-auto rounded-md bg-mid-gray/10 p-2 text-xs italic text-text/80">
+              <span className="mt-auto rounded-lg bg-sunken p-2 font-display text-[13px] leading-snug text-text/80">
                 {t(`settings.postProcessing.cleanup.levels.${level}.example`)}
               </span>
             </button>

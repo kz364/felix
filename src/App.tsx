@@ -45,7 +45,7 @@ const renderSettingsContent = (
   }
 
   const ActiveComponent =
-    SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.general.component;
+    SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.dictation.component;
   return <ActiveComponent />;
 };
 
@@ -60,7 +60,7 @@ function App() {
   // (vs a new user who needs full onboarding including model selection)
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
-    useState<SidebarSection>("general");
+    useState<SidebarSection>("dictation");
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -304,11 +304,11 @@ function App() {
         unstyled: true,
         classNames: {
           toast:
-            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
+            "bg-surface border border-stone/20 rounded-xl shadow-lg shadow-black/10 px-4 py-3 flex items-center gap-3 text-[13px]",
           title: "font-medium",
-          description: "text-mid-gray",
+          description: "text-text/55",
           actionButton:
-            "px-2 py-1 text-xs font-medium rounded-lg border bg-mid-gray/10 border-mid-gray/20 hover:bg-background-ui/30 hover:border-logo-primary cursor-pointer whitespace-nowrap",
+            "px-2 py-1 text-xs font-medium rounded-lg border bg-stone/10 border-stone/20 hover:bg-stone/15 hover:border-stone/50 cursor-pointer whitespace-nowrap",
         },
       }}
     />
@@ -337,7 +337,7 @@ function App() {
         <button
           type="button"
           onClick={() => setOnboardingPreview(null)}
-          className="fixed top-4 end-4 z-50 rounded-lg border border-mid-gray/20 bg-background px-4 py-2 text-sm font-medium text-text shadow-lg hover:bg-background-ui/30 cursor-pointer"
+          className="fixed top-4 end-4 z-50 rounded-lg border border-stone/20 bg-surface px-4 py-2 text-sm font-medium text-text shadow-lg hover:bg-stone/15 cursor-pointer"
         >
           {t("settings.debug.onboardingPreview.exitButton")}
         </button>
@@ -358,25 +358,23 @@ function App() {
         <ErrorBoundary context="What's New">
           <WhatsNewGate />
         </ErrorBoundary>
-        {/* Main content area that takes remaining space */}
         <div className="flex-1 flex overflow-hidden">
           <Sidebar
             activeSection={currentSection}
             onSectionChange={setCurrentSection}
           />
-          {/* Scrollable content area */}
           <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Scrollable page */}
             <div ref={settingsScrollRef} className="flex-1 overflow-y-auto">
-              <div className="flex flex-col items-center p-4 gap-4">
+              <div className="flex flex-col items-center px-8 pt-8 pb-12 gap-4">
                 <AccessibilityPermissions />
                 <SecureInputWarning />
                 {renderSettingsContent(currentSection, setOnboardingPreview)}
               </div>
             </div>
+            <Footer />
           </div>
         </div>
-        {/* Fixed footer at bottom */}
-        <Footer />
       </div>
     );
   }

@@ -90,7 +90,7 @@ export const PreferredMicrophones: React.FC<PreferredMicrophonesProps> =
                   <span
                     className={`text-xs ${
                       name === activeName
-                        ? "text-green-500"
+                        ? "text-success"
                         : isConnected
                           ? "text-text/60"
                           : "text-text/40"

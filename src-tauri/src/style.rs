@@ -251,8 +251,8 @@ mod tests {
     #[test]
     fn email_greeting_and_sign_off() {
         assert_eq!(
-            format_email("Hi Sarah, thanks for sending over the contract. Can we set up a call this week? Best, Kaspar"),
-            "Hi Sarah,\n\nThanks for sending over the contract. Can we set up a call this week?\n\nBest,\nKaspar"
+            format_email("Hi Sarah, thanks for sending over the contract. Can we set up a call this week? Best, Sam"),
+            "Hi Sarah,\n\nThanks for sending over the contract. Can we set up a call this week?\n\nBest,\nSam"
         );
         assert_eq!(
             format_email("Hello everyone, the office is closed Monday. Thanks."),
@@ -287,14 +287,14 @@ mod tests {
 
     #[test]
     fn very_casual_keeps_i_acronyms_and_vocabulary() {
-        let vocab = vec!["Kaspar".to_string()];
+        let vocab = vec!["Sam".to_string()];
         assert_eq!(
             apply_formality(
-                "I think so. PR is up. Kaspar will review. Sounds good.",
+                "I think so. PR is up. Sam will review. Sounds good.",
                 Formality::VeryCasual,
                 &vocab
             ),
-            "I think so. PR is up. Kaspar will review. sounds good"
+            "I think so. PR is up. Sam will review. sounds good"
         );
     }
 }

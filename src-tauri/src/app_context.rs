@@ -38,9 +38,65 @@ pub fn is_browser(bundle_id: &str) -> bool {
     CHROMIUM_BROWSERS.contains(&bundle_id) || SAFARI_BROWSERS.contains(&bundle_id)
 }
 
+/// Chromium-based apps where Handy doesn't switch the Accessibility tree on:
+/// VS Code and its forks take it as a screen reader and change the editor.
+const NO_TREE_WAKE: &[&str] = &[
+    "com.microsoft.VSCode",
+    "com.microsoft.VSCodeInsiders",
+    "com.vscodium",
+    "com.todesktop.230313mzl4w4u92", // Cursor
+    "com.exafunction.windsurf",
+];
+
+/// Whether the app is Chromium or Electron (they build their Accessibility
+/// tree only once asked, through `AXManualAccessibility`).
+fn is_chromium_based(bundle_id: Option<&str>, bundle_path: Option<&str>) -> bool {
+    bundle_id.is_some_and(|b| CHROMIUM_BROWSERS.contains(&b))
+        || bundle_path.is_some_and(bundles_chromium)
+}
+
+/// Whether an app bundle ships Chromium: an Electron framework, including
+/// renamed ones like the Codex app's "Codex Framework".
+fn bundles_chromium(bundle_path: &str) -> bool {
+    let frameworks = std::path::Path::new(bundle_path).join("Contents/Frameworks");
+    if frameworks.join("Electron Framework.framework").exists() {
+        return true;
+    }
+    std::fs::read_dir(&frameworks).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .ends_with(" Framework.framework")
+                && e.path().join("Resources/chrome_100_percent.pak").exists()
+        })
+    })
+}
+
+/// Whether Handy switches this app's Accessibility tree on.
+fn wakes_tree(bundle_id: Option<&str>, bundle_path: Option<&str>) -> bool {
+    is_chromium_based(bundle_id, bundle_path)
+        && !bundle_id.is_some_and(|b| NO_TREE_WAKE.contains(&b) || b == "com.pais.handy")
+}
+
+/// The frontmost app's pid, if it's one whose tree Handy switches on.
+pub fn frontmost_tree_pid() -> Option<i32> {
+    let (_, bundle_id, path) = frontmost_app();
+    wakes_tree(bundle_id.as_deref(), path.as_deref())
+        .then(frontmost_pid)
+        .flatten()
+}
+
 /// Record the frontmost app now and start reading the browser URL.
 pub fn capture() {
     let (app_name, bundle_id, bundle_path) = frontmost_app();
+    // Chromium and Electron only say what's focused once their tree is on.
+    // Switch it on now, so by the time the text is ready "nothing focused"
+    // can be trusted and the text shown instead of pasted into nothing.
+    if wakes_tree(bundle_id.as_deref(), bundle_path.as_deref()) {
+        if let Some(pid) = frontmost_pid() {
+            std::thread::spawn(move || crate::text_field::wake_tree(pid));
+        }
+    }
     let ctx = DictationContext {
         app_name,
         bundle_id: bundle_id.clone(),
@@ -76,13 +132,22 @@ pub fn frontmost_bundle() -> (Option<String>, bool) {
     let (_, bundle_id, path) = frontmost_app();
     let lazy_ax = bundle_id
         .as_deref()
-        .is_some_and(|b| CHROMIUM_BROWSERS.contains(&b) || b.starts_with("org.mozilla."))
-        || path.is_some_and(|p| {
-            std::path::Path::new(&p)
-                .join("Contents/Frameworks/Electron Framework.framework")
-                .exists()
-        });
+        .is_some_and(|b| b.starts_with("org.mozilla."))
+        || is_chromium_based(bundle_id.as_deref(), path.as_deref());
     (bundle_id, lazy_ax)
+}
+
+/// Process id of the frontmost app.
+#[cfg(target_os = "macos")]
+pub fn frontmost_pid() -> Option<i32> {
+    objc2_app_kit::NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|app| app.processIdentifier())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn frontmost_pid() -> Option<i32> {
+    None
 }
 
 /// Name, bundle id and bundle path of the frontmost app.
@@ -248,6 +313,45 @@ pub fn remember_recent(settings: &mut AppSettings, ctx: &DictationContext) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn electron_apps_are_found_even_with_a_renamed_framework() {
+        let root = std::env::temp_dir().join(format!("handy-bundles-{}", std::process::id()));
+        let app = |name: &str, framework: &str, pak: bool| {
+            let res = root
+                .join(name)
+                .join("Contents/Frameworks")
+                .join(framework)
+                .join("Resources");
+            std::fs::create_dir_all(&res).unwrap();
+            if pak {
+                std::fs::write(res.join("chrome_100_percent.pak"), b"").unwrap();
+            }
+            root.join(name).to_string_lossy().to_string()
+        };
+        // The Codex app ships Electron as "Codex Framework".
+        assert!(bundles_chromium(&app(
+            "Codex.app",
+            "Codex Framework.framework",
+            true
+        )));
+        assert!(bundles_chromium(&app(
+            "Claude.app",
+            "Electron Framework.framework",
+            false
+        )));
+        assert!(!bundles_chromium(&app(
+            "Native.app",
+            "Sparkle.framework",
+            false
+        )));
+        assert!(!bundles_chromium(&app(
+            "Other.app",
+            "Media Framework.framework",
+            false
+        )));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn ctx(bundle: &str, host: Option<&str>) -> DictationContext {
         DictationContext {

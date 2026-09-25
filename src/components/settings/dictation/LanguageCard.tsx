@@ -10,7 +10,7 @@ import {
   getUniqueCapabilityLanguages,
 } from "@/lib/constants/languages";
 
-export const ModelSettingsCard: React.FC = () => {
+export const LanguageCard: React.FC = () => {
   const { t } = useTranslation();
   const { currentModel, models } = useModelStore();
 
@@ -36,7 +36,8 @@ export const ModelSettingsCard: React.FC = () => {
 
   return (
     <SettingsGroup
-      title={t("settings.modelSettings.title", {
+      title={t("settings.dictation.language.title")}
+      description={t("settings.dictation.language.description", {
         model: currentModelInfo.name,
       })}
     >

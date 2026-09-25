@@ -218,6 +218,17 @@ pub struct Soundalike {
     /// Names that start with the word, in their own casing ("Claude Code").
     #[serde(default)]
     pub compounds: Vec<String>,
+    /// Words that, right before the heard word, make it the ordinary word
+    /// ("the cloud"). Empty: the built-in list (the, my, our…).
+    #[serde(default)]
+    pub ordinary_after: Vec<String>,
+    /// Apps (names or bundle ids) where the name is likely: there, even
+    /// "my cloud …" is checked instead of kept.
+    #[serde(default)]
+    pub name_in_apps: Vec<String>,
+    /// Likewise when the name is on screen where the dictation goes.
+    #[serde(default)]
+    pub name_if_on_screen: bool,
 }
 
 /// How much the AI cleanup rewrites a dictation.
@@ -613,6 +624,11 @@ pub struct AppSettings {
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
+    /// Where dictation is transcribed: "local" (the selected model on this
+    /// Mac) or a provider with a transcription API ("openai", "groq"),
+    /// using that provider's API key.
+    #[serde(default = "default_transcription_provider")]
+    pub transcription_provider: String,
     #[serde(default)]
     pub custom_words: Vec<String>,
     #[serde(default)]
@@ -665,6 +681,19 @@ pub struct AppSettings {
     /// mid-sentence casing), read via Accessibility.
     #[serde(default = "default_context_aware_paste")]
     pub context_aware_paste: bool,
+    /// Give the cleanup model the text on screen around where the dictation
+    /// goes (the conversation above the text box, the draft), read via
+    /// Accessibility, so it spells names and terms as they appear.
+    #[serde(default = "default_screen_context")]
+    pub screen_context: bool,
+    /// Also send that screen text to online cleanup providers (otherwise
+    /// it's only used with the model on this Mac).
+    #[serde(default)]
+    pub screen_context_online: bool,
+    /// In Claude, Codex and WhatsApp, when no text box is focused, focus
+    /// the thread's message box before pasting.
+    #[serde(default = "default_screen_context")]
+    pub focus_message_box: bool,
     /// When nothing can take the text (no text field focused), show it in
     /// the overlay instead of pasting.
     #[serde(default = "default_result_popup_enabled")]
@@ -682,6 +711,33 @@ pub struct AppSettings {
     pub assistant_enabled: bool,
     #[serde(default = "default_assistant_name")]
     pub assistant_name: String,
+    /// The meeting mode last started (a call, or in person), used by the
+    /// shortcut and the tray.
+    #[serde(default = "default_meeting_mode")]
+    pub meeting_mode: crate::meetings::MeetingMode,
+    /// Which model cleans up and summarises meeting transcripts.
+    #[serde(default)]
+    pub meeting_llm: crate::meetings::MeetingLlm,
+    /// Tidy the transcript (fillers, false starts, punctuation) with the LLM.
+    #[serde(default = "default_meeting_true")]
+    pub meeting_cleanup: bool,
+    /// Replaces the built-in guidance for how summaries are written; empty
+    /// uses the default.
+    #[serde(default)]
+    pub meeting_summary_prompt: String,
+    /// Level quiet and distant voices in in-person recordings before
+    /// transcription. Separate from dictation's gain.
+    #[serde(default = "default_meeting_true")]
+    pub meeting_auto_gain: bool,
+    /// Extra gain for the meeting mic track, in dB, before levelling.
+    #[serde(default)]
+    pub meeting_input_boost_db: f32,
+    /// Which engine transcribes meetings: the local model or a provider.
+    #[serde(default)]
+    pub meeting_transcriber: crate::meetings::MeetingTranscriber,
+    /// Tell speakers apart in in-person meetings.
+    #[serde(default = "default_meeting_true")]
+    pub meeting_diarize: bool,
     /// Let the assistant act on the computer (start Claude Code sessions, run
     /// tasks in other apps), not just write into the field. Off by default.
     #[serde(default)]
@@ -760,6 +816,15 @@ pub struct AppSettings {
     /// Automatic gain control ahead of VAD for quiet speech and weak mics.
     #[serde(default = "default_auto_gain_enabled")]
     pub auto_gain_enabled: bool,
+    /// For development: keep every dictation's audio before gain and VAD,
+    /// with what was transcribed, pasted and later edited, in `benchmark/`.
+    #[serde(default)]
+    pub benchmark_recording: bool,
+    /// Silero speech threshold per microphone name, overriding the default
+    /// (0.3). Lower keeps quieter speech: 0.1 suits a close clip-on mic
+    /// used for whispering.
+    #[serde(default)]
+    pub microphone_vad_thresholds: HashMap<String, f32>,
     /// Voice Control mode: end-of-dictation key triggers, spoken
     /// "new line" / "new paragraph", and the app switcher.
     #[serde(
@@ -935,6 +1000,10 @@ fn default_context_aware_paste() -> bool {
     true
 }
 
+fn default_screen_context() -> bool {
+    true
+}
+
 fn default_result_popup_enabled() -> bool {
     true
 }
@@ -942,6 +1011,14 @@ fn default_result_popup_enabled() -> bool {
 /// Off until the user turns it on: it rewrites text and acts on the computer.
 fn default_assistant_enabled() -> bool {
     false
+}
+
+fn default_meeting_mode() -> crate::meetings::MeetingMode {
+    crate::meetings::MeetingMode::Call
+}
+
+fn default_meeting_true() -> bool {
+    true
 }
 
 fn default_agent_auto_send() -> bool {
@@ -954,6 +1031,9 @@ pub fn default_soundalikes() -> Vec<Soundalike> {
         word: "Claude".to_string(),
         meaning: "Anthropic's AI assistant and its products, such as Claude Code, the Claude app and Claude models".to_string(),
         compounds: vec!["Claude Code".to_string()],
+        ordinary_after: Vec::new(),
+        name_in_apps: vec!["Claude".to_string(), "Codex".to_string()],
+        name_if_on_screen: true,
     }]
 }
 
@@ -1010,6 +1090,13 @@ fn default_app_language() -> String {
 fn default_show_tray_icon() -> bool {
     true
 }
+
+fn default_transcription_provider() -> String {
+    "local".to_string()
+}
+
+/// Cleanup through the ChatGPT sign-in (the user's plan, no API key).
+pub const CHATGPT_PROVIDER_ID: &str = "chatgpt";
 
 fn default_post_process_provider_id() -> String {
     crate::local_llm::LOCAL_PROVIDER_ID.to_string()
@@ -1090,6 +1177,16 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         base_url: "https://bedrock-mantle.us-east-1.api.aws/v1".to_string(),
         allow_base_url_edit: false,
         models_endpoint: Some("/models".to_string()),
+        supports_structured_output: true,
+    });
+
+    // The ChatGPT sign-in (Felix's), for people without API keys.
+    providers.push(PostProcessProvider {
+        id: CHATGPT_PROVIDER_ID.to_string(),
+        label: "ChatGPT (your plan)".to_string(),
+        base_url: "chatgpt://signed-in".to_string(),
+        allow_base_url_edit: false,
+        models_endpoint: None,
         supports_structured_output: true,
     });
 
@@ -1298,6 +1395,17 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
+    // No default key: set one in Meetings settings.
+    bindings.insert(
+        "meeting".to_string(),
+        ShortcutBinding {
+            id: "meeting".to_string(),
+            name: "Meeting".to_string(),
+            description: "Starts or stops recording a meeting.".to_string(),
+            default_binding: String::new(),
+            current_binding: String::new(),
+        },
+    );
 
     AppSettings {
         settings_schema_version: default_settings_schema_version(),
@@ -1325,6 +1433,7 @@ pub fn get_default_settings() -> AppSettings {
         overlay_position: default_overlay_position(),
         debug_mode: false,
         log_level: default_log_level(),
+        transcription_provider: default_transcription_provider(),
         custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
@@ -1347,11 +1456,22 @@ pub fn get_default_settings() -> AppSettings {
         mute_while_recording: false,
         append_trailing_space: false,
         context_aware_paste: default_context_aware_paste(),
+        screen_context: default_screen_context(),
+        screen_context_online: false,
+        focus_message_box: true,
         result_popup_enabled: default_result_popup_enabled(),
         result_popup_seconds: default_result_popup_seconds(),
         local_model_keep_loaded: default_local_model_keep_loaded(),
         assistant_enabled: default_assistant_enabled(),
         assistant_name: default_assistant_name(),
+        meeting_mode: default_meeting_mode(),
+        meeting_llm: Default::default(),
+        meeting_cleanup: true,
+        meeting_summary_prompt: String::new(),
+        meeting_auto_gain: true,
+        meeting_input_boost_db: 0.0,
+        meeting_transcriber: Default::default(),
+        meeting_diarize: true,
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
         assistant_model: default_assistant_model(),
@@ -1380,6 +1500,8 @@ pub fn get_default_settings() -> AppSettings {
         overlay_style: default_overlay_style(),
         input_gain_db: 0.0,
         auto_gain_enabled: default_auto_gain_enabled(),
+        benchmark_recording: false,
+        microphone_vad_thresholds: HashMap::new(),
         voice_control_enabled: default_voice_control_enabled(),
         voice_triggers: default_voice_triggers(),
         text_replacements: Vec::new(),
@@ -1402,6 +1524,13 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// The Silero threshold set for this microphone, if any.
+    pub fn vad_threshold_for(&self, microphone: Option<&str>) -> Option<f32> {
+        self.microphone_vad_thresholds
+            .get(microphone.unwrap_or("System default"))
+            .copied()
+    }
+
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
         self.post_process_providers
             .iter()

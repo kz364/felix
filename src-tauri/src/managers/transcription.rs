@@ -277,6 +277,22 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// Signalled whenever an engine goes back into `engine`, so dictation can
+    /// wait out a meeting chunk that has it (see [`Self::transcribe_for_meeting`]).
+    engine_returned: Arc<Condvar>,
+    /// True while a meeting chunk has the engine out of `engine`.
+    meeting_lease: Arc<AtomicBool>,
+    /// True while a meeting is being transcribed: the model stays loaded
+    /// between chunks even when set to unload immediately.
+    meeting_job: Arc<AtomicBool>,
+}
+
+/// Longest dictation waits for a meeting chunk to hand the engine back.
+const MEETING_ENGINE_WAIT: Duration = Duration::from_secs(60);
+
+thread_local! {
+    /// Set on the thread running a meeting chunk, so it never waits for itself.
+    static IN_MEETING_CHUNK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl TranscriptionManager {
@@ -297,6 +313,9 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            engine_returned: Arc::new(Condvar::new()),
+            meeting_lease: Arc::new(AtomicBool::new(false)),
+            meeting_job: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -381,6 +400,63 @@ impl TranscriptionManager {
         })
     }
 
+    /// Lock the engine mutex; if a meeting chunk has the engine out, wait for
+    /// it to come back (bounded), so dictation is delayed rather than failed.
+    fn lock_engine_after_meeting(&self) -> MutexGuard<'_, Option<LoadedEngine>> {
+        let mut guard = self.lock_engine();
+        if IN_MEETING_CHUNK.with(|c| c.get()) {
+            return guard;
+        }
+        let deadline = Instant::now() + MEETING_ENGINE_WAIT;
+        while guard.is_none() && self.meeting_lease.load(Ordering::Acquire) {
+            let now = Instant::now();
+            if now >= deadline {
+                warn!("A meeting transcription kept the engine too long");
+                break;
+            }
+            info!("Waiting for a meeting transcription chunk to finish");
+            guard = match self.engine_returned.wait_timeout(guard, deadline - now) {
+                Ok((g, _)) => g,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+        guard
+    }
+
+    /// Nothing dictation-related is using the engine: no recording's stream
+    /// worker, and the engine is in its slot.
+    pub fn is_idle_for_meeting(&self) -> bool {
+        self.active_stream_worker.load(Ordering::Acquire) == 0
+            && self.active_engine_lease.load(Ordering::Acquire) == 0
+            && !*self.is_loading.lock().unwrap()
+            && self.lock_engine().is_some()
+    }
+
+    /// Mark a meeting transcription as running (or finished). While it runs
+    /// the model isn't unloaded between chunks.
+    pub fn set_meeting_job(&self, running: bool) {
+        self.meeting_job.store(running, Ordering::Release);
+    }
+
+    /// Transcribe one chunk of a meeting. Dictation that starts meanwhile
+    /// waits for the chunk instead of finding the engine missing.
+    pub fn transcribe_for_meeting(&self, audio: Vec<f32>) -> Result<String> {
+        if self.lock_engine().is_none() {
+            return Err(anyhow::anyhow!("The transcription engine is busy"));
+        }
+        self.meeting_lease.store(true, Ordering::Release);
+        IN_MEETING_CHUNK.with(|c| c.set(true));
+        let result = self.transcribe(audio);
+        IN_MEETING_CHUNK.with(|c| c.set(false));
+        // Clear under the lock so a waiter can't miss the wake-up.
+        {
+            let _guard = self.lock_engine();
+            self.meeting_lease.store(false, Ordering::Release);
+        }
+        self.engine_returned.notify_all();
+        result
+    }
+
     pub fn is_model_loaded(&self) -> bool {
         // The engine may be leased out to the streaming worker (taken out of
         // the mutex). It's still loaded, just in use, so report true.
@@ -459,6 +535,7 @@ impl TranscriptionManager {
     pub fn maybe_unload_immediately(&self, context: &str) {
         let settings = get_settings(&self.app_handle);
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
+            && !self.meeting_job.load(Ordering::Acquire)
             && self.is_model_loaded()
         {
             info!("Immediately unloading model after {}", context);
@@ -865,7 +942,7 @@ impl TranscriptionManager {
             drain_until_finalize(rx);
             return;
         }
-        let mut engine = match self.lock_engine().take() {
+        let mut engine = match self.lock_engine_after_meeting().take() {
             Some(e) => e,
             None => {
                 info!(
@@ -1097,6 +1174,7 @@ impl TranscriptionManager {
             self.current_model_id.lock().unwrap().as_deref() == Some(expected_model_id);
         if still_current {
             *self.lock_engine() = Some(engine);
+            self.engine_returned.notify_all();
         } else {
             info!(
                 "Model changed/unloaded during transcription; dropping stale engine (was '{}')",
@@ -1170,6 +1248,16 @@ impl TranscriptionManager {
         .emit(&self.app_handle);
     }
 
+    /// Tidy text from a cloud transcription provider the way this model's
+    /// own output is (filler words, language-gated cleanup).
+    pub fn finish_cloud_text(&self, raw: String) -> String {
+        let settings = crate::rules::with_rules(get_settings(&self.app_handle));
+        let hint =
+            Some(settings.selected_language.as_str()).filter(|l| !l.is_empty() && *l != "auto");
+        let evidence = resolve_output_language_evidence(&settings, hint, &[], false);
+        post_process_transcription_text(raw, &settings, &evidence, &[])
+    }
+
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
@@ -1200,14 +1288,15 @@ impl TranscriptionManager {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
 
-            let engine_guard = self.lock_engine();
+            let engine_guard = self.lock_engine_after_meeting();
             if engine_guard.is_none() {
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
 
-        // Get current settings for configuration
-        let settings = get_settings(&self.app_handle);
+        // Get current settings for configuration, with the rules file's
+        // vocabulary.
+        let settings = crate::rules::with_rules(get_settings(&self.app_handle));
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
@@ -1256,7 +1345,7 @@ impl TranscriptionManager {
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
         let (result, output_language, model_languages) = {
-            let mut engine_guard = self.lock_engine();
+            let mut engine_guard = self.lock_engine_after_meeting();
 
             // Take the engine out so we own it during transcription.
             // If the engine panics, we simply don't put it back (effectively unloading it)

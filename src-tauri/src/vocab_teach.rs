@@ -119,6 +119,7 @@ fn analyze(heard: &str, corrected: &str, word: &str) -> (bool, Option<String>) {
 /// The text rules a take is judged against: canonical forms and the user's
 /// correction rules, but not taught rules (we want to see what's left).
 fn apply_static_rules(heard: &str, settings: &AppSettings) -> String {
+    let settings = &crate::rules::with_rules(settings.clone());
     let canonical = crate::vocabulary::apply_canonical_forms(heard, &settings.custom_words);
     crate::scratchpad::apply_text_replacements(&canonical, &settings.text_replacements)
 }

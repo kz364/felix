@@ -36,7 +36,7 @@ const EntryChip: React.FC<{ entry: CategorizedEntry; onMove: MoveFn }> = ({
         title={entry.key}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-full border border-mid-gray/30 px-2.5 py-1 text-xs hover:border-mid-gray/60 hover:bg-mid-gray/10"
+        className="inline-flex items-center gap-1.5 rounded-full border border-stone/30 px-2.5 py-1 text-xs hover:border-stone/60 hover:bg-stone/10"
       >
         {entry.kind === "website" && (
           <Globe className="w-3 h-3 text-text/50" aria-hidden />
@@ -44,7 +44,7 @@ const EntryChip: React.FC<{ entry: CategorizedEntry; onMove: MoveFn }> = ({
         <span className="max-w-40 truncate">{entry.label}</span>
         {entry.overridden && (
           <span
-            className="w-1.5 h-1.5 rounded-full bg-logo-primary"
+            className="w-1.5 h-1.5 rounded-full bg-accent"
             aria-label={t("settings.style.apps.overridden")}
           />
         )}
@@ -52,7 +52,7 @@ const EntryChip: React.FC<{ entry: CategorizedEntry; onMove: MoveFn }> = ({
       {open && (
         <div
           role="menu"
-          className="absolute z-20 mt-1 min-w-48 rounded-lg border border-mid-gray/30 bg-background shadow-lg py-1 text-sm"
+          className="absolute z-20 mt-1 min-w-48 rounded-lg border border-stone/30 bg-surface shadow-lg shadow-black/10 py-1 text-sm"
         >
           <div className="px-3 py-1 text-xs text-text/50">
             {t("settings.style.apps.moveTo")}
@@ -67,7 +67,7 @@ const EntryChip: React.FC<{ entry: CategorizedEntry; onMove: MoveFn }> = ({
                 setOpen(false);
                 onMove(entry, category);
               }}
-              className="flex w-full items-center justify-between gap-3 px-3 py-1.5 hover:bg-mid-gray/15"
+              className="flex w-full items-center justify-between gap-3 px-3 py-1.5 hover:bg-stone/15"
             >
               <span>
                 {t(`settings.style.categories.${category}`)}
@@ -106,20 +106,20 @@ export const CategoryCard: React.FC<{
   const hidden = entries.length - shown.length;
 
   return (
-    <section className="rounded-lg border border-mid-gray/20 p-4 space-y-3">
+    <section className="rounded-xl border border-stone/20 bg-surface p-4 space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">
+          <h3 className="text-sm font-medium">
             {t(`settings.style.categories.${category}`)}
           </h3>
-          <p className="mt-0.5 text-xs italic text-text/60">
+          <p className="mt-0.5 font-display text-[14px] text-text/60">
             {t(`settings.style.formality.example.${formality}`)}
           </p>
         </div>
         <div
           role="radiogroup"
           aria-label={t("settings.style.formality.title")}
-          className="flex shrink-0 rounded-lg border border-mid-gray/30 overflow-hidden"
+          className="flex shrink-0 gap-0.5 rounded-full bg-sunken p-0.5"
         >
           {FORMALITIES.map((f) => (
             <button
@@ -132,10 +132,10 @@ export const CategoryCard: React.FC<{
                 styles &&
                 updateSetting("category_styles", { ...styles, [category]: f })
               }
-              className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
                 formality === f
-                  ? "bg-logo-primary/80 text-white"
-                  : "hover:bg-mid-gray/20"
+                  ? "bg-surface text-text shadow-sm ring-1 ring-stone/20"
+                  : "text-text/55 hover:text-text"
               }`}
             >
               {t(`settings.style.formality.levels.${f}`)}

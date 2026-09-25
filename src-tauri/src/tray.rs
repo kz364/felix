@@ -63,6 +63,7 @@ struct MenuInputs {
     downloaded_models: Vec<(String, String)>,
     locale: String,
     update_checks_enabled: bool,
+    meeting_recording: bool,
 }
 
 /// Complete description of what the tray should look like.
@@ -334,6 +335,9 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             downloaded_models,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
+            meeting_recording: app
+                .try_state::<Arc<crate::meetings::MeetingManager>>()
+                .is_some_and(|m| m.is_recording()),
         },
     }
 }
@@ -510,6 +514,15 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         None::<&str>,
     )?;
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)?;
+    // Locales without the meeting strings yet get English (build.rs emits "").
+    let english = get_tray_translations(Some("en".to_string()));
+    let meeting_label = match (inputs.meeting_recording, &strings) {
+        (true, s) if !s.stop_meeting.is_empty() => s.stop_meeting.clone(),
+        (true, _) => english.stop_meeting.clone(),
+        (false, s) if !s.start_meeting.is_empty() => s.start_meeting.clone(),
+        (false, _) => english.start_meeting.clone(),
+    };
+    let meeting_i = MenuItem::with_id(app, "meeting_toggle", &meeting_label, true, None::<&str>)?;
     let separator = || PredefinedMenuItem::separator(app);
 
     let menu = if inputs.busy {
@@ -521,6 +534,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &separator()?,
                 &cancel_i,
                 &separator()?,
+                &meeting_i,
                 &copy_last_transcript_i,
                 &separator()?,
                 &settings_i,
@@ -559,6 +573,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
             &[
                 &version_i,
                 &separator()?,
+                &meeting_i,
                 &copy_last_transcript_i,
                 &separator()?,
                 &model_submenu,
@@ -683,6 +698,7 @@ mod tests {
             post_process_prompt: None,
             post_process_requested: false,
             has_audio: true,
+            transcription_model: None,
         }
     }
 
@@ -695,6 +711,7 @@ mod tests {
             downloaded_models: vec![("small".to_string(), "Small".to_string())],
             locale: "en".to_string(),
             update_checks_enabled: true,
+            meeting_recording: false,
         }
     }
 

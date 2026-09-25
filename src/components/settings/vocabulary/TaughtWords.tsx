@@ -51,7 +51,7 @@ export const TaughtWords: React.FC = () => {
         return (
           <div
             key={word.word}
-            className="rounded-lg border border-mid-gray/20 p-3 space-y-2"
+            className="rounded-xl border border-stone/20 bg-surface p-3 space-y-2"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm">
@@ -78,7 +78,7 @@ export const TaughtWords: React.FC = () => {
                 {t("settings.vocabulary.taught.checking")}
               </p>
             ) : entry.variants.length === 0 ? (
-              <p className="text-xs text-green-500">
+              <p className="text-xs text-success">
                 {t("settings.vocabulary.taught.recognized")}
               </p>
             ) : (

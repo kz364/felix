@@ -150,10 +150,10 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
         <div className="relative" ref={dropdownRef}>
           <button
             type="button"
-            className={`px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 rounded min-w-[200px] text-start flex items-center justify-between transition-all duration-150 ${
+            className={`px-2 py-1 text-sm font-medium bg-stone/10 border border-stone/30 rounded min-w-[200px] text-start flex items-center justify-between transition-all duration-150 ${
               isUpdating("selected_language")
                 ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-logo-primary/10 cursor-pointer hover:border-logo-primary"
+                : "hover:bg-stone/10 cursor-pointer hover:border-stone/50"
             }`}
             onClick={handleToggle}
             disabled={isUpdating("selected_language")}
@@ -177,9 +177,9 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           </button>
 
           {isOpen && !isUpdating("selected_language") && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-mid-gray/80 rounded shadow-lg z-50 max-h-60 overflow-hidden">
+            <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-stone/30 rounded shadow-lg z-50 max-h-60 overflow-hidden">
               {/* Search input */}
-              <div className="p-2 border-b border-mid-gray/80">
+              <div className="p-2 border-b border-stone/30">
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -187,13 +187,13 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                   onChange={handleSearchChange}
                   onKeyDown={handleKeyDown}
                   placeholder={t("settings.general.language.searchPlaceholder")}
-                  className="w-full px-2 py-1 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded focus:outline-none focus:ring-1 focus:ring-logo-primary focus:border-logo-primary"
+                  className="w-full px-2 py-1 text-sm bg-stone/10 border border-stone/30 rounded focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
                 />
               </div>
 
               <div className="max-h-48 overflow-y-auto">
                 {filteredLanguages.length === 0 ? (
-                  <div className="px-2 py-2 text-sm text-mid-gray text-center">
+                  <div className="px-2 py-2 text-sm text-text/55 text-center">
                     {t("settings.general.language.noResults")}
                   </div>
                 ) : (
@@ -201,9 +201,9 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                     <button
                       key={language.value}
                       type="button"
-                      className={`w-full px-2 py-1 text-sm text-start hover:bg-logo-primary/10 transition-colors duration-150 ${
+                      className={`w-full px-2 py-1 text-sm text-start hover:bg-stone/10 transition-colors duration-150 ${
                         selectedLanguage === language.value
-                          ? "bg-logo-primary/20 text-logo-primary font-semibold"
+                          ? "bg-accent/10 text-accent font-semibold"
                           : ""
                       }`}
                       onClick={() => handleLanguageSelect(language.value)}
@@ -224,8 +224,8 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
         />
       </div>
       {isUpdating("selected_language") && (
-        <div className="absolute inset-0 bg-mid-gray/10 rounded flex items-center justify-center">
-          <div className="w-4 h-4 border-2 border-logo-primary border-t-transparent rounded-full animate-spin"></div>
+        <div className="absolute inset-0 bg-stone/10 rounded flex items-center justify-center">
+          <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
         </div>
       )}
     </SettingContainer>

@@ -105,7 +105,7 @@ export const LocalModelSetup: React.FC<{ model: string }> = ({ model }) => {
       >
         {installing ? (
           <div className="flex flex-col gap-1.5">
-            <div className="text-xs text-mid-gray">
+            <div className="text-xs text-text/55">
               {progress?.stage === "model"
                 ? t("settings.postProcessing.local.downloadingModel", {
                     model: status?.model ?? model,
@@ -121,9 +121,9 @@ export const LocalModelSetup: React.FC<{ model: string }> = ({ model }) => {
                 </>
               )}
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-mid-gray/20">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone/20">
               <div
-                className={`h-full bg-logo-primary transition-[width] ${percent === null ? "w-1/3 animate-pulse" : ""}`}
+                className={`h-full bg-accent transition-[width] ${percent === null ? "w-1/3 animate-pulse" : ""}`}
                 style={percent !== null ? { width: `${percent}%` } : undefined}
               />
             </div>

@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { RefreshCcw } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { commands } from "@/bindings";
 
-import { Alert } from "../../ui/Alert";
 import {
   Dropdown,
   SettingContainer,
@@ -11,145 +10,15 @@ import {
   Textarea,
 } from "@/components/ui";
 import { Button } from "../../ui/Button";
-import { ResetButton } from "../../ui/ResetButton";
 import { Input } from "../../ui/Input";
 
-import { ProviderSelect } from "../PostProcessingSettingsApi/ProviderSelect";
-import { BaseUrlField } from "../PostProcessingSettingsApi/BaseUrlField";
-import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
-import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
-import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
 import { PostProcessingToggle } from "../PostProcessingToggle";
+import { FillerWordRemoval } from "../FillerWordRemoval";
 import { CleanupLevelPicker } from "./CleanupLevelPicker";
 import { CustomInstructions } from "./CustomInstructions";
-import { LocalModelSetup } from "./LocalModelSetup";
-
-const PostProcessingSettingsApiComponent: React.FC = () => {
-  const { t } = useTranslation();
-  const state = usePostProcessProviderState();
-
-  return (
-    <>
-      <SettingContainer
-        title={t("settings.postProcessing.api.provider.title")}
-        description={t("settings.postProcessing.api.provider.description")}
-        descriptionMode="tooltip"
-        layout="horizontal"
-        grouped={true}
-      >
-        <div className="flex items-center gap-2">
-          <ProviderSelect
-            options={state.providerOptions}
-            value={state.selectedProviderId}
-            onChange={state.handleProviderSelect}
-          />
-        </div>
-      </SettingContainer>
-
-      {state.isAppleProvider ? (
-        state.appleIntelligenceUnavailable ? (
-          <Alert variant="error" contained>
-            {t("settings.postProcessing.api.appleIntelligence.unavailable")}
-          </Alert>
-        ) : null
-      ) : state.isLocalProvider ? null : (
-        <>
-          {state.selectedProvider?.id === "custom" && (
-            <SettingContainer
-              title={t("settings.postProcessing.api.baseUrl.title")}
-              description={t("settings.postProcessing.api.baseUrl.description")}
-              descriptionMode="tooltip"
-              layout="horizontal"
-              grouped={true}
-            >
-              <div className="flex items-center gap-2">
-                <BaseUrlField
-                  value={state.baseUrl}
-                  onBlur={state.handleBaseUrlChange}
-                  placeholder={t(
-                    "settings.postProcessing.api.baseUrl.placeholder",
-                  )}
-                  disabled={state.isBaseUrlUpdating}
-                  className="min-w-[380px]"
-                />
-              </div>
-            </SettingContainer>
-          )}
-
-          <SettingContainer
-            title={t("settings.postProcessing.api.apiKey.title")}
-            description={t("settings.postProcessing.api.apiKey.description")}
-            descriptionMode="tooltip"
-            layout="horizontal"
-            grouped={true}
-          >
-            <div className="flex items-center gap-2">
-              <ApiKeyField
-                value={state.apiKey}
-                onBlur={state.handleApiKeyChange}
-                placeholder={t(
-                  "settings.postProcessing.api.apiKey.placeholder",
-                )}
-                disabled={state.isApiKeyUpdating}
-                className="min-w-[320px]"
-              />
-            </div>
-          </SettingContainer>
-        </>
-      )}
-
-      {!state.isAppleProvider && (
-        <SettingContainer
-          title={t("settings.postProcessing.api.model.title")}
-          description={
-            state.isCustomProvider
-              ? t("settings.postProcessing.api.model.descriptionCustom")
-              : state.isLocalProvider
-                ? t("settings.postProcessing.api.model.descriptionLocal")
-                : t("settings.postProcessing.api.model.descriptionDefault")
-          }
-          descriptionMode="tooltip"
-          layout="stacked"
-          grouped={true}
-        >
-          <div className="flex items-center gap-2">
-            <ModelSelect
-              value={state.model}
-              options={state.modelOptions}
-              disabled={state.isModelUpdating}
-              isLoading={state.isFetchingModels}
-              placeholder={
-                state.modelOptions.length > 0
-                  ? t(
-                      "settings.postProcessing.api.model.placeholderWithOptions",
-                    )
-                  : t("settings.postProcessing.api.model.placeholderNoOptions")
-              }
-              onSelect={state.handleModelSelect}
-              onCreate={state.handleModelCreate}
-              onBlur={() => {}}
-              className="flex-1 min-w-[380px]"
-            />
-            <ResetButton
-              onClick={state.handleRefreshModels}
-              disabled={state.isFetchingModels}
-              ariaLabel={t("settings.postProcessing.api.model.refreshModels")}
-              className="flex h-10 w-10 items-center justify-center"
-            >
-              <RefreshCcw
-                className={`h-4 w-4 ${state.isFetchingModels ? "animate-spin" : ""}`}
-              />
-            </ResetButton>
-          </div>
-        </SettingContainer>
-      )}
-
-      {state.isLocalProvider && <LocalModelSetup model={state.model} />}
-    </>
-  );
-};
+import { ScreenContext } from "./ScreenContext";
 
 const PostProcessingSettingsPromptsComponent: React.FC = () => {
   const { t } = useTranslation();
@@ -298,7 +167,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
         {!isCreating && hasPrompts && selectedPrompt && (
           <div className="space-y-3">
             <div className="space-y-2 flex flex-col">
-              <label className="text-sm font-semibold">
+              <label className="text-sm font-medium">
                 {t("settings.postProcessing.prompts.promptLabel")}
               </label>
               <Input
@@ -313,7 +182,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
             </div>
 
             <div className="space-y-2 flex flex-col">
-              <label className="text-sm font-semibold">
+              <label className="text-sm font-medium">
                 {t("settings.postProcessing.prompts.promptInstructions")}
               </label>
               <Textarea
@@ -323,7 +192,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p className="text-xs text-mid-gray/70">
+              <p className="text-xs text-text/50">
                 <Trans
                   i18nKey="settings.postProcessing.prompts.promptTip"
                   components={{ code: <code /> }}
@@ -353,8 +222,8 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
         )}
 
         {!isCreating && !selectedPrompt && (
-          <div className="p-3 bg-mid-gray/5 rounded-md border border-mid-gray/20">
-            <p className="text-sm text-mid-gray">
+          <div className="p-3 bg-stone/5 rounded-lg border border-stone/20">
+            <p className="text-sm text-text/55">
               {hasPrompts
                 ? t("settings.postProcessing.prompts.selectToEdit")
                 : t("settings.postProcessing.prompts.createFirst")}
@@ -365,7 +234,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
         {isCreating && (
           <div className="space-y-3">
             <div className="space-y-2 block flex flex-col">
-              <label className="text-sm font-semibold text-text">
+              <label className="text-sm font-medium text-text">
                 {t("settings.postProcessing.prompts.promptLabel")}
               </label>
               <Input
@@ -380,7 +249,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
             </div>
 
             <div className="space-y-2 flex flex-col">
-              <label className="text-sm font-semibold">
+              <label className="text-sm font-medium">
                 {t("settings.postProcessing.prompts.promptInstructions")}
               </label>
               <Textarea
@@ -390,7 +259,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p className="text-xs text-mid-gray/70">
+              <p className="text-xs text-text/50">
                 <Trans
                   i18nKey="settings.postProcessing.prompts.promptTip"
                   components={{ code: <code /> }}
@@ -422,11 +291,6 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
   );
 };
 
-export const PostProcessingSettingsApi = React.memo(
-  PostProcessingSettingsApiComponent,
-);
-PostProcessingSettingsApi.displayName = "PostProcessingSettingsApi";
-
 export const PostProcessingSettingsPrompts = React.memo(
   PostProcessingSettingsPromptsComponent,
 );
@@ -437,18 +301,20 @@ const Disclosure: React.FC<{
   summary?: string;
   children: React.ReactNode;
 }> = ({ title, summary, children }) => (
-  <details className="group rounded-lg border border-mid-gray/20">
-    <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium">
-      <span>{title}</span>
+  <details className="group rounded-xl border border-stone/20 bg-surface">
+    <summary className="flex cursor-pointer select-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+      <ChevronRight className="w-3.5 h-3.5 text-text/45 transition-transform group-open:rotate-90" />
+      <span className="flex-1">{title}</span>
       {summary && (
-        <span className="text-xs font-normal text-text/60">{summary}</span>
+        <span className="text-xs font-normal text-text/55">{summary}</span>
       )}
     </summary>
-    <div className="pb-2">{children}</div>
+    <div className="border-t border-stone/15 pb-2">{children}</div>
   </details>
 );
 
-export const PostProcessingSettings: React.FC = () => {
+/** Cleanup on/off, how much, your instructions and screen context. */
+export const CleanupSections: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const enabled = getSetting("post_process_enabled") || false;
@@ -460,9 +326,10 @@ export const PostProcessingSettings: React.FC = () => {
     )?.label ?? "";
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
+    <>
       <SettingsGroup>
         <PostProcessingToggle descriptionMode="inline" grouped={true} />
+        <FillerWordRemoval descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup
@@ -483,24 +350,31 @@ export const PostProcessingSettings: React.FC = () => {
         <CustomInstructions disabled={!enabled} />
       </SettingsGroup>
 
-      <Disclosure
-        title={t("settings.postProcessing.api.title")}
-        summary={providerLabel}
-      >
-        <PostProcessingSettingsApi />
-      </Disclosure>
+      <SettingsGroup title={t("settings.postProcessing.screenContext.title")}>
+        <ScreenContext disabled={!enabled} />
+      </SettingsGroup>
 
-      <Disclosure title={t("settings.postProcessing.shortcut.title")}>
-        <p className="px-4 pb-2 text-xs text-text/60">
-          {t("settings.postProcessing.shortcut.description")}
-        </p>
-        <ShortcutInput
-          shortcutId="transcribe_with_post_process"
-          descriptionMode="tooltip"
-          grouped={true}
-        />
-        <PostProcessingSettingsPrompts />
-      </Disclosure>
-    </div>
+      <p className="px-1 text-xs text-text/50">
+        {providerLabel} · {t("settings.postProcessing.api.movedToModels")}
+      </p>
+    </>
+  );
+};
+
+/** The second shortcut that runs a saved prompt over the dictation. */
+export const PromptShortcut: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <Disclosure title={t("settings.postProcessing.shortcut.title")}>
+      <p className="px-4 pt-3 pb-1 text-[13px] text-text/60">
+        {t("settings.postProcessing.shortcut.description")}
+      </p>
+      <ShortcutInput
+        shortcutId="transcribe_with_post_process"
+        descriptionMode="tooltip"
+        grouped={true}
+      />
+      <PostProcessingSettingsPrompts />
+    </Disclosure>
   );
 };

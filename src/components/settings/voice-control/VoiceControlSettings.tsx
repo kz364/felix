@@ -1,15 +1,21 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../ui/PageHeader";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { TriggerPhrases } from "./TriggerPhrases";
 import { AppSwitcher } from "./AppSwitcher";
 import { VoiceControlToggle } from "../VoiceControlToggle";
 
-export const VoiceControlSettings: React.FC = () => {
+/** Spoken commands: trigger phrases, line breaks and switching apps. */
+export const VoiceCommandsSettings: React.FC = () => {
   const { t } = useTranslation();
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
+    <div className="max-w-2xl w-full mx-auto space-y-6">
+      <PageHeader
+        title={t("settings.voiceControl.title")}
+        description={t("settings.voiceControl.description")}
+      />
       <SettingsGroup>
         <VoiceControlToggle descriptionMode="inline" grouped={true} />
       </SettingsGroup>

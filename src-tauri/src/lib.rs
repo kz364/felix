@@ -11,6 +11,7 @@ mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
 pub mod ax_tree;
+mod benchmark;
 mod catalog;
 #[cfg(target_os = "macos")]
 pub mod chatgpt;
@@ -25,11 +26,14 @@ mod llm_client;
 mod local_llm;
 mod local_llm_install;
 mod managers;
+pub mod meetings;
 mod memory;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+pub mod rules;
 mod scratchpad;
+mod screen_context;
 mod secure_input;
 mod settings;
 mod shortcut;
@@ -204,6 +208,16 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    if let Ok(dir) = portable::app_data_dir(app_handle) {
+        rules::init(&dir);
+        // Vocabulary and corrections now live only in the rules file.
+        match rules::take_from_settings(settings::get_settings(app_handle)) {
+            Ok(Some(settings)) => settings::write_settings(app_handle, settings),
+            Ok(None) => {}
+            Err(e) => log::error!("Couldn't move vocabulary into the rules file: {e}"),
+        }
+    }
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -239,6 +253,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
+    let meeting_manager = Arc::new(meetings::MeetingManager::new(app_handle));
+    app_handle.manage(meeting_manager.clone());
+    meeting_manager.resume_transcriptions();
 
     // Taught words need results for the current model (it may have changed
     // since they were taught, e.g. by the deleted-model fallback).
@@ -327,6 +344,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
             }
+            "meeting_toggle" => {
+                meetings::manager::toggle_in_background(app);
+            }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
                 if !transcription_manager.is_model_loaded() {
@@ -393,6 +413,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+
+    // A local cleanup model is started now, not at the first dictation.
+    actions::warm_up_at_launch(app_handle);
 }
 
 #[tauri::command]
@@ -727,8 +750,27 @@ pub fn run(cli_args: CliArgs) {
             vocab_teach::teach_recheck,
             shortcut::change_input_gain_setting,
             shortcut::change_auto_gain_setting,
+            shortcut::change_benchmark_recording_setting,
+            benchmark::benchmark_summary,
+            benchmark::open_benchmark_folder,
+            benchmark::benchmark_records,
+            benchmark::set_benchmark_ground_truth,
+            benchmark::guess_benchmark_ground_truth,
             shortcut::change_voice_control_enabled_setting,
             shortcut::change_context_aware_paste_setting,
+            shortcut::change_screen_context_setting,
+            shortcut::change_screen_context_online_setting,
+            shortcut::change_focus_message_box_setting,
+            shortcut::change_transcription_provider_setting,
+            commands::rules::rules_file_path,
+            commands::rules::open_rules_file,
+            commands::rules::propose_rules,
+            commands::rules::save_rules,
+            commands::rules::undo_rules,
+            commands::rules::learned_rules,
+            commands::rules::forget_rule,
+            commands::rules::mistake_reports,
+            commands::rules::forget_mistake_report,
             shortcut::change_result_popup_enabled_setting,
             shortcut::change_local_model_keep_loaded_setting,
             shortcut::change_result_popup_seconds_setting,
@@ -738,6 +780,24 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_assistant_effort_setting,
             shortcut::change_assistant_notes_setting,
             shortcut::change_agent_actions_setting,
+            meetings::manager::start_meeting,
+            meetings::manager::stop_meeting,
+            meetings::manager::get_meeting_state,
+            meetings::manager::list_meetings,
+            meetings::manager::open_meeting_folder,
+            meetings::manager::meeting_track_path,
+            meetings::manager::get_meeting_transcript,
+            meetings::manager::transcribe_meeting,
+            meetings::manager::get_meeting_notes,
+            meetings::manager::save_meeting_notes,
+            meetings::manager::rename_meeting,
+            meetings::manager::get_meeting_summary,
+            meetings::manager::summarize_meeting,
+            meetings::manager::meeting_markdown,
+            meetings::manager::rename_meeting_speaker,
+            meetings::manager::retranscribe_meeting,
+            meetings::manager::change_meeting_settings,
+            meetings::manager::default_meeting_summary_prompt,
             shortcut::change_agent_auto_send_setting,
             overlay::fit_result_overlay,
             overlay::dismiss_result_overlay,
@@ -794,6 +854,7 @@ pub fn run(cli_args: CliArgs) {
             commands::open_recordings_folder,
             commands::open_log_dir,
             commands::open_app_data_dir,
+            commands::this_mac,
             commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
@@ -1185,6 +1246,7 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            meetings::manager::stop_on_exit(app);
             local_llm::stop();
             agent::stop();
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {

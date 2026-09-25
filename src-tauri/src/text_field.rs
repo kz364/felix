@@ -233,7 +233,8 @@ pub fn classify_target(bundle_id: &str, lazy_ax: bool, probe: &FocusProbe) -> Pa
     }
 }
 
-const TEXT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"];
+pub(crate) const TEXT_ROLES: &[&str] =
+    &["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"];
 
 #[cfg(target_os = "macos")]
 mod ax {
@@ -444,6 +445,18 @@ pub fn focused_field() -> Option<FieldSnapshot> {
     }
 }
 
+/// Put the cursor at the end of the focused field's text.
+pub fn cursor_to_end() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        ax::focused_field().is_some_and(|f| ax::select_range(f.value.len(), 0))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 /// Select all of the focused field's text, so the next paste replaces it.
 /// Checks the field still holds `expected` (what was read before) and that
 /// the selection took, so a changed or uncooperative field isn't clobbered.
@@ -466,16 +479,66 @@ pub fn select_whole_field(expected: &[u16]) -> bool {
     }
 }
 
+/// Chromium/Electron apps whose Accessibility tree Handy switched on, and
+/// when. The tree takes a moment to build; after that the app reports its
+/// focus like a native one.
+static WOKEN_TREES: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<i32, std::time::Instant>>,
+> = once_cell::sync::Lazy::new(Default::default);
+
+/// How long after switching the tree on its focus reports are trusted.
+const TREE_BUILD_TIME: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// Ask a Chromium/Electron app to build its Accessibility tree (it stays on
+/// while the app runs).
+pub fn wake_tree(pid: i32) {
+    {
+        let mut woken = WOKEN_TREES.lock().unwrap_or_else(|e| e.into_inner());
+        if woken.contains_key(&pid) {
+            return;
+        }
+        woken.insert(pid, std::time::Instant::now());
+    }
+    crate::ax_tree::expose_electron_tree(pid);
+    log::debug!("Switched on the Accessibility tree of pid {pid}");
+}
+
+/// If Handy has just switched on this app's tree, wait (at most the build
+/// time) until it's built, so reading it finds the content.
+pub fn wait_for_tree(pid: i32) {
+    let woken = WOKEN_TREES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&pid)
+        .copied();
+    if let Some(at) = woken {
+        if let Some(left) = TREE_BUILD_TIME.checked_sub(at.elapsed()) {
+            std::thread::sleep(left);
+        }
+    }
+}
+
+/// Whether Handy switched on this app's tree long enough ago to trust it.
+fn tree_is_live(pid: i32) -> bool {
+    WOKEN_TREES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&pid)
+        .is_some_and(|at| at.elapsed() >= TREE_BUILD_TIME)
+}
+
 /// Whether the frontmost app's focused element can take pasted text.
 pub fn paste_target() -> PasteTarget {
     #[cfg(target_os = "macos")]
     {
         let (bundle_id, lazy_ax) = crate::app_context::frontmost_bundle();
+        let live = lazy_ax && crate::app_context::frontmost_pid().is_some_and(tree_is_live);
         let probe = ax::probe_focus();
-        let target = classify_target(bundle_id.as_deref().unwrap_or(""), lazy_ax, &probe);
+        let target = classify_target(bundle_id.as_deref().unwrap_or(""), lazy_ax && !live, &probe);
         log::debug!(
-            "Paste target in {:?}: {:?} -> {:?}",
+            "Paste target in {:?} (tree live: {}): {:?} -> {:?}",
             bundle_id,
+            live,
             probe,
             target
         );
@@ -552,10 +615,10 @@ mod tests {
             " I think so."
         );
         assert_eq!(adapt_to_context("PR is up.", "the", "", &[]), " PR is up.");
-        let vocab = vec!["Kaspar".to_string()];
+        let vocab = vec!["Sam".to_string()];
         assert_eq!(
-            adapt_to_context("Kaspar agrees.", "and", "", &vocab),
-            " Kaspar agrees."
+            adapt_to_context("Sam agrees.", "and", "", &vocab),
+            " Sam agrees."
         );
     }
 
@@ -609,6 +672,29 @@ mod tests {
         assert_eq!(
             classify_target("com.apple.Preview", false, &el("AXImage", false)),
             PasteTarget::NoText
+        );
+    }
+
+    #[test]
+    fn nothing_focused_in_electron_counts_once_its_tree_is_live() {
+        let claude = "com.anthropic.claudefordesktop";
+        // Tree not switched on (yet): can't tell, so paste.
+        assert_eq!(
+            classify_target(claude, true, &FocusProbe::NoFocus),
+            PasteTarget::Unknown
+        );
+        // Switched on: judged like a native app.
+        assert_eq!(
+            classify_target(claude, false, &FocusProbe::NoFocus),
+            PasteTarget::NoText
+        );
+        assert_eq!(
+            classify_target(claude, false, &el("AXTextArea", false)),
+            PasteTarget::Text
+        );
+        assert_eq!(
+            classify_target(claude, false, &el("AXGroup", false)),
+            PasteTarget::Unknown
         );
     }
 

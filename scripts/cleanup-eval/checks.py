@@ -3,7 +3,7 @@
 import re
 L, M, B = ("light",), ("medium",), ("light", "medium")
 CHECKS = {
- "e1": [("has","hi sarah",B),("has","contract",B),("re",r"section (4|four)",B),("re",r"best,?\s*kaspar\s*\.?$",B)],
+ "e1": [("has","hi sarah",B),("has","contract",B),("re",r"section (4|four)",B),("re",r"best,?\s*sam\s*\.?$",B)],
  "e2": [("has","hello everyone",B),("re",r"1\.\s",B),("has","budget",B),("re",r"thanks[.!]?\s*$",B)],
  "e3": [("has","dear mr",B),("has","tuesday",B),("re",r"3(:00)?\s?(pm|p\.m\.)",B),("re",r"kind regards[.,]?\s*$",B)],
  "e4": [("has","hey mike",B),("has","invoice",B),("re",r"cheers[.!]?\s*$",B)],

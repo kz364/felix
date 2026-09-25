@@ -14,6 +14,7 @@ import { CategoryCard } from "./CategoryCard";
 
 export const CATEGORIES: AppCategory[] = ["personal", "work", "email", "other"];
 
+/** Tone by app: which apps and sites count as personal, work or email. */
 export const StyleSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
@@ -91,10 +92,14 @@ export const StyleSettings: React.FC = () => {
   );
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-4">
-      <div className="px-1 space-y-1">
-        <h2 className="text-sm font-medium">{t("settings.style.title")}</h2>
-        <p className="text-xs text-text/60">{t("settings.style.intro")}</p>
+    <section className="space-y-3">
+      <div className="px-1">
+        <h2 className="text-[13px] font-medium text-text/70">
+          {t("settings.style.title")}
+        </h2>
+        <p className="mt-0.5 text-[13px] leading-snug text-text/55">
+          {t("settings.style.intro")}
+        </p>
       </div>
 
       <Input
@@ -115,7 +120,7 @@ export const StyleSettings: React.FC = () => {
         />
       ))}
 
-      <div className="rounded-lg border border-mid-gray/20 p-4 space-y-2">
+      <div className="rounded-xl border border-stone/20 bg-surface p-4 space-y-2">
         <div className="text-sm font-medium">
           {t("settings.style.apps.addSite")}
         </div>
@@ -140,7 +145,7 @@ export const StyleSettings: React.FC = () => {
           <select
             value={siteCategory}
             onChange={(e) => setSiteCategory(e.target.value as AppCategory)}
-            className="rounded-md border border-mid-gray/30 bg-transparent px-2 py-1.5 text-sm"
+            className="h-8 rounded-lg border border-stone/30 bg-surface px-2 text-[13px]"
             aria-label={t("settings.style.apps.categoryFor")}
           >
             {CATEGORIES.map((c) => (
@@ -159,6 +164,6 @@ export const StyleSettings: React.FC = () => {
           </Button>
         </div>
       </div>
-    </div>
+    </section>
   );
 };

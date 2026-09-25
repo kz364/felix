@@ -1,5 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../ui/PageHeader";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { AssistantSettings } from "../voice-control/AssistantSettings";
@@ -14,14 +15,15 @@ export const FelixSettings: React.FC = () => {
   const autoSend = getSetting("agent_auto_send") ?? true;
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
-      <SettingsGroup
-        title={t("settings.voiceControl.assistant.groupTitle")}
+    <div className="max-w-2xl w-full mx-auto space-y-6">
+      <PageHeader
+        title={t("settings.voiceControl.assistant.pageTitle")}
         description={t("settings.voiceControl.assistant.groupDescription")}
-      >
-        <p className="px-4 pt-3 text-sm text-mid-gray">
-          {t("settings.voiceControl.assistant.warning")}
-        </p>
+      />
+      <p className="rounded-xl bg-highlight/15 px-4 py-3 text-[13px] leading-snug text-text/80">
+        {t("settings.voiceControl.assistant.warning")}
+      </p>
+      <SettingsGroup title={t("settings.voiceControl.assistant.groupTitle")}>
         <AssistantSettings descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       {enabled && (

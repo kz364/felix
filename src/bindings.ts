@@ -427,6 +427,55 @@ async changeAutoGainSetting(enabled: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changeBenchmarkRecordingSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_benchmark_recording_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async benchmarkSummary() : Promise<BenchmarkSummary> {
+    return await TAURI_INVOKE("benchmark_summary");
+},
+async openBenchmarkFolder() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_benchmark_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recorded dictations, newest first.
+ */
+async benchmarkRecords(offset: number, limit: number) : Promise<BenchmarkItem[]> {
+    return await TAURI_INVOKE("benchmark_records", { offset, limit });
+},
+/**
+ * Save (or, with an empty text, clear) what was actually said.
+ */
+async setBenchmarkGroundTruth(id: string, text: string) : Promise<Result<BenchmarkRecord, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_benchmark_ground_truth", { id, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ask for a best guess at what was said: transcribe the raw audio with the
+ * cloud speech models that have an API key, then have ChatGPT reconcile
+ * those with the live transcript, what was pasted and your edits.
+ */
+async guessBenchmarkGroundTruth(id: string) : Promise<Result<BenchmarkRecord, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("guess_benchmark_ground_truth", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeVoiceControlEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_voice_control_enabled_setting", { enabled }) };
@@ -438,6 +487,121 @@ async changeVoiceControlEnabledSetting(enabled: boolean) : Promise<Result<null, 
 async changeContextAwarePasteSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_context_aware_paste_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeScreenContextSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_screen_context_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeScreenContextOnlineSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_screen_context_online_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeFocusMessageBoxSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_focus_message_box_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where dictation is transcribed: "local" or a cloud provider ("openai",
+ * "groq"). Switching to the cloud frees the local model's memory.
+ */
+async changeTranscriptionProviderSetting(provider: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_transcription_provider_setting", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rulesFilePath() : Promise<string | null> {
+    return await TAURI_INVOKE("rules_file_path");
+},
+async openRulesFile() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_rules_file") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ask a remote model for the rules change that fixes `report`, given the
+ * last few dictations. Nothing is saved until `save_rules`.
+ */
+async proposeRules(report: string) : Promise<Result<Proposal, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("propose_rules", { report }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save a new rules file; it's used from the next dictation.
+ */
+async saveRules(rules: string, reportId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_rules", { rules, reportId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Go back to the rules file from before the last change.
+ */
+async undoRules() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("undo_rules") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What the rules file holds, for the Vocabulary page.
+ */
+async learnedRules() : Promise<Learned> {
+    return await TAURI_INVOKE("learned_rules");
+},
+/**
+ * Remove one learned entry: `kind` is "word", "correction" or "soundalike".
+ */
+async forgetRule(kind: string, index: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("forget_rule", { kind, index }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Past mistake reports, newest first.
+ */
+async mistakeReports() : Promise<Report[]> {
+    return await TAURI_INVOKE("mistake_reports");
+},
+/**
+ * Delete a report and its audio (the rules it added stay).
+ */
+async forgetMistakeReport(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("forget_mistake_report", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -514,6 +678,171 @@ async changeAgentActionsSetting(enabled: boolean) : Promise<Result<null, string>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async startMeeting(mode: MeetingMode) : Promise<Result<MeetingInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_meeting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopMeeting() : Promise<Result<MeetingInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_meeting") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getMeetingState() : Promise<MeetingState> {
+    return await TAURI_INVOKE("get_meeting_state");
+},
+async listMeetings() : Promise<MeetingInfo[]> {
+    return await TAURI_INVOKE("list_meetings");
+},
+async openMeetingFolder(id: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_meeting_folder", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Path of one of a meeting's tracks, for playback.
+ */
+async meetingTrackPath(id: string, file: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_track_path", { id, file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The transcript so far, or `None` if there isn't one yet.
+ */
+async getMeetingTranscript(id: string) : Promise<Result<MeetingTranscript | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting_transcript", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Transcribe a meeting that failed or was recorded before transcription.
+ */
+async transcribeMeeting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The user's notes on a meeting (Markdown), empty if none yet.
+ */
+async getMeetingNotes(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting_notes", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save the user's notes; they're combined with the transcript when the
+ * meeting is summarised.
+ */
+async saveMeetingNotes(id: string, notes: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_meeting_notes", { id, notes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameMeeting(id: string, title: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_meeting", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The summary, if one has been written.
+ */
+async getMeetingSummary(id: string) : Promise<Result<Summary | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting_summary", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Write (or rewrite) the summary, with the notes as they are now.
+ */
+async summarizeMeeting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("summarize_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The whole meeting as Markdown: summary, notes and transcript.
+ */
+async meetingMarkdown(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_markdown", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Name a voice in an in-person meeting ("Speaker 2" → "Sam").
+ */
+async renameMeetingSpeaker(id: string, speaker: number, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_meeting_speaker", { id, speaker, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Transcribe a meeting again from scratch, with the engine chosen now (to
+ * compare engines, or after changing vocabulary). The summary is rewritten
+ * afterwards; the user's notes are kept.
+ */
+async retranscribeMeeting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retranscribe_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingSettings(update: MeetingSettingsUpdate) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_settings", { update }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What the summary is asked for when the user hasn't written their own.
+ */
+async defaultMeetingSummaryPrompt() : Promise<string> {
+    return await TAURI_INVOKE("default_meeting_summary_prompt");
 },
 async changeAgentAutoSendSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -961,6 +1290,9 @@ async openAppDataDir() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async thisMac() : Promise<ThisMac> {
+    return await TAURI_INVOKE("this_mac");
+},
 /**
  * Check if Apple Intelligence is available on this device.
  * Called by the frontend when the user selects Apple Intelligence provider.
@@ -1334,6 +1666,15 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type ActionItem = { task: string; 
+/**
+ * Who does it, if said; empty otherwise.
+ */
+owner: string; 
+/**
+ * Where in the meeting it came up.
+ */
+at_ms: number | null }
 /**
  * A spoken name for an app the app switcher can bring to the front
  * ("chat" → /Applications/Claude.app).
@@ -1410,7 +1751,13 @@ preferred_microphones?: string[];
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; 
+/**
+ * Where dictation is transcribed: "local" (the selected model on this
+ * Mac) or a provider with a transcription API ("openai", "groq"),
+ * using that provider's API key.
+ */
+transcription_provider?: string; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
 /**
  * Legacy count limit (upstream); superseded by `history_retention_days`.
  */
@@ -1435,6 +1782,22 @@ taught_words?: TaughtWord[]; recording_retention_period?: RecordingRetentionPeri
  */
 context_aware_paste?: boolean; 
 /**
+ * Give the cleanup model the text on screen around where the dictation
+ * goes (the conversation above the text box, the draft), read via
+ * Accessibility, so it spells names and terms as they appear.
+ */
+screen_context?: boolean; 
+/**
+ * Also send that screen text to online cleanup providers (otherwise
+ * it's only used with the model on this Mac).
+ */
+screen_context_online?: boolean; 
+/**
+ * In Claude, Codex and WhatsApp, when no text box is focused, focus
+ * the thread's message box before pasting.
+ */
+focus_message_box?: boolean; 
+/**
  * When nothing can take the text (no text field focused), show it in
  * the overlay instead of pasting.
  */
@@ -1453,6 +1816,41 @@ local_model_keep_loaded?: boolean;
  * text field's contents, to a ChatGPT model that writes the result.
  */
 assistant_enabled?: boolean; assistant_name?: string; 
+/**
+ * The meeting mode last started (a call, or in person), used by the
+ * shortcut and the tray.
+ */
+meeting_mode?: MeetingMode; 
+/**
+ * Which model cleans up and summarises meeting transcripts.
+ */
+meeting_llm?: MeetingLlm; 
+/**
+ * Tidy the transcript (fillers, false starts, punctuation) with the LLM.
+ */
+meeting_cleanup?: boolean; 
+/**
+ * Replaces the built-in guidance for how summaries are written; empty
+ * uses the default.
+ */
+meeting_summary_prompt?: string; 
+/**
+ * Level quiet and distant voices in in-person recordings before
+ * transcription. Separate from dictation's gain.
+ */
+meeting_auto_gain?: boolean; 
+/**
+ * Extra gain for the meeting mic track, in dB, before levelling.
+ */
+meeting_input_boost_db?: number; 
+/**
+ * Which engine transcribes meetings: the local model or a provider.
+ */
+meeting_transcriber?: MeetingTranscriber; 
+/**
+ * Tell speakers apart in in-person meetings.
+ */
+meeting_diarize?: boolean; 
 /**
  * Let the assistant act on the computer (start Claude Code sessions, run
  * tasks in other apps), not just write into the field. Off by default.
@@ -1503,6 +1901,17 @@ input_gain_db?: number;
  */
 auto_gain_enabled?: boolean; 
 /**
+ * For development: keep every dictation's audio before gain and VAD,
+ * with what was transcribed, pasted and later edited, in `benchmark/`.
+ */
+benchmark_recording?: boolean; 
+/**
+ * Silero speech threshold per microphone name, overriding the default
+ * (0.3). Lower keeps quieter speech: 0.1 suits a close clip-on mic
+ * used for whispering.
+ */
+microphone_vad_thresholds?: Partial<{ [key in string]: number }>; 
+/**
  * Voice Control mode: end-of-dictation key triggers, spoken
  * "new line" / "new paragraph", and the app switcher.
  */
@@ -1545,6 +1954,62 @@ recent_contexts?: AppRule[] }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type BenchmarkItem = { record: BenchmarkRecord; 
+/**
+ * Absolute path of the raw audio, for playback.
+ */
+audio_path: string }
+export type BenchmarkRecord = { id: string; at: string; 
+/**
+ * Raw audio file next to this record.
+ */
+audio: string; seconds: number; 
+/**
+ * Audio the speech model got after VAD (0 = VAD dropped everything).
+ */
+kept_seconds: number; gain_db: number; auto_gain: boolean; 
+/**
+ * What the AGC had learned when this recording started.
+ */
+gain_at_start: GainState; vad_backend: string; microphone: string | null; 
+/**
+ * Silero threshold override for this microphone (`None`: default 0.3).
+ */
+vad_threshold: number | null; language: string; app: string | null; bundle_id: string | null; 
+/**
+ * Speech model that produced `transcript`.
+ */
+model: string | null; 
+/**
+ * What the speech model heard, before rules and cleanup.
+ */
+transcript: string | null; error: string | null; 
+/**
+ * Exactly what was pasted.
+ */
+pasted: string | null; 
+/**
+ * The pasted text as it stood in the field after your edits.
+ */
+edited: string | null; 
+/**
+ * "unchanged", "edited", "rewritten" (too different to trust as ground
+ * truth), or why the field couldn't be followed.
+ */
+edit: string | null; 
+/**
+ * What was actually said, typed or confirmed by you.
+ */
+ground_truth: string | null; 
+/**
+ * An OpenAI model's best guess at what was said, when asked for.
+ */
+guess: Guess | null }
+export type BenchmarkSummary = { dictations: number; edited: number; 
+/**
+ * Records with a ground truth from you.
+ */
+confirmed: number; guessed: number; megabytes: number }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
  * An app or website with its automatic and effective category.
@@ -1586,6 +2051,14 @@ pasted_text: string; first_word: string | null; last_word: string | null; at_sta
  * `None` when the field couldn't be read or changed unexpectedly.
  */
 inserted: InsertedSpan | null }
+/**
+ * A line of a before/after comparison.
+ */
+export type DiffLine = { 
+/**
+ * "same", "added" or "removed".
+ */
+kind: string; text: string }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1598,12 +2071,39 @@ export type FieldState = { role: string; text: string; selection: Selection | nu
  * Capitalization/punctuation style applied per category.
  */
 export type Formality = "formal" | "casual" | "very_casual"
+/**
+ * What the AGC has learned about the speaker and the room (linear RMS).
+ */
+export type GainState = { speech_level: number | null; noise_floor: number | null }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
+export type Guess = { 
+/**
+ * Word for word as spoken; only obvious mishearings corrected.
+ */
+text: string; confident: boolean; 
+/**
+ * Words the sources disagreed on.
+ */
+unsure: string[]; notes: string; 
+/**
+ * Model that wrote the guess.
+ */
+by: string; 
+/**
+ * The transcripts it was given.
+ */
+heard: Heard[]; at: string }
+export type Heard = { by: string; text: string }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
 /**
  * Whether this entry's audio is still on disk (retry and playback).
  */
-has_audio: boolean }
+has_audio: boolean; 
+/**
+ * The speech model that transcribed it (entries from before this was
+ * kept have none).
+ */
+transcription_model: string | null }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
@@ -1623,6 +2123,10 @@ export type InstalledApp = { name: string; path: string;
  * CFBundleIdentifier, used to assign the app to a style category.
  */
 bundle_id: string | null }
+/**
+ * Where a background step (the summary) has got to.
+ */
+export type JobStatus = "queued" | "running" | "done" | "failed"
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Counts only — key identity is deliberately never captured.
@@ -1630,6 +2134,14 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * The rules file's entries, for the Vocabulary page.
+ */
+export type Learned = { words: string[]; corrections: TextReplacement[]; soundalikes: Soundalike[]; 
+/**
+ * The file has a mistake (the list is from the last good version).
+ */
+error: string | null }
 export type LocalModelEntry = { 
 /**
  * Ollama tag, e.g. `qwen3.5:4b`.
@@ -1649,6 +2161,97 @@ export type LocalModelStatus = {
  */
 runtime_installed: boolean; model: string; model_installed: boolean; installing: boolean }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * A meeting's `meeting.json`.
+ */
+export type MeetingInfo = { id: string; mode: MeetingMode; status: MeetingStatus; 
+/**
+ * Unix milliseconds.
+ */
+started_at: number; ended_at: number | null; mic: string; 
+/**
+ * Why system audio wasn't recorded on a call.
+ */
+system_error: string | null; tracks: TrackSummary[]; 
+/**
+ * Set by the user; otherwise the page names it by mode and time.
+ */
+title?: string | null; 
+/**
+ * `None` for meetings recorded before transcription existed.
+ */
+transcript?: TranscriptStatus | null; transcript_error?: string | null; 
+/**
+ * The title came from the summary, so a new summary may replace it.
+ */
+title_is_auto?: boolean; 
+/**
+ * Summary and transcript cleanup.
+ */
+summary?: JobStatus | null; summary_error?: string | null; 
+/**
+ * Names the user gave to told-apart voices (in person), by number.
+ */
+speakers?: Partial<{ [key in number]: string }> }
+/**
+ * The model that tidies and summarises meeting transcripts.
+ */
+export type MeetingLlm = 
+/**
+ * Felix's model, with the ChatGPT sign-in.
+ */
+"chatgpt" | 
+/**
+ * The provider and model chosen for dictation cleanup.
+ */
+"cleanup"
+export type MeetingMode = 
+/**
+ * Mic + system audio.
+ */
+"call" | 
+/**
+ * Mic only.
+ */
+"in_person"
+/**
+ * Meeting settings to change; fields left out stay as they are.
+ */
+export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null }
+/**
+ * What the Meetings page shows about the current recording and transcription.
+ */
+export type MeetingState = { recording: MeetingInfo | null; elapsed_ms: number; transcribing: TranscribeProgress | null }
+export type MeetingStatus = "recording" | "recorded" | 
+/**
+ * Handy quit or crashed while recording; the audio up to a few seconds
+ * before is kept.
+ */
+"interrupted"
+/**
+ * What transcribes meetings.
+ */
+export type MeetingTranscriber = 
+/**
+ * The model selected for dictation, on this Mac.
+ */
+"local" | 
+/**
+ * OpenAI's transcription API, with the OpenAI key from cleanup providers.
+ */
+"openai" | 
+/**
+ * Groq's Whisper API, with the Groq key from cleanup providers.
+ */
+"groq"
+/**
+ * A meeting's transcript as the page shows it.
+ */
+export type MeetingTranscript = { 
+/**
+ * False while it's still being transcribed (what's there so far).
+ */
+complete: boolean; paragraphs: Paragraph[] }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
@@ -1702,10 +2305,70 @@ export type OverlayPosition = "top" | "bottom"
  */
 export type OverlayStyle = "none" | "minimal" | "live"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * A run of one speaker's segments, as shown on the page.
+ */
+export type Paragraph = { source: Source; start_ms: number; end_ms: number; 
+/**
+ * Cleaned up when cleanup ran, otherwise as transcribed.
+ */
+text: string; 
+/**
+ * As transcribed, when cleanup changed it.
+ */
+raw: string | null; 
+/**
+ * Which voice, when speakers were told apart.
+ */
+speaker: number | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * A change to the rules file, suggested from the user's report.
+ */
+export type Proposal = { 
+/**
+ * The report's entry in `rule_reports.jsonl`.
+ */
+id: string; 
+/**
+ * What went wrong and what the change does, in plain words.
+ */
+explanation: string; 
+/**
+ * The fix needs a change to Handy itself, not only rules.
+ */
+needs_code_change: boolean; 
+/**
+ * The whole new file.
+ */
+rules: string; diff: DiffLine[]; tests: TestResult[]; 
+/**
+ * The new file doesn't parse.
+ */
+error: string | null }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * A mistake report, as kept in `REPORTS_FILE`.
+ */
+export type Report = { id: string; 
+/**
+ * RFC 3339.
+ */
+at: string; 
+/**
+ * "typed" or "voice".
+ */
+source: string; report: string; transcribed: string | null; pasted: string | null; transcription_model: string | null; has_audio: boolean; explanation: string; 
+/**
+ * Lines added or removed in the rules file ("+ …", "- …").
+ */
+change: string[]; 
+/**
+ * "applied", "proposed" (not applied), "no change" or "failed".
+ */
+status: string; error: string | null }
 export type SecretMap = Partial<{ [key in string]: string }>
 export type SecureInputStatus = { 
 /**
@@ -1781,7 +2444,37 @@ meaning: string;
 /**
  * Names that start with the word, in their own casing ("Claude Code").
  */
-compounds?: string[] }
+compounds?: string[]; 
+/**
+ * Words that, right before the heard word, make it the ordinary word
+ * ("the cloud"). Empty: the built-in list (the, my, our…).
+ */
+ordinary_after?: string[]; 
+/**
+ * Apps (names or bundle ids) where the name is likely: there, even
+ * "my cloud …" is checked instead of kept.
+ */
+name_in_apps?: string[]; 
+/**
+ * Likewise when the name is on screen where the dictation goes.
+ */
+name_if_on_screen?: boolean }
+/**
+ * Where a segment was heard.
+ */
+export type Source = 
+/**
+ * The user's mic: "Me" on a call.
+ */
+"mic" | 
+/**
+ * What the Mac played: "Them" on a call.
+ */
+"system"
+/**
+ * What the background work is doing.
+ */
+export type Stage = "transcribing" | "identifying" | "cleaning_up" | "summarizing"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -1814,6 +2507,18 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * `summary.json`.
+ */
+export type Summary = { title: string; overview: string; key_points: string[]; decisions: string[]; action_items: ActionItem[]; 
+/**
+ * Which model wrote it.
+ */
+model: string; 
+/**
+ * Unix milliseconds.
+ */
+generated_at: number }
 export type TaughtWord = { word: string; clips: TeachClip[]; by_model: ModelVariants[] }
 /**
  * One recorded take of a taught word.
@@ -1853,6 +2558,15 @@ variant_is_common_word: boolean;
  */
 clip: TeachClip }
 /**
+ * How a test case came out.
+ */
+export type TestResult = { said: string; expect: string; got: string; passed: boolean; 
+/**
+ * The local model decides this one; `got` is what it gives if it
+ * agrees with the test.
+ */
+model_decides: boolean }
+/**
  * Exact, case-insensitive whole-phrase substitution applied before cleanup,
  * for mis-hearings fuzzy custom-word matching can't reach
  * (e.g. "cube cuddle" → "kubectl").
@@ -1863,7 +2577,37 @@ export type TextReplacement = { from: string; to: string }
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * This Mac's chip and memory, and what should run on it.
+ */
+export type ThisMac = { chip: string; memory_gb: number; 
+/**
+ * Speech-to-text runs well on this Mac.
+ */
+local_speech: boolean; 
+/**
+ * The local cleanup model (a few GB more) runs well too.
+ */
+local_cleanup: boolean }
+/**
+ * What a finished track holds.
+ */
+export type TrackSummary = { file: string; source: string; seconds: number; 
+/**
+ * Loudest sample in dBFS; very low means the track is silent (for the
+ * system track, usually a missing permission).
+ */
+peak_dbfs: number; 
+/**
+ * Seconds of silence added to keep the track on the clock.
+ */
+padded_seconds: number }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+/**
+ * How far the running background work has got.
+ */
+export type TranscribeProgress = { id: string; stage: Stage; done: number; total: number }
+export type TranscriptStatus = "queued" | "transcribing" | "done" | "failed"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
 /**

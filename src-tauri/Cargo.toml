@@ -30,6 +30,8 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 once_cell = "1"
+toml = "0.9"
+toml_edit = "0.23"
 tauri = { version = "2.11.5", features = [
   "protocol-asset",
   "macos-private-api",
@@ -60,9 +62,12 @@ vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 earshot = "1.2.2"
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
-reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "multipart"] }
 futures-util = "0.3"
 rustfft = "6.4.0"
+# Speaker embeddings for meetings (same ONNX Runtime as vad-rs and transcribe-rs).
+ort = "=2.0.0-rc.12"
+ndarray = "0.17"
 strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
@@ -166,6 +171,10 @@ objc2-app-kit = "0.3"
 # Device-list change notifications, so preferred-microphone resolution can
 # reuse a cached scan instead of re-enumerating (~34 ms) on every recording.
 objc2-core-audio = "0.3"
+# Meeting capture: the system audio tap's buffer and format types, and the
+# CFDictionary its aggregate device is described with.
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = "0.3"
 # Accessibility (AXUIElement) reads of the focused text field.
 core-foundation = "0.10"
 objc2-service-management = "0.3.2"

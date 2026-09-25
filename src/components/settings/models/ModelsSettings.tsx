@@ -18,7 +18,14 @@ import {
   supportsLanguageCode,
 } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
+import { commands } from "@/bindings";
+import { useSettings } from "../../../hooks/useSettings";
+import { PageHeader } from "../../ui/PageHeader";
+import { SettingsGroup } from "../../ui/SettingsGroup";
+import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
+import { Accounts } from "./Accounts";
 import { CleanupModels } from "./CleanupModels";
+import { WhatRunsWhere } from "./WhatRunsWhere";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -34,6 +41,7 @@ const isLegacyModel = (model: ModelInfo): boolean =>
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
+  const { getSetting, refreshSettings } = useSettings();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStreaming, setFilterStreaming] = useState(false);
   const [filterTranslation, setFilterTranslation] = useState(false);
@@ -135,6 +143,11 @@ export const ModelsSettings: React.FC = () => {
     setSwitchingModelId(modelId);
     try {
       await selectModel(modelId);
+      // Picking a model here means transcribing on this Mac.
+      if ((getSetting("transcription_provider") ?? "local") !== "local") {
+        await commands.changeTranscriptionProviderSetting("local");
+        await refreshSettings();
+      }
     } finally {
       setSwitchingModelId(null);
     }
@@ -230,30 +243,44 @@ export const ModelsSettings: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="max-w-3xl w-full mx-auto">
+      <div className="max-w-2xl w-full mx-auto">
         <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-2 border-logo-primary border-t-transparent rounded-full animate-spin" />
+          <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-4">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-2">
-          {t("settings.models.title")}
-        </h1>
-        <p className="text-sm text-text/60">
-          {t("settings.models.description")}
-        </p>
-      </div>
+    <div className="max-w-2xl w-full mx-auto space-y-4">
+      <PageHeader
+        title={t("settings.models.title")}
+        description={t("settings.models.description")}
+      />
 
-      <div className="pt-2">
-        <h2 className="text-base font-semibold">
+      <SettingsGroup
+        title={t("settings.models.where.title")}
+        description={t("settings.models.where.description")}
+      >
+        <WhatRunsWhere />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("settings.models.accounts.title")}
+        description={t("settings.models.accounts.description")}
+      >
+        <Accounts />
+      </SettingsGroup>
+
+      <SettingsGroup title={t("settings.models.memory.title")}>
+        <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped={true} />
+      </SettingsGroup>
+
+      <div className="px-1 pt-4">
+        <h2 className="font-display text-xl">
           {t("settings.models.sections.transcription")}
         </h2>
-        <p className="text-sm text-text/60">
+        <p className="mt-0.5 text-[13px] text-text/60">
           {t("settings.models.sections.transcriptionDescription")}
         </p>
       </div>
@@ -266,7 +293,7 @@ export const ModelsSettings: React.FC = () => {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder={t("settings.models.searchPlaceholder")}
-          className="w-full pl-9 pr-3 py-2 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded-lg focus:outline-none focus:ring-1 focus:ring-logo-primary placeholder:text-text/40"
+          className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-stone/30 rounded-lg hover:border-stone/50 focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/20 placeholder:text-text/35"
         />
       </div>
 
@@ -274,7 +301,7 @@ export const ModelsSettings: React.FC = () => {
         {/* Downloaded Models Section — header always visible so filter stays accessible */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-text/60">
+            <h2 className="text-[13px] font-medium text-text/70">
               {t("settings.models.yourModels")}
             </h2>
             <div className="flex items-center gap-2">
@@ -285,7 +312,7 @@ export const ModelsSettings: React.FC = () => {
                 disabled={isRescanning}
                 title={t("settings.models.rescan.tooltip")}
                 aria-label={t("settings.models.rescan.tooltip")}
-                className="flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg bg-stone/10 text-text/60 hover:bg-stone/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw
                   className={`w-3.5 h-3.5 ${isRescanning ? "animate-spin" : ""}`}
@@ -293,7 +320,7 @@ export const ModelsSettings: React.FC = () => {
               </button>
 
               {/* Vertical divider separating action from filters */}
-              <div className="h-4 w-px bg-mid-gray/30 mx-0.5" />
+              <div className="h-4 w-px bg-stone/30 mx-0.5" />
               <button
                 type="button"
                 onClick={() => setFilterStreaming((enabled) => !enabled)}
@@ -302,8 +329,8 @@ export const ModelsSettings: React.FC = () => {
                 aria-pressed={filterStreaming}
                 className={`flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
                   filterStreaming
-                    ? "bg-logo-primary/20 text-logo-primary hover:bg-logo-primary/30"
-                    : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
+                    ? "bg-accent/10 text-accent hover:bg-stone/15"
+                    : "bg-stone/10 text-text/60 hover:bg-stone/20"
                 }`}
               >
                 <AudioLines className="w-3.5 h-3.5" />
@@ -316,8 +343,8 @@ export const ModelsSettings: React.FC = () => {
                 aria-pressed={filterTranslation}
                 className={`flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
                   filterTranslation
-                    ? "bg-logo-primary/20 text-logo-primary hover:bg-logo-primary/30"
-                    : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
+                    ? "bg-accent/10 text-accent hover:bg-stone/15"
+                    : "bg-stone/10 text-text/60 hover:bg-stone/20"
                 }`}
               >
                 <Languages className="w-3.5 h-3.5" />
@@ -329,8 +356,8 @@ export const ModelsSettings: React.FC = () => {
                   onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
                   className={`flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-lg transition-colors ${
                     languageFilter !== "all"
-                      ? "bg-logo-primary/20 text-logo-primary"
-                      : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
+                      ? "bg-accent/10 text-accent"
+                      : "bg-stone/10 text-text/60 hover:bg-stone/20"
                   }`}
                 >
                   <Globe className="w-3.5 h-3.5" />
@@ -345,8 +372,8 @@ export const ModelsSettings: React.FC = () => {
                 </button>
 
                 {languageDropdownOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-56 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
-                    <div className="p-2 border-b border-mid-gray/40">
+                  <div className="absolute top-full right-0 mt-1 w-56 bg-surface border border-stone/30 rounded-lg shadow-lg z-50 overflow-hidden">
+                    <div className="p-2 border-b border-stone/30">
                       <input
                         ref={languageSearchInputRef}
                         type="text"
@@ -368,7 +395,7 @@ export const ModelsSettings: React.FC = () => {
                         placeholder={t(
                           "settings.general.language.searchPlaceholder",
                         )}
-                        className="w-full px-2 py-1 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
+                        className="w-full px-2 py-1 text-sm bg-stone/10 border border-stone/30 rounded-md focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
                     <div className="max-h-48 overflow-y-auto">
@@ -381,8 +408,8 @@ export const ModelsSettings: React.FC = () => {
                         }}
                         className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
                           languageFilter === "all"
-                            ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                            : "hover:bg-mid-gray/10"
+                            ? "bg-accent/10 text-accent font-semibold"
+                            : "hover:bg-stone/10"
                         }`}
                       >
                         {t("settings.models.filters.allLanguages")}
@@ -398,8 +425,8 @@ export const ModelsSettings: React.FC = () => {
                           }}
                           className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
                             languageFilter === lang.value
-                              ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                              : "hover:bg-mid-gray/10"
+                              ? "bg-accent/10 text-accent font-semibold"
+                              : "hover:bg-stone/10"
                           }`}
                         >
                           {lang.label}
@@ -435,7 +462,7 @@ export const ModelsSettings: React.FC = () => {
         {/* Available Models Section */}
         {availableModels.length > 0 && (
           <div className="space-y-3">
-            <h2 className="text-sm font-medium text-text/60">
+            <h2 className="text-[13px] font-medium text-text/70">
               {t("settings.models.availableModels")}
             </h2>
             {availableModels.map((model: ModelInfo) => (
@@ -463,7 +490,7 @@ export const ModelsSettings: React.FC = () => {
 
       <div className="pt-6 space-y-3">
         <div>
-          <h2 className="text-base font-semibold">
+          <h2 className="font-display text-xl">
             {t("settings.models.sections.cleanup")}
           </h2>
           <p className="text-sm text-text/60">

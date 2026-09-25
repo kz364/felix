@@ -31,10 +31,16 @@ export const ResultCard: React.FC<ResultCardProps> = ({
   const [domHover, setDomHover] = useState(false);
   const [nativeHover, setNativeHover] = useState(false);
   const [copied, setCopied] = useState(false);
+  // After Copy: the button shows a tick, then the card shrinks back to the
+  // pill and closes.
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number>();
   const hovered = domHover || nativeHover;
 
   useEffect(() => {
     setCopied(false);
+    setClosing(false);
+    return () => window.clearTimeout(closeTimer.current);
   }, [session]);
 
   useEffect(() => {
@@ -62,14 +68,22 @@ export const ResultCard: React.FC<ResultCardProps> = ({
     const result = await commands.copyResultText(text);
     if (result.status === "ok") {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = window.setTimeout(() => setClosing(true), 650);
     }
   };
 
   return (
     <div
       ref={cardRef}
-      className={`scard result ${hovered ? "hovered" : ""}`}
+      className={`scard result ${hovered ? "hovered" : ""} ${
+        closing ? "closing" : ""
+      }`}
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget && closing) {
+          commands.dismissResultOverlay();
+        }
+      }}
       onMouseEnter={() => setDomHover(true)}
       onMouseLeave={() => setDomHover(false)}
     >
@@ -92,8 +106,28 @@ export const ResultCard: React.FC<ResultCardProps> = ({
       </div>
       <div className="rtext">{text}</div>
       <div className="rfoot">
-        <button className={`rcopy ${copied ? "done" : ""}`} onClick={copy}>
-          {copied ? t("overlay.result.copied") : t("overlay.result.copy")}
+        <button
+          className={`rcopy ${copied ? "done" : ""}`}
+          onClick={copy}
+          disabled={copied}
+          aria-label={
+            copied ? t("overlay.result.copied") : t("overlay.result.copy")
+          }
+        >
+          {copied ? (
+            <svg className="rtick" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          ) : (
+            t("overlay.result.copy")
+          )}
         </button>
       </div>
       {timeoutMs > 0 && (
@@ -105,7 +139,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({
             key={`${session}-${timeoutMs}`}
             style={{
               animationDuration: `${timeoutMs}ms`,
-              animationPlayState: hovered ? "paused" : "running",
+              animationPlayState: hovered || copied ? "paused" : "running",
             }}
             onAnimationEnd={() => commands.dismissResultOverlay()}
           />

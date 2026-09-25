@@ -14,19 +14,19 @@ import os
 import subprocess
 import sys
 
-VOCAB = ["Kaspar", "Featherless", "kubectl", "Qwen", "Parakeet", "Tauri",
+VOCAB = ["Rivera", "Lumenfold", "kubectl", "Qwen", "Parakeet", "Tauri",
          "Wispr", "Nemotron", "Cohere", "Priya", "Supabase", "Zustand"]
 POSITIVE = [
-    "Please run kubectl apply, then ping Kaspar about the Featherless deploy.",
+    "Please run kubectl apply, then ping Rivera about the Lumenfold deploy.",
     "I asked Qwen to review the Tauri build before lunch.",
     "Priya thinks Parakeet is faster than Nemotron on short clips.",
     "Move the auth tables into Supabase and keep the UI state in Zustand.",
     "Wispr sends audio to the cloud, but Cohere runs locally here.",
-    "Kaspar and Priya will demo the Featherless dashboard on Friday.",
-    "Check whether kubectl can reach the cluster from Kaspar's laptop.",
+    "Rivera and Priya will demo the Lumenfold dashboard on Friday.",
+    "Check whether kubectl can reach the cluster from Rivera's laptop.",
     "The Tauri app talks to Supabase through a small Rust service.",
     "Nemotron and Parakeet both come from the same research group.",
-    "Can Qwen summarize the notes Priya left in the Featherless channel?",
+    "Can Qwen summarize the notes Priya left in the Lumenfold channel?",
     "Zustand keeps the settings store simple compared to Redux.",
     "Cohere released a new transcription model this month.",
 ]

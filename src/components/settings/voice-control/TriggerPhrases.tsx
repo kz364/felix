@@ -114,7 +114,7 @@ export const TriggerPhrases: React.FC<TriggerPhrasesProps> = React.memo(
         </SettingContainer>
         {triggers.length > 0 && (
           <div
-            className={`px-4 p-2 ${grouped ? "" : "rounded-lg border border-mid-gray/20"} flex flex-wrap gap-1`}
+            className={`px-4 p-2 ${grouped ? "" : "rounded-xl border border-stone/20 bg-surface"} flex flex-wrap gap-1`}
           >
             {triggers.map((trigger) => (
               <Button

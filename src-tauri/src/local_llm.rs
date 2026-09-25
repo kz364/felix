@@ -74,7 +74,10 @@ fn sysctl(name: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-const CONTEXT_TOKENS: &str = "4096";
+/// Qwen3.5's attention cache is small (most layers are linear attention),
+/// so a long window costs little memory; cleanup prompts are ~1-2k tokens,
+/// rules proposals with a retry ~5k.
+const CONTEXT_TOKENS: &str = "16384";
 const MAX_OUTPUT_TOKENS: u32 = 1024;
 /// A cold start maps a few GB of weights and compiles Metal kernels.
 const START_TIMEOUT: Duration = Duration::from_secs(60);

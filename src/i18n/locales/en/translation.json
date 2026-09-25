@@ -2,30 +2,37 @@
   "tray": {
     "settings": "Settings...",
     "checkUpdates": "Check for Updates...",
-    "copyLastTranscript": "Copy Last Transcript",
-    "unloadModel": "Unload Model",
+    "copyLastTranscript": "Copy last transcript",
+    "unloadModel": "Unload model",
     "model": "Model",
     "quit": "Quit",
     "cancel": "Cancel",
-    "secureInputWarning": "⚠ Shortcuts blocked by Secure Input"
+    "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
+    "startMeeting": "Start meeting recording",
+    "stopMeeting": "Stop meeting recording"
   },
   "sidebar": {
     "general": "General",
     "models": "Models",
     "advanced": "Advanced",
-    "postProcessing": "Post Process",
+    "postProcessing": "Post process",
     "history": "History",
     "debug": "Debug",
     "about": "About",
-    "voiceControl": "Voice Control",
+    "voiceControl": "Voice control",
     "felix": "Felix",
     "vocabulary": "Vocabulary",
-    "style": "Style"
+    "style": "Style",
+    "meetings": "Meetings",
+    "dictation": "Dictation",
+    "writing": "Writing",
+    "voiceCommands": "Voice commands",
+    "settings": "Settings"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
-    "existingModelsTitle": "Compatible Models",
-    "downloadModelsTitle": "Available to Download",
+    "existingModelsTitle": "Compatible models",
+    "downloadModelsTitle": "Available to download",
     "showAllModels": "Show all {{total}} models",
     "showFewerModels": "Show fewer models",
     "recommended": "Recommended",
@@ -104,17 +111,17 @@
       "selectModel": "Failed to select model"
     },
     "permissions": {
-      "title": "Permissions Required",
+      "title": "Permissions required",
       "description": "Handy needs a couple of permissions to work properly.",
       "microphone": {
-        "title": "Microphone Access",
+        "title": "Microphone access",
         "description": "Required to hear your voice for transcription."
       },
       "accessibility": {
-        "title": "Accessibility Access",
+        "title": "Accessibility access",
         "description": "Required to type transcribed text into your applications."
       },
-      "grant": "Grant Permission",
+      "grant": "Grant permission",
       "granted": "Granted",
       "waiting": "Waiting...",
       "allGranted": "All set!",
@@ -138,12 +145,12 @@
     "extractingGeneric": "Extracting...",
     "downloading": "Downloading {{percentage}}%",
     "downloadingMultiple": "Downloading {{count}} models...",
-    "modelReady": "Model Ready",
+    "modelReady": "Model ready",
     "loading": "Loading {{modelName}}...",
     "loadingGeneric": "Loading...",
-    "modelError": "Model Error",
-    "modelUnloaded": "Model Unloaded",
-    "noModelDownloadRequired": "No Model - Download Required",
+    "modelError": "Model error",
+    "modelUnloaded": "Model unloaded",
+    "noModelDownloadRequired": "No model yet — download one",
     "deleteModel": "Delete {{modelName}}",
     "downloadSpeed": "{{speed}} MB/s",
     "cancel": "Cancel",
@@ -165,7 +172,7 @@
     "general": {
       "title": "General",
       "shortcut": {
-        "title": "Handy Shortcuts",
+        "title": "Handy shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
@@ -173,23 +180,28 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Transcribe Shortcut",
+            "name": "Dictate",
             "description": "The keyboard shortcut to record and transcribe your voice."
           },
           "cancel": {
-            "name": "Cancel Shortcut",
+            "name": "Cancel",
             "description": "The keyboard shortcut to cancel the current recording."
           },
           "transcribe_with_post_process": {
-            "name": "Post-Processing Hotkey",
-            "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+            "name": "Dictate with a prompt",
+            "description": "A second shortcut that runs one of your own prompts over the dictation."
+          },
+          "meeting": {
+            "name": "Start or stop a meeting",
+            "description": "Starts or stops recording a meeting, in the mode you used last. Not set by default."
           }
         },
         "errors": {
           "restore": "Failed to restore original shortcut",
           "set": "Failed to set shortcut: {{error}}",
           "reset": "Failed to reset shortcut to original value"
-        }
+        },
+        "notSet": "Not set"
       },
       "language": {
         "title": "Language",
@@ -199,7 +211,7 @@
         "auto": "Auto"
       },
       "shortcutActivation": {
-        "title": "Shortcut Behavior",
+        "title": "Hold or tap",
         "description": "Choose how the transcribe shortcut starts and stops recording.",
         "options": {
           "holdOrToggle": "Auto",
@@ -214,16 +226,16 @@
       }
     },
     "models": {
-      "title": "Transcription Models",
-      "description": "Select a transcription model or download additional models. Different models offer varying levels of accuracy and speed.",
+      "title": "Models",
+      "description": "What turns your voice into text and tidies it up — on this Mac or in the cloud.",
       "searchPlaceholder": "Search models by name…",
-      "yourModels": "Downloaded Models",
-      "availableModels": "Available to Download",
+      "yourModels": "Downloaded models",
+      "availableModels": "Available to download",
       "deleteConfirm": "Are you sure you want to delete {{modelName}}? You will need to download it again to use it.",
       "deleteActiveConfirm": "{{modelName}} is your active model. Deleting it will stop transcriptions until you select a new model. Are you sure?",
-      "deleteTitle": "Delete Model",
+      "deleteTitle": "Delete model",
       "filters": {
-        "allLanguages": "All Languages",
+        "allLanguages": "All languages",
         "streaming": "Filter models that support live streaming transcription",
         "translation": "Filter models that support translation to English"
       },
@@ -233,10 +245,10 @@
       },
       "noModelsMatch": "No models match this filter.",
       "sections": {
-        "transcription": "Transcription models",
-        "transcriptionDescription": "Turn your speech into text.",
-        "cleanup": "Text cleanup models",
-        "cleanupDescription": "Clean up and format each dictation on this Mac, with nothing sent to the cloud. Downloading one installs Ollama too if it's missing."
+        "transcription": "Speech models",
+        "transcriptionDescription": "These turn your voice into text on this Mac.",
+        "cleanup": "Cleanup models",
+        "cleanupDescription": "These tidy up each dictation on this Mac, with nothing sent to the cloud. Downloading one installs Ollama too if it’s missing."
       },
       "cleanup": {
         "qwen4b": {
@@ -251,6 +263,41 @@
         "active": "In use",
         "deleteConfirm": "Delete {{model}}? You can download it again later.",
         "recommendedForMac": "Recommended for this Mac"
+      },
+      "where": {
+        "title": "What runs where",
+        "description": "This Mac is private and free; the cloud is lighter on your Mac. If a cloud service fails, dictation falls back to this Mac.",
+        "macAll": "This Mac ({{chip}}, {{memory}} GB) runs speech-to-text and cleanup well on its own.",
+        "macSpeech": "This Mac ({{chip}}, {{memory}} GB) runs speech-to-text well; for cleanup the cloud is faster and uses less memory.",
+        "macCloud": "This Mac ({{chip}}, {{memory}} GB) is better off using the cloud for both.",
+        "thisMac": "This Mac · {{model}}",
+        "noLocalModel": "no model downloaded",
+        "cloud": "{{provider}} · {{model}}",
+        "needsKey": "{{provider}} (add an API key below)",
+        "onThisMac": "this Mac",
+        "chatgptNote": "no API key, ~2 s slower",
+        "chatgptModel": "Luna is fastest and is enough for cleanup.",
+        "speech": {
+          "title": "Speech to text",
+          "description": "Cloud providers get the dictation's audio and your vocabulary as a spelling hint."
+        },
+        "cleanup": {
+          "title": "Cleanup",
+          "description": "Tidies what you said. Cloud providers get the text, plus what’s on screen only if you allow it under Writing."
+        }
+      },
+      "accounts": {
+        "title": "Accounts",
+        "description": "Connect a service once and speech, cleanup, meetings and Felix can all use it. Keys stay on this Mac.",
+        "connected": "Connected",
+        "usesSpeech": "Speech to text and cleanup",
+        "usesCleanup": "Cleanup",
+        "keyPlaceholder": "API key",
+        "more_one": "{{count}} more provider",
+        "more_other": "{{count}} more providers"
+      },
+      "memory": {
+        "title": "Memory"
       }
     },
     "sound": {
@@ -262,17 +309,17 @@
         "loading": "Loading..."
       },
       "channel": {
-        "title": "Input Channel",
+        "title": "Input channel",
         "description": "Select which input channel to record from. Use this if your audio interface has multiple inputs.",
         "average": "Average all channels",
         "channel": "Channel {{n}}"
       },
       "audioFeedback": {
-        "label": "Audio Feedback",
+        "label": "Start and stop sounds",
         "description": "Play sound when recording starts and stops"
       },
       "outputDevice": {
-        "title": "Output Device",
+        "title": "Play sounds on",
         "description": "Select your preferred audio output device for feedback sounds",
         "placeholder": "Select output device...",
         "loading": "Loading..."
@@ -282,15 +329,15 @@
         "description": "Adjust the volume of audio feedback sounds"
       },
       "autoGain": {
-        "label": "Automatic Gain",
+        "label": "Automatic gain",
         "description": "Boosts quiet speech (whispering, clip-on or distant mics) before silence detection, up to +30 dB, without lifting room noise."
       },
       "inputGain": {
-        "title": "Input Gain",
+        "title": "Input gain",
         "description": "Fixed boost or cut applied to the microphone before transcription."
       },
       "preferredMicrophones": {
-        "title": "Preferred Microphones",
+        "title": "Preferred microphones",
         "description": "Used in this order whenever they're connected, ahead of the Microphone setting above and the system default. Disconnected ones stay on the list, and Handy switches back automatically when they return.",
         "pick": "Add a connected microphone…",
         "add": "Add",
@@ -310,15 +357,15 @@
         "history": "History"
       },
       "startHidden": {
-        "label": "Start Hidden",
+        "label": "Start in the background",
         "description": "Launch to system tray without opening the window."
       },
       "autostart": {
-        "label": "Launch on Startup",
+        "label": "Open at login",
         "description": "Automatically start Handy when you log in to your computer."
       },
       "showTrayIcon": {
-        "label": "Show Tray Icon",
+        "label": "Show in the menu bar",
         "description": "Display the Handy icon in the system tray."
       },
       "overlay": {
@@ -332,7 +379,7 @@
           }
         },
         "position": {
-          "title": "Overlay Position",
+          "title": "Overlay position",
           "description": "Where the overlay appears on screen during recording and transcription.",
           "options": {
             "bottom": "Bottom",
@@ -341,7 +388,7 @@
         }
       },
       "pasteMethod": {
-        "title": "Paste Method",
+        "title": "Paste method",
         "description": "Choose how text is inserted. Direct: simulates typing via system input. None: skips paste, only updates history/clipboard.",
         "options": {
           "clipboard": "Clipboard ({{modifier}}+V)",
@@ -354,18 +401,18 @@
         "externalScriptPlaceholder": "/path/to/your/script.sh"
       },
       "typingTool": {
-        "title": "Typing Tool",
+        "title": "Typing tool",
         "description": "Choose which Linux typing tool to use for Direct paste method. Auto will automatically detect and use the best available tool for your system.",
         "options": {
-          "auto": "Auto (Recommended)"
+          "auto": "Auto (recommended)"
         }
       },
       "clipboardHandling": {
-        "title": "Clipboard Handling",
+        "title": "Clipboard handling",
         "description": "Don't Modify Clipboard preserves your current clipboard contents after transcription. Copy to Clipboard leaves the transcription result in your clipboard after pasting.",
         "options": {
-          "dontModify": "Don't Modify Clipboard",
-          "copyToClipboard": "Copy to Clipboard"
+          "dontModify": "Don't modify clipboard",
+          "copyToClipboard": "Copy to clipboard"
         }
       },
       "autoSubmit": {
@@ -381,8 +428,8 @@
         "description": "Automatically translate speech from other languages to English during transcription."
       },
       "modelUnload": {
-        "title": "Unload Model",
-        "description": "Automatically free GPU/CPU memory when the model hasn't been used for the specified time",
+        "title": "Free up memory",
+        "description": "Unload the speech model when you haven’t dictated for a while. The next dictation takes a moment longer.",
         "options": {
           "never": "Never",
           "immediately": "Immediately",
@@ -391,11 +438,11 @@
           "min10": "After 10 minutes",
           "min15": "After 15 minutes",
           "hour1": "After 1 hour",
-          "sec15": "After 15 seconds (Debug)"
+          "sec15": "After 15 seconds (debug)"
         }
       },
       "customWords": {
-        "title": "Custom Words",
+        "title": "Custom words",
         "description": "Names and jargon the speech model should favor while it transcribes (Whisper's prompt, Qwen3-ASR's context, or tuned keyword boosting for Cohere and Canary-Qwen). Technical terms with digits, dashes or several capitals, like GLM-5.3, are also rewritten to your exact spelling when they come out as \"GLM 5.3\" or \"G L M five point three\".",
         "placeholder": "Add a word",
         "add": "Add",
@@ -403,11 +450,11 @@
         "duplicate": "\"{{word}}\" already exists"
       },
       "voiceActivityDetection": {
-        "title": "Voice Activity Detection",
-        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+        "title": "Skip silence",
+        "description": "Leave out silence before sending audio to the speech model. Turning this off records everything."
       },
       "vadBackend": {
-        "title": "Voice Activity Backend",
+        "title": "Silence detector",
         "description": "Choose the detector used to filter silence. Earshot is experimental; switch back to Silero if speech is clipped or noise is retained.",
         "options": {
           "silero": "Silero",
@@ -415,12 +462,12 @@
         }
       },
       "fillerWordRemoval": {
-        "title": "Remove Filler Words",
+        "title": "Remove filler words",
         "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
       },
       "textReplacements": {
         "title": "Replacements",
-        "description": "Rules applied to the raw transcript before voice commands and AI cleanup. Plain text matches whole words, ignoring case (\"cube cuddle\" → \"kubectl\"). Wrap a rule in slashes for a regex: /\\bcasp[ae]r\\b/ → Kaspar; use $1 for capture groups.",
+        "description": "Rules applied to the raw transcript before voice commands and AI cleanup. Plain text matches whole words, ignoring case (\"cube cuddle\" → \"kubectl\"). Wrap a rule in slashes for a regex: /\\bcasp[ae]r\\b/ → Sam; use $1 for capture groups.",
         "fromPlaceholder": "heard",
         "toPlaceholder": "replace with",
         "add": "Add",
@@ -429,16 +476,20 @@
         "item": "{{from}} → {{to}}"
       },
       "contextAwarePaste": {
-        "label": "Fit to Surrounding Text",
+        "label": "Fit to surrounding text",
         "description": "Before pasting, look at the text around the cursor: add a space after a word or punctuation, and lowercase the first word when continuing a sentence. Works in fields that expose their text to Accessibility."
       },
       "resultPopup": {
-        "label": "Show Text When There's Nowhere to Paste",
+        "label": "Show text when there's nowhere to paste",
         "description": "If no text field is focused when a dictation finishes, show it in a card instead of pasting, with a Copy button. Apps whose text fields can't be detected (terminals, some editors) always get the paste.",
-        "timeoutTitle": "Close Text Card After",
+        "timeoutTitle": "Close text card after",
         "timeoutDescription": "How long the card stays up. Moving the pointer over it pauses the countdown.",
         "seconds": "{{count}} seconds",
         "never": "Keep until closed"
+      },
+      "focusMessageBox": {
+        "label": "Find the message box",
+        "description": "In Claude, Codex and WhatsApp, if no text box has the cursor, the dictation goes into the thread's message box (not a terminal or search field)."
       }
     },
     "postProcessing": {
@@ -446,7 +497,7 @@
         "title": "Hotkey"
       },
       "api": {
-        "title": "API (OpenAI Compatible)",
+        "title": "API (OpenAI compatible)",
         "provider": {
           "title": "Provider",
           "description": "Select an OpenAI-compatible provider."
@@ -460,7 +511,7 @@
           "placeholder": "https://api.openai.com/v1"
         },
         "apiKey": {
-          "title": "API Key",
+          "title": "API key",
           "description": "API key for the selected provider.",
           "placeholder": "sk-..."
         },
@@ -472,33 +523,34 @@
           "placeholderWithOptions": "Search or select a model",
           "placeholderNoOptions": "Type a model name",
           "refreshModels": "Refresh models"
-        }
+        },
+        "movedToModels": "Change the cleanup model and its account under Models."
       },
       "prompts": {
         "title": "Prompt",
         "selectedPrompt": {
-          "title": "Selected Prompt",
+          "title": "Selected prompt",
           "description": "Select a template for refining transcriptions or create a new one. Use ${output} inside the prompt text to reference the captured transcript."
         },
         "noPrompts": "No prompts available",
         "selectPrompt": "Select a prompt",
-        "createNew": "Create New Prompt",
-        "promptLabel": "Prompt Label",
+        "createNew": "Create new prompt",
+        "promptLabel": "Prompt label",
         "promptLabelPlaceholder": "Enter prompt name",
-        "promptInstructions": "Prompt Instructions",
+        "promptInstructions": "Prompt instructions",
         "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Improve grammar and clarity for the following text: ${output}",
         "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text in your prompt.",
-        "updatePrompt": "Update Prompt",
-        "deletePrompt": "Delete Prompt",
-        "createPrompt": "Create Prompt",
+        "updatePrompt": "Update prompt",
+        "deletePrompt": "Delete prompt",
+        "createPrompt": "Create prompt",
         "cancel": "Cancel",
         "selectToEdit": "Select a prompt above to view and edit its details.",
-        "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
+        "createFirst": "Click “Create new prompt” above to write your first one."
       },
       "cleanup": {
-        "title": "Clarity",
-        "description": "How much the on-device AI edits each dictation. Runs after your vocabulary rules and voice commands, and before the style for the app you're in.",
-        "intro": "How much the AI edits what you said. If it would change the meaning, drop details or invent numbers, the edit is discarded and the rules-only text is pasted instead.",
+        "title": "How much to tidy",
+        "description": "Runs after your vocabulary and voice commands, and before the tone for the app you’re in.",
+        "intro": "If an edit would change the meaning, drop details or invent numbers, Handy throws it away and pastes the plain transcript instead.",
         "levels": {
           "none": {
             "title": "None",
@@ -518,9 +570,9 @@
         }
       },
       "instructions": {
-        "title": "Custom Instructions",
-        "description": "Your own rules, one per line, applied in the same pass as Clarity and taking priority over it.",
-        "needsClarity": "Set Clarity to Light or Medium to use custom instructions; with None there's no AI pass.",
+        "title": "Your instructions",
+        "description": "Your own rules, one per line. Handy follows them while tidying, and they win over the level above.",
+        "needsClarity": "Pick Light or Medium above to use your instructions; None skips the AI entirely.",
         "everywhere": "Instructions for every app",
         "placeholder": "e.g. Use British spelling\nNever use exclamation marks",
         "perCategory": "Per category",
@@ -529,13 +581,13 @@
         "examples": {
           "personal": "e.g. Keep it short and friendly",
           "work": "e.g. Spell product names exactly as in my vocabulary",
-          "email": "e.g. Sign off with \"Best, Kaspar\"",
+          "email": "e.g. Sign off with \"Best, Sam\"",
           "other": "e.g. Keep technical terms and code exactly as spoken"
         }
       },
       "shortcut": {
-        "title": "Prompt Shortcut",
-        "description": "A separate shortcut that runs a prompt of your own instead of Clarity, for one-off transformations like translating or summarizing a dictation."
+        "title": "Dictate with a prompt",
+        "description": "A second shortcut that runs one of your own prompts instead of the usual tidy-up — handy for translating or summarising a dictation."
       },
       "local": {
         "title": "Local model",
@@ -552,13 +604,20 @@
           "description": "Keeps the model in memory (about 3–4 GB for the default model) so cleanup starts instantly.",
           "warning": "The model will load when you start dictating and unload after it's idle. Expect slower cleanup, especially on short dictations, but less memory in use."
         }
+      },
+      "screenContext": {
+        "title": "What’s on screen",
+        "label": "Use what's on screen",
+        "description": "Cleanup sees the conversation above the text box and your draft (read through Accessibility, no screenshots), so it spells names, files and code the way they appear. Password managers are never read.",
+        "onlineLabel": "Also with online providers",
+        "onlineDescription": "Send that screen text to your online cleanup provider too. Off: it's only used with the model on this Mac."
       }
     },
     "history": {
       "title": "History",
-      "openFolder": "Open Recordings Folder",
+      "openFolder": "Recordings folder",
       "loading": "Loading history...",
-      "empty": "No transcriptions yet. Start recording to build your history!",
+      "empty": "Nothing here yet. Hold your shortcut and start talking.",
       "copyToClipboard": "Copy transcription to clipboard",
       "copyError": "Failed to copy transcription to clipboard.",
       "save": "Save transcription",
@@ -570,29 +629,35 @@
       "transcribing": "Transcribing...",
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
       "retention": {
-        "textTitle": "Keep Dictation History",
+        "textTitle": "Keep dictation history",
         "textDescription": "How long dictated text stays on the History page. Starred entries are always kept.",
-        "audioTitle": "Keep Audio Recordings",
+        "audioTitle": "Keep audio recordings",
         "audioDescription": "Audio is only needed to replay or re-transcribe a dictation. Off by default; nothing is written to disk when set to Don't keep.",
         "days_one": "{{count}} day",
         "days_other": "{{count}} days",
         "forever": "Forever",
         "noAudio": "Don't keep",
         "noAudioForEntry": "No audio was kept for this dictation"
+      },
+      "showOriginal": "Show original transcript",
+      "hideOriginal": "Hide original transcript",
+      "description": "Everything you’ve dictated, newest first. Star the ones worth keeping.",
+      "keep": {
+        "title": "Keeping history"
       }
     },
     "debug": {
       "title": "Debug",
       "logDirectory": {
-        "title": "Log Directory",
+        "title": "Logs folder",
         "description": "Location where log files are stored"
       },
       "logLevel": {
-        "title": "Log Level",
+        "title": "Log level",
         "description": "Set the verbosity of logging"
       },
       "liveLogs": {
-        "title": "Live Logs",
+        "title": "Live logs",
         "description": "Stream application logs in real time to diagnose issues without opening the log file. Only logs emitted while this panel is open are shown; respects the Log Level setting above.",
         "live": "Live",
         "paused": "Paused",
@@ -603,39 +668,39 @@
         "empty": "Waiting for logs… Entries appear here as the app emits them."
       },
       "updateChecks": {
-        "label": "Check for Updates",
+        "label": "Check for updates",
         "description": "Automatically check for new versions of Handy",
         "lockedDescription": "Disabled by system configuration (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
-        "title": "Preview What's New",
+        "title": "Preview what's new",
         "description": "Open the latest bundled release note without marking it as seen",
         "button": "Preview",
         "noNotes": "No bundled release notes found",
         "error": "Failed to preview release notes"
       },
       "onboardingPreview": {
-        "title": "Preview Onboarding",
+        "title": "Preview onboarding",
         "description": "Preview onboarding screens without changing permissions, models, or completion state",
         "permissionsButton": "Permissions",
-        "modelsButton": "Model Selection",
-        "exitButton": "Exit Preview"
+        "modelsButton": "Model selection",
+        "exitButton": "Exit preview"
       },
       "soundTheme": {
-        "label": "Sound Theme",
+        "label": "Sound theme",
         "description": "Choose a sound theme for recording start and stop feedback"
       },
       "wordCorrectionThreshold": {
-        "title": "Word Correction Threshold",
+        "title": "Word correction threshold",
         "description": "Sensitivity for custom word corrections"
       },
       "historyLimit": {
-        "title": "History Limit",
+        "title": "History limit",
         "description": "Maximum number of history entries to keep",
         "entries": "entries"
       },
       "recordingRetention": {
-        "title": "Auto-Delete Recordings",
+        "title": "Auto-delete recordings",
         "description": "Automatically delete old recordings to save space",
         "never": "Never",
         "preserveLimit": "Keep latest {{count}}",
@@ -645,19 +710,19 @@
         "placeholder": "Select retention period..."
       },
       "clamshellMicrophone": {
-        "title": "Clamshell Microphone",
+        "title": "Clamshell microphone",
         "description": "Microphone to use when laptop lid is closed"
       },
       "postProcessingToggle": {
-        "label": "Post Processing",
-        "description": "Use an AI model to clean up dictations (see AI Cleanup below) and enable the post-processing shortcut with custom prompts."
+        "label": "Tidy up my words",
+        "description": "An AI model cleans up each dictation before it’s pasted. Also turns on the prompt shortcut below."
       },
       "muteWhileRecording": {
-        "label": "Mute While Recording",
+        "label": "Mute while recording",
         "description": "Mute system audio during recording"
       },
       "appendTrailingSpace": {
-        "label": "Append Trailing Space",
+        "label": "Append trailing space",
         "description": "Add a space after pasted transcription"
       },
       "paths": {
@@ -666,27 +731,27 @@
         "settings": "Settings:"
       },
       "pasteDelay": {
-        "title": "Paste Delay (Before)",
+        "title": "Paste delay (before)",
         "description": "Delay (in milliseconds) after copying text, before sending the paste keystroke. Increase if nothing gets pasted."
       },
       "pasteDelayAfter": {
-        "title": "Paste Delay (After)",
+        "title": "Paste delay (after)",
         "description": "Delay (in milliseconds) after the paste keystroke, before restoring your previous clipboard. Increase if your old clipboard content is being pasted instead of the transcription."
       },
       "holdThreshold": {
-        "title": "Hold Threshold",
+        "title": "Hold threshold",
         "description": "Auto mode only: how long (in milliseconds) the shortcut must be held before it counts as a hold instead of a tap. Lower if short holds keep leaving recording on; raise if deliberate taps get treated as holds."
       },
       "reliablePaste": {
-        "title": "Reliable Paste (Beta)",
+        "title": "Reliable paste (beta)",
         "description": "Restore the clipboard only after the target app actually reads the transcription, instead of after a fixed delay. Intended to fix old clipboard content being pasted under system load. Requires a clipboard paste method; macOS and Windows only."
       },
       "recordingBuffer": {
-        "title": "Extra Recording Buffer",
+        "title": "Extra recording buffer",
         "description": "Extra time (in milliseconds) to keep recording after you release the key, to capture trailing audio. 0 = no extra buffer."
       },
       "keyboardDiagnostic": {
-        "title": "Keyboard Diagnostic",
+        "title": "Keyboard diagnostic",
         "description": "Checks whether keyboard events reach Handy. Only event counts are recorded — never which keys you press.",
         "run": "Run 10s diagnostic",
         "running": "Listening… press your shortcut a few times (e.g. Option+Space)",
@@ -707,27 +772,27 @@
       }
     },
     "about": {
-      "title": "About",
+      "title": "About Handy",
       "version": {
         "title": "Version",
-        "description": "Current version of Handy"
+        "description": "The version you’re running"
       },
       "whatsNewUpdates": {
-        "label": "Show What's New",
+        "label": "Show what's new",
         "description": "Show release notes after Handy updates"
       },
       "appDataDirectory": {
-        "title": "App Data Directory",
-        "description": "Location where Handy stores its data"
+        "title": "Handy’s folder",
+        "description": "Where Handy keeps your history, recordings and rules"
       },
       "sourceCode": {
-        "title": "Source Code",
-        "description": "View source code and contribute",
+        "title": "Source code",
+        "description": "Read the code or report a problem",
         "button": "View on GitHub"
       },
       "supportDevelopment": {
-        "title": "Support Development",
-        "description": "Help us continue building Handy",
+        "title": "Support development",
+        "description": "Handy is free and open source. Chip in if it helps you.",
         "button": "Donate"
       },
       "acknowledgments": {
@@ -741,13 +806,13 @@
     },
     "voiceControl": {
       "toggle": {
-        "label": "Voice Control Mode",
-        "description": "Spoken commands in dictation: trigger phrases that press keys, \"new line\" / \"new paragraph\", spoken flags like \"dash dash force\", and switching apps by voice."
+        "label": "Listen for commands",
+        "description": "Turns on everything on this page: trigger phrases, “new line” and “new paragraph”, spoken flags like “dash dash force”, and switching apps."
       },
       "triggers": {
-        "groupTitle": "Trigger Phrases",
+        "groupTitle": "Trigger phrases",
         "groupDescription": "End a dictation with a trigger phrase to press a key after pasting. Say \"new line\" or \"new paragraph\" anywhere to break lines. Matching ignores capitalization and punctuation, and runs before cleanup.",
-        "title": "Trigger Phrases",
+        "title": "Trigger phrases",
         "description": "Phrases that, said at the very end of a dictation, are removed and replaced by a key press after the paste.",
         "placeholder": "press enter",
         "add": "Add",
@@ -756,13 +821,13 @@
         "item": "\"{{phrase}}\" → {{key}}"
       },
       "appSwitcher": {
-        "groupTitle": "App Switcher",
+        "groupTitle": "Switching apps",
         "groupDescription": "Say \"go to\", \"switch to\" or \"open\" followed by an app as the whole dictation to bring that app to the front instead of typing.",
-        "toggleLabel": "Switch Apps by Voice",
+        "toggleLabel": "Switch apps by voice",
         "toggleDescription": "When a dictation is only \"go to <app>\", open that app instead of pasting the text. Anything that doesn't match an app is pasted as usual.",
-        "anyInstalledLabel": "Match Any Installed App",
+        "anyInstalledLabel": "Match any installed app",
         "anyInstalledDescription": "Recognize apps in /Applications by name (\"go to Safari\"), in addition to the names you add below. Close mishearings like \"cloud\" for Claude are accepted.",
-        "aliasesTitle": "App Names",
+        "aliasesTitle": "App names",
         "aliasesDescription": "Your own spoken names for apps, e.g. \"chat\" → Claude. These are checked before installed app names.",
         "phrasePlaceholder": "chat",
         "appPlaceholder": "Choose app…",
@@ -778,7 +843,7 @@
         "toggleLabel": "Assistant",
         "toggleDescription": "Listen for the assistant's name in dictations.",
         "account": {
-          "title": "ChatGPT Account",
+          "title": "ChatGPT account",
           "description": "Uses your ChatGPT subscription. The sign-in is saved in a file only your Mac account can read.",
           "signedInAs": "Signed in as {{email}}",
           "signedIn": "Signed in",
@@ -807,35 +872,56 @@
           }
         },
         "computer": {
-          "groupTitle": "On Your Mac",
+          "groupTitle": "On your Mac",
           "groupDescription": "\"Felix, open Notes and start a packing list\" hands the task to Codex, which works your apps in the background through Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Handy.",
           "toggle": {
-            "label": "Act on Your Mac",
+            "label": "Act on your Mac",
             "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
           },
           "autoSend": {
-            "label": "Send the First Message",
+            "label": "Send the first message",
             "description": "Send the request as soon as the session opens. Off leaves it filled in for you to check and send."
           }
         },
         "notes": {
-          "title": "About You",
+          "title": "About you",
           "description": "Details the assistant can fill in when you ask, such as your name, email, phone number, address and how you sign off emails.",
           "placeholder": "Name: ...\nEmail: ...\nSigns off emails with: ..."
-        }
-      }
+        },
+        "pageTitle": "Felix"
+      },
+      "title": "Voice commands",
+      "description": "Say “new line”, end with “press enter”, or say “go to Safari”. Commands run before cleanup."
     },
     "vocabulary": {
+      "report": {
+        "title": "Report a mistake",
+        "description": "Describe it, like “it wrote cube control instead of kubectl”, or tell Felix while dictating. ChatGPT (your Felix sign-in) writes a fix and tests it, using your last few dictations; you see the change before it’s applied. Felix applies safe fixes right away.",
+        "placeholder": "It wrote … but I said …",
+        "fix": "Suggest a fix",
+        "working": "Thinking…",
+        "openFile": "Open rules file",
+        "saved": "Saved. It applies from your next dictation.",
+        "needsCode": "Rules alone can't fully fix this; it needs a change to Handy.",
+        "invalid": "The suggested file has a mistake: {{error}}",
+        "test": "{{mark}} “{{said}}” → “{{got}}”",
+        "expected": " (expected “{{expect}}”)",
+        "modelDecides": " · the local model decides",
+        "apply": "Apply",
+        "applyAnyway": "Apply anyway",
+        "discard": "Discard",
+        "undo": "Undo"
+      },
       "biasing": {
         "title": "Biasing",
         "description": "Stage 1: words the speech model should favor while transcribing. Technical terms are also snapped to your exact spelling afterwards."
       },
       "rules": {
-        "title": "Correction Rules",
+        "title": "Correction rules",
         "description": "Stage 2, on the raw transcript: fixed rewrites for anything the model still gets wrong. Runs before voice commands and AI cleanup."
       },
       "teach": {
-        "title": "Teach a Word",
+        "title": "Teach a word",
         "description": "Say a vocabulary word a few times, spoken and whispered. The clips are kept so the word can be re-checked automatically whenever you switch transcription models; mishearings are rewritten to the word.",
         "pickWord": "Choose a word…",
         "start": "Teach",
@@ -855,21 +941,51 @@
         "suggestRule": "Rewrite these mishearings to \"{{word}}\":",
         "variantItem": "\"{{variant}}\" → {{word}}",
         "commonWord": "common word: would also rewrite normal speech",
-        "addRule": "Save and Rewrite These",
-        "again": "Try Again",
+        "addRule": "Save and rewrite these",
+        "again": "Try again",
         "done": "Save",
         "saved": "Saved \"{{word}}\""
       },
       "taught": {
-        "title": "Taught Words",
-        "recheckAll": "Re-check on Current Model",
+        "title": "Taught words",
+        "recheckAll": "Re-check on current model",
         "clips_one": "{{count}} clip",
         "clips_other": "{{count}} clips",
         "delete": "Delete",
         "checking": "Checking on the current model…",
         "recognized": "Recognized correctly on the current model.",
         "rewrites": "On the current model, rewrite:"
-      }
+      },
+      "learned": {
+        "title": "What Handy has learned",
+        "description": "Words, corrections and sound-alikes from your reports. Words also help the speech model hear them. Remove anything that's wrong.",
+        "empty": "Nothing yet. Report a mistake above and the fix appears here.",
+        "words": "Words",
+        "corrections": "Corrections",
+        "correction": "{{from}} → {{to}}",
+        "soundalikes": "Names heard as ordinary words",
+        "soundalike": "{{heard}} → {{word}}, when the sentence means the name",
+        "inApps": "likely in {{apps}}",
+        "remove": "Remove {{label}}",
+        "fileError": "The rules file has a mistake, so the last good version is used: {{error}}"
+      },
+      "reports": {
+        "title": "Your reports",
+        "description": "Every mistake you reported, with the speech model that made it. The dictation's audio is kept on this Mac so other models can be tested on the same mistakes.",
+        "byVoice": "by voice",
+        "hasAudio": "Audio kept",
+        "transcribed": "Transcribed",
+        "pasted": "Pasted",
+        "delete": "Delete report and its audio",
+        "status": {
+          "applied": "Fixed",
+          "proposed": "Not applied",
+          "no change": "No change",
+          "failed": "Failed"
+        }
+      },
+      "title": "Vocabulary",
+      "description": "Tell Handy what it got wrong, in your own words. It writes a rule, tests it and remembers."
     },
     "style": {
       "categories": {
@@ -893,7 +1009,7 @@
         }
       },
       "apps": {
-        "addSite": "Add a Website",
+        "addSite": "Add a website",
         "addSiteDescription": "For a site not listed: its domain (subdomains match too). Websites are detected in Safari, Chrome, Arc, Brave, Edge and Vivaldi; macOS asks once per browser.",
         "invalidSite": "Enter a domain like example.com",
         "add": "Add",
@@ -906,16 +1022,79 @@
         "moreApps_one": "…and {{count}} other app. Search to find it.",
         "moreApps_other": "…and {{count}} other apps. Search to find them."
       },
-      "title": "Style by App",
-      "intro": "Apps and websites are sorted into categories automatically. Each category has its own formality, applied as the last step before pasting. Click an app to move it.",
+      "title": "Tone by app",
+      "intro": "Apps and websites are sorted into groups automatically, each with its own tone. Click an app to move it.",
       "search": "Find an app or website…"
+    },
+    "dictation": {
+      "title": "Dictation",
+      "description": "Hold a key, talk, let go. Here’s how Handy listens and where your words end up.",
+      "language": {
+        "title": "Language",
+        "description": "Options for {{model}}, the speech model you’re using."
+      },
+      "groups": {
+        "shortcuts": "Shortcuts",
+        "microphone": "Microphone",
+        "pasting": "Pasting",
+        "sounds": "Sounds",
+        "listening": "Listening",
+        "listeningDescription": "How Handy tells speech from silence. The defaults suit most people."
+      }
+    },
+    "writing": {
+      "title": "Writing",
+      "description": "How your words come out: how much Handy tidies them, what it should always do, and the tone for each app."
+    },
+    "app": {
+      "title": "Settings",
+      "description": "How Handy starts, looks and behaves on your Mac.",
+      "groups": {
+        "behaviour": "On your Mac",
+        "appearance": "Look and language",
+        "developers": "For developers",
+        "developersDescription": "For testing and improving Handy itself. You don’t need these for everyday use."
+      },
+      "benchmark": {
+        "label": "Benchmark recording",
+        "description": "Keeps every dictation’s unprocessed audio (before gain and silence skipping) with what was transcribed, what was pasted and your edits to it, so settings and models can be compared on your real speech later. Everything stays on this Mac. Uses about 2 MB a minute of speech.",
+        "saved": {
+          "title": "Saved so far",
+          "description_one": "{{count}} dictation, {{edited}} with your corrections · {{size}} MB",
+          "description_other": "{{count}} dictations, {{edited}} with your corrections · {{size}} MB",
+          "open": "Open folder"
+        },
+        "review": {
+          "title": "Ground truth",
+          "description": "What you actually said, for {{confirmed}} of {{count}} · {{guessed}} with an AI guess",
+          "show": "Review",
+          "hide": "Hide",
+          "intro": "Listen, then write what you actually said, word for word with every um and repeat. The AI guess only fixes obviously misheard words; check it before using it.",
+          "empty": "No recordings yet.",
+          "guessAll": "Guess all missing",
+          "guessing": "Guessing…",
+          "guessOne": "Guess",
+          "guessAgain": "Guess again",
+          "use": "Use this",
+          "more": "Show more",
+          "confirmed": "Confirmed",
+          "heard": "Heard",
+          "pasted": "Pasted",
+          "edited": "Your edit",
+          "guess": "AI guess",
+          "noSpeech": "No speech",
+          "unsure": "Unsure about: {{words}}.",
+          "truth": "What you said",
+          "truthPlaceholder": "Word for word, as spoken"
+        }
+      }
     }
   },
   "footer": {
     "checkingUpdates": "Checking for updates...",
     "updateAvailableShort": "Update available",
     "upToDate": "Up to date",
-    "updateCheckingDisabled": "Update Checking Disabled",
+    "updateCheckingDisabled": "Update checking disabled",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
     "preparing": "Preparing...",
@@ -944,28 +1123,28 @@
   },
   "errors": {
     "loadDirectory": "Error loading directory: {{error}}",
-    "micPermissionDeniedTitle": "Microphone Access Denied",
+    "micPermissionDeniedTitle": "Microphone access denied",
     "micPermissionDenied": {
       "generic": "Microphone access was denied by the operating system. Please grant microphone permission in your system settings.",
       "windows": "Enable microphone access in Settings → Privacy & security → Microphone (including desktop app access).",
       "macos": "Grant microphone access in System Settings → Privacy & Security → Microphone.",
       "linux": "Grant microphone access in your system's sound or privacy settings."
     },
-    "noInputDeviceTitle": "No Microphone Found",
+    "noInputDeviceTitle": "No microphone found",
     "noInputDevice": "No audio input device was detected. Please connect a microphone or headset and try again.",
     "recordingFailed": "Failed to start recording: {{error}}",
     "modelLoadFailed": "Failed to load model: {{model}}",
     "modelLoadFailedUnknown": "unknown model",
-    "pasteFailedTitle": "Failed to Paste Text",
+    "pasteFailedTitle": "Failed to paste text",
     "pasteFailed": "Text could not be pasted into the active application.",
-    "transcriptionFailedTitle": "Transcription Failed"
+    "transcriptionFailedTitle": "Transcription failed"
   },
   "appLanguage": {
-    "title": "Application Language",
-    "description": "Change the language of the Handy interface"
+    "title": "Language",
+    "description": "The language Handy’s own screens are shown in"
   },
   "theme": {
-    "title": "Application Theme",
+    "title": "Appearance",
     "description": "Choose whether Handy follows your system theme or stays light or dark",
     "options": {
       "system": "System",
@@ -994,5 +1173,141 @@
     "learnMore": "How to fix",
     "recorderBlocked": "Can't record shortcuts right now — macOS Secure Input is blocking key events. Resolve the Secure Input warning first.",
     "dismiss": "Dismiss"
+  },
+  "meetings": {
+    "heading": "Meetings",
+    "subheading": "Record calls and in-person meetings on your Mac. Nothing joins the call.",
+    "start": "Start recording",
+    "stop": "Stop",
+    "recordingFor": "Recording {{time}}",
+    "startedAt": "Started {{time}}",
+    "systemAudio": "System audio",
+    "noSystemAudio": "No system audio",
+    "interrupted": "Interrupted",
+    "showInFinder": "Show in Finder",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "empty": "No meetings yet. Start one above, from the menu bar, or with the meeting shortcut.",
+    "title": {
+      "call": "Call",
+      "inPerson": "In-person meeting"
+    },
+    "mode": {
+      "call": "Video call",
+      "callHint": "Your mic, plus the other people from your Mac's audio.",
+      "inPerson": "In person",
+      "inPersonHint": "Just the mic, for a meeting in the room."
+    },
+    "settings": {
+      "title": "Meeting settings",
+      "transcriber": {
+        "title": "Transcribe with",
+        "description": "This Mac uses your dictation model, and nothing leaves the Mac. OpenAI and Groq use the API key from Models → Accounts.",
+        "local": "This Mac",
+        "openai": "OpenAI",
+        "groq": "Groq"
+      },
+      "diarize": {
+        "label": "Tell speakers apart",
+        "description": "In person, label who's talking (Speaker 1, Speaker 2…). Downloads a 26.5 MB voice model the first time."
+      },
+      "autoGain": {
+        "label": "Raise quiet voices",
+        "description": "In person, bring people further from the mic up to a clear level before transcribing. Doesn't change dictation."
+      },
+      "boost": {
+        "label": "Meeting mic boost",
+        "description": "Extra fixed gain for in-person recordings, before levelling. Doesn't change dictation."
+      },
+      "llm": {
+        "title": "Summarise with",
+        "description": "ChatGPT uses your Felix sign-in. Cleanup model uses the provider and model chosen for dictation cleanup.",
+        "chatgpt": "ChatGPT",
+        "cleanup": "Cleanup model"
+      },
+      "cleanup": {
+        "label": "Tidy the transcript",
+        "description": "Fix punctuation, false starts and misheard words before summarising. The original is kept."
+      },
+      "prompt": {
+        "title": "What to put in the notes",
+        "description": "Leave empty for the default, shown faded. Your notes and the transcript are always included."
+      }
+    },
+    "errors": {
+      "start": "Couldn't start recording: {{error}}",
+      "stop": "Couldn't stop recording: {{error}}"
+    },
+    "back": "All meetings",
+    "titlePlaceholder": "Untitled meeting",
+    "open": "Open",
+    "notes": {
+      "title": "Your notes",
+      "placeholder": "Write notes as you go. They'll be combined with the transcript when the meeting is summarised.",
+      "saved": "Saved",
+      "saving": "Saving…",
+      "saveFailed": "Couldn't save your notes: {{error}}"
+    },
+    "transcript": {
+      "title": "Transcript",
+      "queued": "Waiting to transcribe…",
+      "transcribing": "Transcribing… {{done}} of {{total}}",
+      "preparing": "Finding the speech…",
+      "failed": "Transcription failed: {{error}}",
+      "retry": "Try again",
+      "start": "Transcribe",
+      "none": "Not transcribed yet.",
+      "empty": "No speech was found in this recording.",
+      "afterRecording": "The transcript appears here after you stop recording.",
+      "playFrom": "Play from {{time}}",
+      "identifying": "Telling voices apart…",
+      "downloadingModel": "Downloading the voice model… {{percent}}%",
+      "again": "Transcribe again",
+      "againConfirm": "Replace the transcript?",
+      "againYes": "Replace",
+      "cancel": "Cancel",
+      "showOriginal": "Show as transcribed",
+      "showCleaned": "Show tidied",
+      "copy": "Copy",
+      "copied": "Transcript copied"
+    },
+    "status": {
+      "queued": "Queued",
+      "transcribing": "Transcribing {{percent}}%",
+      "failed": "Transcription failed",
+      "identifying": "Telling voices apart",
+      "cleaningUp": "Tidying {{percent}}%",
+      "summarizing": "Writing notes",
+      "summaryFailed": "Notes failed"
+    },
+    "speaker": {
+      "me": "Me",
+      "them": "Them",
+      "numbered": "Speaker {{n}}",
+      "rename": "Rename this speaker everywhere"
+    },
+    "player": {
+      "play": "Play recording",
+      "pause": "Pause"
+    },
+    "summary": {
+      "title": "Notes",
+      "queued": "Waiting to write the notes…",
+      "cleaningUp": "Tidying the transcript… {{done}} of {{total}}",
+      "summarizing": "Writing the notes…",
+      "summarizingPart": "Writing the notes… part {{done}} of {{total}}",
+      "failed": "Couldn't write the notes: {{error}}",
+      "retry": "Try again",
+      "none": "No notes yet.",
+      "generate": "Write notes",
+      "regenerate": "Write again",
+      "copyMarkdown": "Copy as Markdown",
+      "copied": "Copied as Markdown",
+      "keyPoints": "Key points",
+      "decisions": "Decisions",
+      "actionItems": "Action items",
+      "by": "Written by {{model}}",
+      "afterTranscript": "Notes are written once the transcript is done."
+    }
   }
 }

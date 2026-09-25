@@ -14,7 +14,7 @@ use cpal::{
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler, GainConfig, InputGain},
+    audio::{AudioVisualiser, FrameResampler, GainConfig, InputGain, RawCapture},
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -94,6 +94,8 @@ pub struct AudioRecorder {
     audio_cb: Option<AudioFrameCallback>,
     /// Pre-VAD input gain (fixed + automatic). None = pass audio through.
     gain: Option<Arc<GainConfig>>,
+    /// Copy of the audio before gain and VAD, when benchmarking.
+    raw_capture: Option<Arc<RawCapture>>,
     /// Which input channel to use. None = average all (original behavior).
     selected_channel: Option<usize>,
     /// Preferred stream config cached per device name. The two HAL property
@@ -117,6 +119,7 @@ impl AudioRecorder {
             level_cb: None,
             audio_cb: None,
             gain: None,
+            raw_capture: None,
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
@@ -171,6 +174,12 @@ impl AudioRecorder {
         self
     }
 
+    /// Keep a copy of each recording before gain and VAD while `raw` is on.
+    pub fn with_raw_capture(mut self, raw: Arc<RawCapture>) -> Self {
+        self.raw_capture = Some(raw);
+        self
+    }
+
     pub fn with_selected_channel(mut self, channel: Option<u16>) -> Self {
         self.set_selected_channel(channel);
         self
@@ -209,6 +218,7 @@ impl AudioRecorder {
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
         let gain = self.gain.clone();
+        let raw_capture = self.raw_capture.clone();
         let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
         let stream_error = Arc::clone(&self.stream_error);
@@ -333,7 +343,7 @@ impl AudioRecorder {
                     // Timestamp for the play()-returned -> first-samples gap the
                     // init handshake can't see (hardware dependent).
                     let stream_running_at = Instant::now();
-                    let processor = CaptureProcessor::new(
+                    let mut processor = CaptureProcessor::new(
                         sample_rate,
                         vad,
                         level_cb,
@@ -341,6 +351,7 @@ impl AudioRecorder {
                         gain,
                         stream_running_at,
                     );
+                    processor.raw_capture = raw_capture;
                     run_consumer(
                         processor,
                         sample_consumer,
@@ -383,6 +394,13 @@ impl AudioRecorder {
                     "Failed to initialize microphone worker: {recv_error}"
                 ))))
             }
+        }
+    }
+
+    /// Speech threshold for the next recordings (`None`: the detector's own).
+    pub fn set_vad_threshold(&self, threshold: Option<f32>) {
+        if let Some(cfg) = &self.vad {
+            cfg.detector.lock().unwrap().set_threshold(threshold);
         }
     }
 
@@ -565,7 +583,7 @@ impl AudioRecorder {
         Ok(Self::get_preferred_config(device)?.channels())
     }
 
-    fn get_preferred_config(
+    pub(crate) fn get_preferred_config(
         device: &cpal::Device,
     ) -> Result<cpal::SupportedStreamConfig, Box<dyn std::error::Error>> {
         // Use the device's native/default sample rate and let the FrameResampler
@@ -725,6 +743,7 @@ struct CaptureProcessor {
     level_cb: Option<LevelCallback>,
     audio_cb: Option<AudioFrameCallback>,
     gain: Option<InputGain>,
+    raw_capture: Option<Arc<RawCapture>>,
     stream_running_at: Instant,
     visualizer: AudioVisualiser,
     /// Gain-scaled copy of the raw chunk fed to the level meter.
@@ -782,6 +801,7 @@ impl CaptureProcessor {
             level_cb,
             audio_cb,
             gain: gain.map(InputGain::new),
+            raw_capture: None,
             stream_running_at,
             visualizer,
             visual_scratch: Vec::new(),
@@ -805,6 +825,14 @@ impl CaptureProcessor {
         self.overrun_warning_logged = false;
         self.vad_policy = policy;
         self.processed_samples.clear();
+        if let Some(raw) = &self.raw_capture {
+            raw.begin(
+                self.gain
+                    .as_ref()
+                    .map(|g| g.config().learned())
+                    .unwrap_or_default(),
+            );
+        }
         self.visualizer.reset();
         self.frame_resampler.reset();
         if policy != VadPolicy::Disabled {
@@ -865,7 +893,11 @@ impl CaptureProcessor {
         }
 
         let vad_policy = self.vad_policy;
+        let raw_capture = &self.raw_capture;
         self.frame_resampler.push(raw, |frame: &[f32]| {
+            if let Some(tap) = raw_capture {
+                tap.push(frame);
+            }
             handle_frame(
                 apply_gain(&mut self.gain, frame),
                 vad_policy,

@@ -1,6 +1,6 @@
 import os
 HERE = os.path.dirname(os.path.abspath(__file__))
-VOCAB = "Kaspar, Priya, Claude, npm, TypeScript"
+VOCAB = "Sam, Priya, Claude, npm, TypeScript"
 
 EMAIL = """
 This text will be sent as an email. If it starts with a greeting (hi, hello, hey, dear + name), put the greeting on its own line, then a blank line. If it ends with a sign-off (thanks, best, cheers, kind regards + optional name), put the sign-off in its own final paragraph, with the name on the line below it. Never add a greeting or sign-off that was not spoken."""

@@ -153,12 +153,63 @@ fn level_prompt_with_instructions(settings: &AppSettings, level: CleanupLevel) -
 /// the transcript arrives (~120 ms of its ~500 ms time to first token). A
 /// mismatch (e.g. settings changed mid-dictation) just falls back to a cold
 /// session.
-fn prewarm_cleanup(settings: &AppSettings) {
+/// Whether this cleanup provider gets the text on screen: the model on this
+/// Mac always (when the setting is on), online providers only if allowed.
+/// Not Apple Intelligence, whose context is too small.
+fn screen_context_for(settings: &AppSettings, provider_id: &str) -> bool {
+    settings.screen_context
+        && settings.post_process_enabled
+        && provider_id != APPLE_INTELLIGENCE_PROVIDER_ID
+        && (provider_id == crate::local_llm::LOCAL_PROVIDER_ID || settings.screen_context_online)
+}
+
+/// Start the local cleanup model when Handy starts, with its instructions
+/// already processed, so the first dictation has no cold start.
+pub(crate) fn warm_up_at_launch(app: &AppHandle) {
+    let settings = crate::rules::with_rules(get_settings(app));
+    if !(uses_level_cleanup(&settings)
+        && settings.post_process_provider_id == crate::local_llm::LOCAL_PROVIDER_ID)
+    {
+        return;
+    }
+    let Some(prompt) = level_prompt_with_instructions(&settings, settings.cleanup_level) else {
+        return;
+    };
+    let model = settings
+        .post_process_models
+        .get(crate::local_llm::LOCAL_PROVIDER_ID)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        return;
+    }
+    info!("Starting the local cleanup model ({model}) at launch");
+    crate::local_llm::prewarm(
+        model,
+        crate::cleanup::add_context(&build_system_prompt(&prompt), &settings, None),
+        crate::cleanup::CLEANUP_USER_PREFIX.to_string(),
+        settings.local_model_keep_loaded,
+    );
+}
+
+fn prewarm_cleanup(settings: &AppSettings, screen_generation: u64) {
+    let with_screen = screen_context_for(settings, &settings.post_process_provider_id);
     if uses_level_cleanup(settings)
         && settings.post_process_provider_id == crate::local_llm::LOCAL_PROVIDER_ID
     {
         let settings = settings.clone();
         std::thread::spawn(move || {
+            // Read the screen first: the local model then processes it
+            // along with the instructions while the user speaks.
+            let screen = if with_screen {
+                match crate::screen_context::read_for(screen_generation) {
+                    Some(block) => block,
+                    // Cleanup already started without it.
+                    None => return,
+                }
+            } else {
+                None
+            };
             if crate::app_context::current()
                 .bundle_id
                 .is_some_and(|b| crate::app_context::is_browser(&b))
@@ -176,12 +227,20 @@ fn prewarm_cleanup(settings: &AppSettings) {
                 .unwrap_or_default();
             crate::local_llm::prewarm(
                 model,
-                crate::cleanup::add_context(&build_system_prompt(&prompt), &settings, None),
+                crate::cleanup::with_screen_context(
+                    crate::cleanup::add_context(&build_system_prompt(&prompt), &settings, None),
+                    screen.as_deref(),
+                ),
                 crate::cleanup::CLEANUP_USER_PREFIX.to_string(),
                 settings.local_model_keep_loaded,
             );
         });
         return;
+    }
+    if with_screen {
+        std::thread::spawn(move || {
+            crate::screen_context::read_for(screen_generation);
+        });
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -265,6 +324,85 @@ async fn post_process_transcription(
     }
 }
 
+/// Dictation goes to a cloud provider instead of the model on this Mac.
+pub(crate) fn uses_cloud_transcription(settings: &AppSettings) -> bool {
+    !matches!(settings.transcription_provider.as_str(), "" | "local")
+}
+
+/// Transcribe a dictation where the settings say: with a cloud provider,
+/// falling back to the model on this Mac if that fails; or locally. Also
+/// returns which model did it ("Groq/whisper-large-v3-turbo", or the local
+/// model's id).
+pub(crate) async fn transcribe_dictation(
+    app: &AppHandle,
+    tm: &TranscriptionManager,
+    samples: Vec<f32>,
+) -> (anyhow::Result<String>, Option<String>) {
+    let settings = crate::rules::with_rules(get_settings(app));
+    match crate::meetings::remote::Remote::for_dictation(&settings) {
+        Ok(None) => {}
+        Ok(Some(remote)) => {
+            let started = Instant::now();
+            match remote.transcribe(&samples).await {
+                Ok(text) => {
+                    info!(
+                        "{} transcribed {:.1}s of audio in {:?}",
+                        remote.name,
+                        samples.len() as f64 / 16_000.0,
+                        started.elapsed()
+                    );
+                    let label = format!("{}/{}", remote.name, remote.model);
+                    return (Ok(tm.finish_cloud_text(text)), Some(label));
+                }
+                Err(e) => warn!("{e}; transcribing on this Mac instead"),
+            }
+        }
+        Err(e) => warn!("Cloud transcription unavailable ({e}); transcribing on this Mac"),
+    }
+    tm.initiate_model_load();
+    let result = tm.transcribe(samples);
+    (result, tm.get_current_model())
+}
+
+/// ChatGPT's fastest model; cleanup needs no reasoning.
+const CHATGPT_CLEANUP_MODEL: &str = "gpt-6-luna";
+
+/// Cleanup through the ChatGPT sign-in (the user's plan).
+async fn chatgpt_cleanup(model: &str, system_prompt: &str, user_content: &str) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        if crate::chatgpt::signed_in_as().is_none() {
+            error!("ChatGPT cleanup selected but not signed in");
+            return None;
+        }
+        let started = Instant::now();
+        match crate::chatgpt::complete(crate::chatgpt::Request {
+            model,
+            effort: "none",
+            instructions: system_prompt,
+            input: user_content,
+            schema: None,
+        })
+        .await
+        {
+            Ok(result) if !result.trim().is_empty() => {
+                debug!("ChatGPT cleanup took {:?}", started.elapsed());
+                Some(strip_invisible_chars(strip_think_block(&result)))
+            }
+            Ok(_) => None,
+            Err(e) => {
+                error!("ChatGPT cleanup failed: {e}");
+                None
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (model, system_prompt, user_content);
+        None
+    }
+}
+
 async fn run_post_process_llm(
     settings: &AppSettings,
     transcription: &str,
@@ -275,6 +413,8 @@ async fn run_post_process_llm(
         return None;
     }
 
+    // Taken even when unused, so a late read can't leak into the next one.
+    let screen = crate::screen_context::take_for_cleanup();
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -282,12 +422,16 @@ async fn run_post_process_llm(
             return None;
         }
     };
+    let screen = screen.filter(|_| screen_context_for(settings, &provider.id));
 
-    let model = settings
+    let mut model = settings
         .post_process_models
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
+    if provider.id == crate::settings::CHATGPT_PROVIDER_ID && model.trim().is_empty() {
+        model = CHATGPT_CLEANUP_MODEL.to_string();
+    }
 
     if model.trim().is_empty() {
         debug!(
@@ -357,10 +501,13 @@ async fn run_post_process_llm(
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = crate::cleanup::add_context(
-            &build_system_prompt(&prompt),
-            settings,
-            app_name.as_deref(),
+        let system_prompt = crate::cleanup::with_screen_context(
+            crate::cleanup::add_context(
+                &build_system_prompt(&prompt),
+                settings,
+                app_name.as_deref(),
+            ),
+            screen.as_deref(),
         );
         let user_content = if prompt.contains("${output}") {
             transcription.to_string()
@@ -392,6 +539,10 @@ async fn run_post_process_llm(
                     None
                 }
             };
+        }
+
+        if provider.id == crate::settings::CHATGPT_PROVIDER_ID {
+            return chatgpt_cleanup(&model, &system_prompt, &user_content).await;
         }
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -508,7 +659,10 @@ async fn run_post_process_llm(
     // Legacy mode: Replace ${output} variable in the prompt with the actual text.
     // Prompts written as pure system prompts (no placeholder) get the wrapped
     // transcript appended instead.
-    let prompt = crate::cleanup::add_context(&prompt, settings, app_name.as_deref());
+    let prompt = crate::cleanup::with_screen_context(
+        crate::cleanup::add_context(&prompt, settings, app_name.as_deref()),
+        screen.as_deref(),
+    );
     let processed_prompt = if prompt.contains("${output}") {
         prompt.replace("${output}", transcription)
     } else {
@@ -701,12 +855,61 @@ fn run_computer_task(app: &AppHandle, task: String) {
     });
 }
 
+/// A mistake reported to the assistant by voice: have the rules fixed, and
+/// apply the fix straight away if it's safe (tests pass, nothing else
+/// needed); otherwise say why and leave it for the Vocabulary page.
+fn fix_reported_mistake(app: &AppHandle, report: String) {
+    let app = app.clone();
+    let name = get_settings(&app).assistant_name;
+    crate::overlay::show_result_overlay_titled(
+        &app,
+        report.clone(),
+        Some(format!("{name} is fixing the rules")),
+    );
+    tauri::async_runtime::spawn(async move {
+        let history = app.state::<Arc<HistoryManager>>().inner().clone();
+        let recent = crate::commands::rules::recent_dictations(&history).await;
+        // The app's own settings, without the rules file: the proposal is
+        // tested against the new file.
+        let settings = get_settings(&app);
+        let (title, text) = match crate::rules::propose(&settings, &report, &recent, "voice").await
+        {
+            Ok(p) if crate::rules::safe_to_apply(&p) => match crate::rules::save(&p.rules) {
+                Ok(()) => {
+                    crate::rules::log_applied(Some(&p.id), "applied");
+                    (format!("{name} fixed it"), p.explanation)
+                }
+                Err(e) => (format!("{name} couldn't save the fix"), e),
+            },
+            Ok(p) => {
+                let why = if p.needs_code_change {
+                    "Rules alone can't fix this; Handy itself needs a change."
+                } else if p.error.is_some() || p.tests.iter().any(|t| !t.passed) {
+                    "The suggested rules didn't pass their tests, so nothing was changed."
+                } else {
+                    "Nothing to change."
+                };
+                (
+                    format!("{name} didn't change anything"),
+                    format!("{}\n\n{why}", p.explanation),
+                )
+            }
+            Err(e) => {
+                error!("Mistake report failed: {e}");
+                (format!("{name} couldn't fix it"), e)
+            }
+        };
+        let _ = app.emit("rules-changed", ());
+        crate::overlay::show_result_overlay_titled(&app, text, Some(title));
+    });
+}
+
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
 ) -> ProcessedTranscription {
-    let settings = get_settings(app);
+    let settings = crate::rules::with_rules(get_settings(app));
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
@@ -760,6 +963,25 @@ pub(crate) async fn process_transcription_output(
                     started.elapsed()
                 );
                 start_claude_session(app, project, text.clone(), settings.agent_auto_send);
+                ProcessedTranscription {
+                    final_text: String::new(),
+                    post_processed_text: Some(text),
+                    post_process_prompt: Some(label),
+                    submit_key: None,
+                    switch_to_app: None,
+                    placement: None,
+                    assistant_error: None,
+                }
+            }
+            Ok(crate::assistant::Edit {
+                text,
+                placement: crate::assistant::Placement::ReportMistake,
+            }) => {
+                info!(
+                    "{label} takes a mistake report after {:?}",
+                    started.elapsed()
+                );
+                fix_reported_mistake(app, text.clone());
                 ProcessedTranscription {
                     final_text: String::new(),
                     post_processed_text: Some(text),
@@ -872,7 +1094,9 @@ pub(crate) async fn process_transcription_output(
             write_settings(app, updated);
         }
     }
-    if post_processed_text.is_none() && final_text != transcription {
+    // History keeps what was actually pasted (after cleanup and styling)
+    // next to the raw transcript.
+    if final_text != transcription {
         post_processed_text = Some(final_text.clone());
     }
 
@@ -896,9 +1120,12 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // Load ASR model and VAD model in parallel
+        // Load ASR model and VAD model in parallel (no local speech model
+        // when dictation is transcribed in the cloud).
         let kickoff_started = Instant::now();
-        tm.initiate_model_load();
+        if !uses_cloud_transcription(&get_settings(app)) {
+            tm.initiate_model_load();
+        }
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -909,7 +1136,11 @@ impl ShortcutAction for TranscribeAction {
 
         crate::app_context::capture();
         crate::dictation_log::capture_at_start();
-        prewarm_cleanup(&get_settings(app));
+        let screen_generation = crate::screen_context::begin();
+        prewarm_cleanup(
+            &crate::rules::with_rules(get_settings(app)),
+            screen_generation,
+        );
 
         let binding_id = binding_id.to_string();
         let tray_started = Instant::now();
@@ -928,10 +1159,11 @@ impl ShortcutAction for TranscribeAction {
         // Use the app-facing model capability as the single pre-recording source
         // for live streaming decisions. Unknown support is represented as false
         // until the model registry is updated by discovery or runtime load.
-        let model_supports_streaming = selected_model_info
-            .as_ref()
-            .map(|m| m.supports_streaming)
-            .unwrap_or(false);
+        let model_supports_streaming = !uses_cloud_transcription(&settings)
+            && selected_model_info
+                .as_ref()
+                .map(|m| m.supports_streaming)
+                .unwrap_or(false);
         let vad_policy = if !settings.vad_enabled {
             VadPolicy::Disabled
         } else if model_supports_streaming {
@@ -1120,6 +1352,10 @@ impl ShortcutAction for TranscribeAction {
                     return;
                 }
 
+                // Benchmark recording (dev setting): keep the audio before
+                // gain and VAD, even when VAD kept nothing.
+                let bench_id = crate::benchmark::begin(&ah, &rm, samples.len());
+
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
                     // Tear down any streaming worker so its channel doesn't leak
@@ -1133,6 +1369,10 @@ impl ShortcutAction for TranscribeAction {
                     let keep_audio = get_settings(&ah).recording_retention_days > 0;
                     let sample_count = samples.len();
                     let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
+                    // Held in memory for a while, so a mistake report can
+                    // keep the audio even when history doesn't.
+                    crate::rules::keep_recent_audio(&file_name, &samples);
+                    let mut transcription_model = tm.get_current_model();
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
                     let samples_for_wav = if keep_audio {
@@ -1160,7 +1400,11 @@ impl ShortcutAction for TranscribeAction {
                         // surfaced instead — the worker may still hold the engine,
                         // so a batch fallback would contend with it.
                         Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
-                        Ok(_) => tm.transcribe(samples),
+                        Ok(_) => {
+                            let (result, model) = transcribe_dictation(&ah, &tm, samples).await;
+                            transcription_model = model;
+                            result
+                        }
                         Err(err) => Err(err),
                     };
 
@@ -1194,6 +1438,19 @@ impl ShortcutAction for TranscribeAction {
                         utils::hide_recording_overlay(&ah);
                         set_tray_state(&ah, TrayIconState::Idle);
                         return;
+                    }
+
+                    if let Some(id) = &bench_id {
+                        let model = transcription_model.clone();
+                        let (text, error) = match &transcription_result {
+                            Ok(text) => (Some(text.clone()), None),
+                            Err(e) => (None, Some(e.to_string())),
+                        };
+                        crate::benchmark::update(&ah, id, move |r| {
+                            r.model = model;
+                            r.transcript = text;
+                            r.error = error;
+                        });
                     }
 
                     match transcription_result {
@@ -1238,6 +1495,7 @@ impl ShortcutAction for TranscribeAction {
                                 post_process,
                                 processed.post_processed_text.clone(),
                                 processed.post_process_prompt.clone(),
+                                transcription_model.clone(),
                             ) {
                                 error!("Failed to save history entry: {}", err);
                             }
@@ -1263,6 +1521,7 @@ impl ShortcutAction for TranscribeAction {
                                 let placement = processed.placement;
                                 let assistant_error = processed.assistant_error;
                                 let rm_for_paste = Arc::clone(&rm);
+                                let bench_id = bench_id.clone();
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
@@ -1273,7 +1532,8 @@ impl ShortcutAction for TranscribeAction {
 
                                     // Fit the text to what's around the cursor and
                                     // remember the field for the dictation log.
-                                    let settings = get_settings(&ah_clone);
+                                    let settings =
+                                        crate::rules::with_rules(get_settings(&ah_clone));
                                     // The assistant couldn't help: show the
                                     // dictation and why, rather than pasting a
                                     // request as if it were text.
@@ -1308,6 +1568,15 @@ impl ShortcutAction for TranscribeAction {
                                         placement,
                                         None | Some(crate::assistant::Placement::Insert)
                                     );
+                                    // In Claude, Codex or WhatsApp with no text box
+                                    // focused, put the cursor in the thread's
+                                    // message box (not a terminal) first.
+                                    if !final_text.is_empty()
+                                        && inserting
+                                        && settings.focus_message_box
+                                    {
+                                        crate::screen_context::focus_message_box();
+                                    }
                                     // Nothing focused that takes text: show it
                                     // instead of pasting into the void.
                                     if !final_text.is_empty()
@@ -1339,6 +1608,22 @@ impl ShortcutAction for TranscribeAction {
                                                 "Text pasted successfully in {:?}",
                                                 paste_time.elapsed()
                                             );
+                                            if let Some(id) = bench_id {
+                                                let text = pasted_text.clone();
+                                                crate::benchmark::update(
+                                                    &ah_clone,
+                                                    &id,
+                                                    move |r| r.pasted = Some(text),
+                                                );
+                                                if !pasted_text.is_empty() {
+                                                    crate::benchmark::watch_edits(
+                                                        &ah_clone,
+                                                        id,
+                                                        pasted_text.clone(),
+                                                        before.clone(),
+                                                    );
+                                                }
+                                            }
                                             if !pasted_text.is_empty() {
                                                 crate::dictation_log::record_after_paste(
                                                     pasted_text,
@@ -1384,6 +1669,7 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     None,
                                     None,
+                                    transcription_model.clone(),
                                 ) {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
@@ -1445,6 +1731,17 @@ impl ShortcutAction for TestAction {
     }
 }
 
+/// Starts or stops a meeting recording (on press; release does nothing).
+struct MeetingAction;
+
+impl ShortcutAction for MeetingAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::meetings::manager::toggle_in_background(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Static Action Map
 pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::new(|| {
     let mut map = HashMap::new();
@@ -1461,6 +1758,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "meeting".to_string(),
+        Arc::new(MeetingAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

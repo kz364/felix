@@ -83,6 +83,10 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
 
 /// Register a shortcut using the appropriate implementation
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    // An unassigned shortcut (no default key) has nothing to register.
+    if binding.current_binding.trim().is_empty() {
+        return Ok(());
+    }
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding),
@@ -92,6 +96,9 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
 
 /// Unregister a shortcut using the appropriate implementation
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    if binding.current_binding.trim().is_empty() {
+        return Ok(());
+    }
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding),
@@ -117,8 +124,13 @@ pub fn change_binding(
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
-    if binding.trim().is_empty() {
+    // Reject empty bindings, except for shortcuts that have no default key
+    // (resetting one clears it).
+    let default_is_empty = settings::get_default_settings()
+        .bindings
+        .get(&id)
+        .is_some_and(|b| b.default_binding.is_empty());
+    if binding.trim().is_empty() && !default_is_empty {
         return Err("Binding cannot be empty".to_string());
     }
 
@@ -174,8 +186,12 @@ pub fn change_binding(
     }
 
     // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
+    let validation = if binding.trim().is_empty() {
+        Ok(())
+    } else {
+        validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+    };
+    if let Err(e) = validation {
         warn!("change_binding validation error: {}", e);
         restore_registration(&app, &binding_to_modify);
         return Err(e);
@@ -1324,6 +1340,17 @@ pub fn change_auto_gain_setting(app: AppHandle, enabled: bool) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_benchmark_recording_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.benchmark_recording = enabled;
+    app.state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+        .set_benchmark_recording(enabled);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_voice_control_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.voice_control_enabled = enabled;
@@ -1860,5 +1887,65 @@ pub fn change_assistant_notes_setting(app: AppHandle, notes: String) -> Result<(
     let mut settings = settings::get_settings(&app);
     settings.assistant_notes = notes;
     settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_screen_context_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.screen_context = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_screen_context_online_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.screen_context_online = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_focus_message_box_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.focus_message_box = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Where dictation is transcribed: "local" or a cloud provider ("openai",
+/// "groq"). Switching to the cloud frees the local model's memory.
+#[tauri::command]
+#[specta::specta]
+pub fn change_transcription_provider_setting(
+    app: AppHandle,
+    provider: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let cloud = crate::meetings::remote::PROVIDERS
+        .iter()
+        .any(|(id, _, _)| *id == provider);
+    if provider != "local" && !cloud {
+        return Err(format!("Unknown transcription provider: {provider}"));
+    }
+    let mut settings = settings::get_settings(&app);
+    if cloud {
+        // Fails early with a clear message when there's no key.
+        crate::meetings::remote::Remote::for_provider(&settings, &provider, true)?;
+    }
+    settings.transcription_provider = provider;
+    settings::write_settings(&app, settings);
+    let tm = app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>();
+    if cloud {
+        if let Err(e) = tm.unload_model() {
+            log::warn!("Couldn't unload the local speech model: {e}");
+        }
+    } else {
+        tm.initiate_model_load();
+    }
     Ok(())
 }

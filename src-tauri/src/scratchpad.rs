@@ -7,7 +7,7 @@
 //!
 //! 1. Canonical spelling of technical vocabulary ("G L M five point three" →
 //!    "GLM-5.3"), then the user's correction rules ("cube cuddle" → "kubectl").
-//!    Words spelled letter by letter are joined ("K A S P A R" → "Kaspar").
+//!    Words spelled letter by letter are joined ("R I V E R A" → "Rivera").
 //! 2. End-of-dictation voice triggers ("… press enter"), which are stripped
 //!    from the text and turned into a key press after the paste.
 //! 3. Spoken line breaks ("new line", "new paragraph").
@@ -375,8 +375,8 @@ mod tests {
     fn regex_rules_support_captures_and_ignore_case() {
         let replacements = vec![
             TextReplacement {
-                from: r"/\bcasp[ae]r\b/".into(),
-                to: "Kaspar".into(),
+                from: r"/\bcarl[ae]\b/".into(),
+                to: "Karla".into(),
             },
             TextReplacement {
                 from: r"/\b(\d+) percent\b/".into(),
@@ -384,8 +384,8 @@ mod tests {
             },
         ];
         assert_eq!(
-            apply_text_replacements("Ask CASPER about the 20 percent drop.", &replacements),
-            "Ask Kaspar about the 20% drop."
+            apply_text_replacements("Ask CARLE about the 20 percent drop.", &replacements),
+            "Ask Karla about the 20% drop."
         );
     }
 
