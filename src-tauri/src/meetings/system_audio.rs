@@ -207,7 +207,7 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
     );
     let tap_uuid = NSUUID::new();
     description.setUUID(&tap_uuid);
-    description.setName(&NSString::from_str("Handy meeting"));
+    description.setName(&NSString::from_str("Felix meeting"));
     description.setPrivate(true);
     description.setMuteBehavior(CATapMuteBehavior::Unmuted);
 
@@ -259,7 +259,7 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
                 &*key(kAudioAggregateDeviceTapListKey),
             ],
             &[
-                Retained::into_super(NSString::from_str("Handy meeting")),
+                Retained::into_super(NSString::from_str("Felix meeting")),
                 Retained::into_super(aggregate_uid),
                 Retained::into_super(output_uid),
                 yes(),
@@ -296,7 +296,7 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
         return Err(format!("Couldn't start the tap ({status})"));
     }
     log::info!(
-        "System audio tap started: {} Hz, {} channel(s), excluding Handy: {}",
+        "System audio tap started: {} Hz, {} channel(s), excluding Felix: {}",
         rate,
         format.mChannelsPerFrame,
         own != kAudioObjectUnknown

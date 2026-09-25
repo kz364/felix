@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Lightbulb } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
@@ -9,11 +10,40 @@ import { Dropdown } from "../../ui/Dropdown";
 import { Input } from "../../ui/Input";
 import { Textarea } from "../../ui/Textarea";
 import { Button } from "../../ui/Button";
+import { Tooltip } from "../../ui/Tooltip";
 
 interface AssistantSettingsProps {
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;
 }
+
+/** A hover tip beside the name field with names that rarely misfire. */
+const NameTips: React.FC = () => {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label={t("settings.voiceControl.assistant.name.tipsLabel")}
+      className="p-1 text-text/45 hover:text-accent transition-colors duration-150"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <Lightbulb className="w-4 h-4" />
+      {open && (
+        <Tooltip targetRef={ref} position="top">
+          <p className="text-sm leading-relaxed">
+            {t("settings.voiceControl.assistant.name.tips")}
+          </p>
+        </Tooltip>
+      )}
+    </button>
+  );
+};
 
 const MODELS = [
   { value: "gpt-6-astra", label: "GPT-6 Astra" },
@@ -147,15 +177,18 @@ export const AssistantSettings: React.FC<AssistantSettingsProps> = React.memo(
               descriptionMode={descriptionMode}
               grouped={grouped}
             >
-              <Input
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onBlur={saveName}
-                onKeyDown={(e) => e.key === "Enter" && saveName()}
-                disabled={isUpdating("assistant_name")}
-                variant="compact"
-                className="w-32"
-              />
+              <div className="flex items-center gap-1">
+                <NameTips />
+                <Input
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onBlur={saveName}
+                  onKeyDown={(e) => e.key === "Enter" && saveName()}
+                  disabled={isUpdating("assistant_name")}
+                  variant="compact"
+                  className="w-32"
+                />
+              </div>
             </SettingContainer>
             <SettingContainer
               title={t("settings.voiceControl.assistant.model.title")}

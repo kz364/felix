@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Handy",
+  "productName": "Felix",
   "version": "0.9.7",
   "identifier": "com.pais.handy",
   "build": {

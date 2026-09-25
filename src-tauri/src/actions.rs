@@ -883,7 +883,7 @@ fn fix_reported_mistake(app: &AppHandle, report: String) {
             },
             Ok(p) => {
                 let why = if p.needs_code_change {
-                    "Rules alone can't fix this; Handy itself needs a change."
+                    "Rules alone can't fix this; Felix itself needs a change."
                 } else if p.error.is_some() || p.tests.iter().any(|t| !t.passed) {
                     "The suggested rules didn't pass their tests, so nothing was changed."
                 } else {

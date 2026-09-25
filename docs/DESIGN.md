@@ -1,6 +1,6 @@
-# Handy design guide
+# Felix design guide
 
-Handy is a tool you talk to all day and look at for a few seconds. The
+Felix is a tool you talk to all day and look at for a few seconds. The
 settings window should feel like a well-kept notebook: warm paper, dark
 ink, one colour for "on", and nothing that shouts. The references are
 Granola (cream canvas, olive accent, serif headlines, "calm, with energy
@@ -10,6 +10,15 @@ friendly copy, a small sidebar of nouns).
 Tokens live in `src/styles/theme.css` and are registered as Tailwind
 colours in `src/App.css`. Never use Tailwind's stock palette (`red-400`,
 `green-500`, `gray-100`, `white` …) in components; use the tokens below.
+
+## Mark
+
+A sleepy black cat: round head, soft ears, closed happy eyes in the accent
+green. The app icon (`src-tauri/icons`) is the full-colour version on a
+cream tile; `CatMark` draws it in the UI with the ink following `text` so
+it holds up in dark mode, and the menu-bar icons (`src-tauri/resources`)
+are the same shape as a one-colour template with the eyes cut out. It must
+never drift toward a cartoon character: no white face, no mouth or grin.
 
 ## Colour
 
@@ -123,7 +132,7 @@ computers.
 | Vocabulary          | Report a mistake · what Handy has learned · your reports                                              |
 | Writing             | Cleanup on/off and level · your instructions · screen context · tone by app · prompt shortcut         |
 | Voice commands      | Trigger phrases · switching apps by voice                                                             |
-| Felix               | The assistant and acting on your Mac                                                                  |
+| Assistant           | The Felix assistant (name, model, about you) and acting on your Mac                                   |
 | Meetings            | Recorder, recordings, meeting settings                                                                |
 | _(bottom)_ Models   | What runs where · accounts & keys · speech models · cleanup models · memory                           |
 | _(bottom)_ Settings | On your Mac (login, background, menu bar, overlay) · look and language · about Handy · for developers |

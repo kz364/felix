@@ -20,7 +20,7 @@
     "debug": "Debug",
     "about": "About",
     "voiceControl": "Voice control",
-    "felix": "Felix",
+    "felix": "Assistant",
     "vocabulary": "Vocabulary",
     "style": "Style",
     "meetings": "Meetings",
@@ -112,7 +112,7 @@
     },
     "permissions": {
       "title": "Permissions required",
-      "description": "Handy needs a couple of permissions to work properly.",
+      "description": "Felix needs a couple of permissions to work properly.",
       "microphone": {
         "title": "Microphone access",
         "description": "Required to hear your voice for transcription."
@@ -172,7 +172,7 @@
     "general": {
       "title": "General",
       "shortcut": {
-        "title": "Handy shortcuts",
+        "title": "Felix shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
@@ -241,7 +241,7 @@
       },
       "rescan": {
         "label": "Rescan",
-        "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Handy"
+        "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Felix"
       },
       "noModelsMatch": "No models match this filter.",
       "sections": {
@@ -338,7 +338,7 @@
       },
       "preferredMicrophones": {
         "title": "Preferred microphones",
-        "description": "Used in this order whenever they're connected, ahead of the Microphone setting above and the system default. Disconnected ones stay on the list, and Handy switches back automatically when they return.",
+        "description": "Used in this order whenever they're connected, ahead of the Microphone setting above and the system default. Disconnected ones stay on the list, and Felix switches back automatically when they return.",
         "pick": "Add a connected microphone…",
         "add": "Add",
         "inUse": "In use",
@@ -362,11 +362,11 @@
       },
       "autostart": {
         "label": "Open at login",
-        "description": "Automatically start Handy when you log in to your computer."
+        "description": "Automatically start Felix when you log in to your computer."
       },
       "showTrayIcon": {
         "label": "Show in the menu bar",
-        "description": "Display the Handy icon in the system tray."
+        "description": "Display the Felix icon in the system tray."
       },
       "overlay": {
         "style": {
@@ -550,7 +550,7 @@
       "cleanup": {
         "title": "How much to tidy",
         "description": "Runs after your vocabulary and voice commands, and before the tone for the app you’re in.",
-        "intro": "If an edit would change the meaning, drop details or invent numbers, Handy throws it away and pastes the plain transcript instead.",
+        "intro": "If an edit would change the meaning, drop details or invent numbers, Felix throws it away and pastes the plain transcript instead.",
         "levels": {
           "none": {
             "title": "None",
@@ -571,7 +571,7 @@
       },
       "instructions": {
         "title": "Your instructions",
-        "description": "Your own rules, one per line. Handy follows them while tidying, and they win over the level above.",
+        "description": "Your own rules, one per line. Felix follows them while tidying, and they win over the level above.",
         "needsClarity": "Pick Light or Medium above to use your instructions; None skips the AI entirely.",
         "everywhere": "Instructions for every app",
         "placeholder": "e.g. Use British spelling\nNever use exclamation marks",
@@ -669,7 +669,7 @@
       },
       "updateChecks": {
         "label": "Check for updates",
-        "description": "Automatically check for new versions of Handy",
+        "description": "Automatically check for new versions of Felix",
         "lockedDescription": "Disabled by system configuration (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
@@ -752,7 +752,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Keyboard diagnostic",
-        "description": "Checks whether keyboard events reach Handy. Only event counts are recorded — never which keys you press.",
+        "description": "Checks whether keyboard events reach Felix. Only event counts are recorded — never which keys you press.",
         "run": "Run 10s diagnostic",
         "running": "Listening… press your shortcut a few times (e.g. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -766,41 +766,36 @@
         "mouse": "Mouse",
         "verdictBlocked": "Secure Input is blocking key events — keyed shortcuts cannot work until it is resolved.",
         "verdictSuspicious": "Modifier events arrived but no key events — something is suppressing keys even though Secure Input reports disabled. Please report this on GitHub.",
-        "verdictOk": "Key events are reaching Handy normally.",
+        "verdictOk": "Key events are reaching Felix normally.",
         "verdictNoEvents": "No events captured — did you press any keys during the test?",
         "failed": "Diagnostic failed: {{error}}"
       }
     },
     "about": {
-      "title": "About Handy",
+      "title": "About Felix",
       "version": {
         "title": "Version",
         "description": "The version you’re running"
       },
       "whatsNewUpdates": {
         "label": "Show what's new",
-        "description": "Show release notes after Handy updates"
+        "description": "Show release notes after Felix updates"
       },
       "appDataDirectory": {
-        "title": "Handy’s folder",
-        "description": "Where Handy keeps your history, recordings and rules"
+        "title": "Felix’s folder",
+        "description": "Where Felix keeps your history, recordings and rules"
       },
       "sourceCode": {
-        "title": "Source code",
-        "description": "Read the code or report a problem",
-        "button": "View on GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Support development",
-        "description": "Handy is free and open source. Chip in if it helps you.",
-        "button": "Donate"
+        "title": "Built on Handy",
+        "description": "Felix is a fork of Handy by CJ Pais and contributors, a free and open source dictation app",
+        "button": "Handy on GitHub"
       },
       "acknowledgments": {
         "title": "Acknowledgments",
         "ggml": {
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
-          "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
+          "details": "Felix's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
     },
@@ -854,8 +849,10 @@
         },
         "name": {
           "title": "Name",
-          "description": "The word that calls the assistant. Pick a name you don't otherwise say; Felix, Marvin and Cosmo are recognized reliably by every transcription model.",
-          "invalid": "The name must be a single word"
+          "description": "The word that calls the assistant, anywhere in a dictation. Pick one you don't otherwise say.",
+          "invalid": "The name must be a single word",
+          "tipsLabel": "Name suggestions",
+          "tips": "Jarvis, Marvin and Cosmo were heard correctly by every speech model in testing and are rarely said by accident. Now that the app is called Felix, a name other than Felix avoids calling the assistant when you talk about the app."
         },
         "model": {
           "title": "Model",
@@ -873,7 +870,7 @@
         },
         "computer": {
           "groupTitle": "On your Mac",
-          "groupDescription": "\"Felix, open Notes and start a packing list\" hands the task to Codex, which works your apps in the background through Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Handy.",
+          "groupDescription": "\"Felix, open Notes and start a packing list\" hands the task to Codex, which works your apps in the background through Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
           "toggle": {
             "label": "Act on your Mac",
             "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
@@ -888,7 +885,7 @@
           "description": "Details the assistant can fill in when you ask, such as your name, email, phone number, address and how you sign off emails.",
           "placeholder": "Name: ...\nEmail: ...\nSigns off emails with: ..."
         },
-        "pageTitle": "Felix"
+        "pageTitle": "Assistant"
       },
       "title": "Voice commands",
       "description": "Say “new line”, end with “press enter”, or say “go to Safari”. Commands run before cleanup."
@@ -902,7 +899,7 @@
         "working": "Thinking…",
         "openFile": "Open rules file",
         "saved": "Saved. It applies from your next dictation.",
-        "needsCode": "Rules alone can't fully fix this; it needs a change to Handy.",
+        "needsCode": "Rules alone can't fully fix this; it needs a change to Felix.",
         "invalid": "The suggested file has a mistake: {{error}}",
         "test": "{{mark}} “{{said}}” → “{{got}}”",
         "expected": " (expected “{{expect}}”)",
@@ -957,7 +954,7 @@
         "rewrites": "On the current model, rewrite:"
       },
       "learned": {
-        "title": "What Handy has learned",
+        "title": "What Felix has learned",
         "description": "Words, corrections and sound-alikes from your reports. Words also help the speech model hear them. Remove anything that's wrong.",
         "empty": "Nothing yet. Report a mistake above and the fix appears here.",
         "words": "Words",
@@ -985,7 +982,7 @@
         }
       },
       "title": "Vocabulary",
-      "description": "Tell Handy what it got wrong, in your own words. It writes a rule, tests it and remembers."
+      "description": "Tell Felix what it got wrong, in your own words. It writes a rule, tests it and remembers."
     },
     "style": {
       "categories": {
@@ -1028,7 +1025,7 @@
     },
     "dictation": {
       "title": "Dictation",
-      "description": "Hold a key, talk, let go. Here’s how Handy listens and where your words end up.",
+      "description": "Hold a key, talk, let go. Here’s how Felix listens and where your words end up.",
       "language": {
         "title": "Language",
         "description": "Options for {{model}}, the speech model you’re using."
@@ -1039,21 +1036,21 @@
         "pasting": "Pasting",
         "sounds": "Sounds",
         "listening": "Listening",
-        "listeningDescription": "How Handy tells speech from silence. The defaults suit most people."
+        "listeningDescription": "How Felix tells speech from silence. The defaults suit most people."
       }
     },
     "writing": {
       "title": "Writing",
-      "description": "How your words come out: how much Handy tidies them, what it should always do, and the tone for each app."
+      "description": "How your words come out: how much Felix tidies them, what it should always do, and the tone for each app."
     },
     "app": {
       "title": "Settings",
-      "description": "How Handy starts, looks and behaves on your Mac.",
+      "description": "How Felix starts, looks and behaves on your Mac.",
       "groups": {
         "behaviour": "On your Mac",
         "appearance": "Look and language",
         "developers": "For developers",
-        "developersDescription": "For testing and improving Handy itself. You don’t need these for everyday use."
+        "developersDescription": "For testing and improving Felix itself. You don’t need these for everyday use."
       },
       "benchmark": {
         "label": "Benchmark recording",
@@ -1106,7 +1103,7 @@
     "portableUpdateBrowseButton": "Open GitHub Releases"
   },
   "whatsNew": {
-    "title": "New in Handy v{{version}}"
+    "title": "New in Felix v{{version}}"
   },
   "common": {
     "loading": "Loading...",
@@ -1118,7 +1115,7 @@
     "noOptionsFound": "No options found"
   },
   "accessibility": {
-    "permissionsDescription": "Handy needs accessibility permissions to type transcribed text.",
+    "permissionsDescription": "Felix needs accessibility permissions to type transcribed text.",
     "openSettings": "Open System Settings"
   },
   "errors": {
@@ -1141,11 +1138,11 @@
   },
   "appLanguage": {
     "title": "Language",
-    "description": "The language Handy’s own screens are shown in"
+    "description": "The language Felix’s own screens are shown in"
   },
   "theme": {
     "title": "Appearance",
-    "description": "Choose whether Handy follows your system theme or stays light or dark",
+    "description": "Choose whether Felix follows your system theme or stays light or dark",
     "options": {
       "system": "System",
       "light": "Light",

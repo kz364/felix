@@ -5,8 +5,8 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access to transcribe audio locally</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>Handy records the other people on a call (the audio your Mac plays) when you record a meeting. It stays on your Mac.</string>
+  <string>Felix records the other people on a call (the audio your Mac plays) when you record a meeting. It stays on your Mac.</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Handy reads the address of your browser's active tab so dictation can use the style you chose for that website.</string>
+  <string>Felix reads the address of your browser's active tab so dictation can use the style you chose for that website.</string>
 </dict>
 </plist>
