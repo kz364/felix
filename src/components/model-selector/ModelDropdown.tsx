@@ -49,12 +49,12 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
                   <div className="text-sm text-text/80">
                     {getTranslatedModelName(model, t)}
                     {model.is_custom && (
-                      <span className="ms-1.5 text-[11px] font-medium text-text/45">
+                      <span className="ms-1.5 text-xs font-medium text-text/45">
                         {t("modelSelector.custom")}
                       </span>
                     )}
                     {model.supports_streaming && (
-                      <span className="ms-1.5 text-[11px] font-medium text-accent">
+                      <span className="ms-1.5 text-xs font-medium text-accent">
                         {t("modelSelector.streaming")}
                       </span>
                     )}

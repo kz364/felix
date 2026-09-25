@@ -58,7 +58,7 @@ const components: Components = {
     </h3>
   ),
   h2: ({ children }) => (
-    <h3 className="text-[15px] font-semibold leading-snug text-text">
+    <h3 className="text-base font-semibold leading-snug text-text">
       {children}
     </h3>
   ),

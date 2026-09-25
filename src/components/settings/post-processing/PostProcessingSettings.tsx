@@ -192,7 +192,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p className="text-xs text-text/50">
+              <p className="text-sm text-text/50">
                 <Trans
                   i18nKey="settings.postProcessing.prompts.promptTip"
                   components={{ code: <code /> }}
@@ -259,7 +259,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p className="text-xs text-text/50">
+              <p className="text-sm text-text/50">
                 <Trans
                   i18nKey="settings.postProcessing.prompts.promptTip"
                   components={{ code: <code /> }}
@@ -354,7 +354,7 @@ export const CleanupSections: React.FC = () => {
         <ScreenContext disabled={!enabled} />
       </SettingsGroup>
 
-      <p className="px-1 text-xs text-text/50">
+      <p className="px-1 text-sm text-text/50">
         {providerLabel} · {t("settings.postProcessing.api.movedToModels")}
       </p>
     </>
@@ -366,7 +366,7 @@ export const PromptShortcut: React.FC = () => {
   const { t } = useTranslation();
   return (
     <Disclosure title={t("settings.postProcessing.shortcut.title")}>
-      <p className="px-4 pt-3 pb-1 text-[13px] text-text/60">
+      <p className="px-4 pt-3 pb-1 text-sm text-text/60">
         {t("settings.postProcessing.shortcut.description")}
       </p>
       <ShortcutInput

@@ -56,14 +56,20 @@ Rules:
 - **UI sans** (`font-sans`): the system UI font (SF Pro). Everything else.
 - **Mono** (`font-mono`): SF Mono for paths, shortcuts, rules and logs.
 
-| Role        | Class                                    |
-| ----------- | ---------------------------------------- |
-| Page title  | `font-display text-[28px] leading-tight` |
-| Page intro  | `text-sm text-text/65`, max ~60ch        |
-| Group label | `text-[13px] font-medium text-text/70`   |
-| Row title   | `text-sm font-medium`                    |
-| Row help    | `text-[13px] text-text/60`               |
-| Fine print  | `text-xs text-text/50`                   |
+| Role          | Class                                      |
+| ------------- | ------------------------------------------ |
+| Page title    | `font-display text-[28px] leading-tight`   |
+| Section title | `font-display text-xl` (Models page only)  |
+| Page intro    | `text-sm text-text/60`, max ~60ch          |
+| Group title   | `text-base font-medium`                    |
+| Row title     | `text-sm font-medium`                      |
+| Help, notes   | `text-sm text-text/60` (any full sentence) |
+| Fine print    | `text-xs text-text/50`                     |
+
+The root size is 15px, so `text-sm` is about 13px and `text-xs` about 11px.
+Use no pixel sizes other than the page title. Fine print is for metadata
+only: timestamps, counts, badges, model IDs, durations and the footer. A
+sentence someone has to read is `text-sm`.
 
 Sentence case everywhere ("Launch at login", not "Launch At Login").
 No all-caps labels.
@@ -131,7 +137,7 @@ computers.
 | History             | Past dictations · how long to keep them                                                               |
 | Vocabulary          | Report a mistake · what Handy has learned · your reports                                              |
 | Writing             | Cleanup on/off and level · your instructions · screen context · tone by app · prompt shortcut         |
-| Voice commands      | Trigger phrases · switching apps by voice                                                             |
+| Voice commands      | Trigger phrases · line breaks · spoken symbols                                                        |
 | Assistant           | The Felix assistant (name, model, about you) and acting on your Mac                                   |
 | Meetings            | Recorder, recordings, meeting settings                                                                |
 | _(bottom)_ Models   | What runs where · accounts & keys · speech models · cleanup models · memory                           |

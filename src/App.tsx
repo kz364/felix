@@ -304,7 +304,7 @@ function App() {
         unstyled: true,
         classNames: {
           toast:
-            "bg-surface border border-stone/20 rounded-xl shadow-lg shadow-black/10 px-4 py-3 flex items-center gap-3 text-[13px]",
+            "bg-surface border border-stone/20 rounded-xl shadow-lg shadow-black/10 px-4 py-3 flex items-center gap-3 text-sm",
           title: "font-medium",
           description: "text-text/55",
           actionButton:

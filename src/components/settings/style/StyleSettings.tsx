@@ -94,10 +94,10 @@ export const StyleSettings: React.FC = () => {
   return (
     <section className="space-y-3">
       <div className="px-1">
-        <h2 className="text-[13px] font-medium text-text/70">
+        <h2 className="text-sm font-medium text-text/70">
           {t("settings.style.title")}
         </h2>
-        <p className="mt-0.5 text-[13px] leading-snug text-text/55">
+        <p className="mt-0.5 text-sm leading-snug text-text/55">
           {t("settings.style.intro")}
         </p>
       </div>
@@ -124,7 +124,7 @@ export const StyleSettings: React.FC = () => {
         <div className="text-sm font-medium">
           {t("settings.style.apps.addSite")}
         </div>
-        <p className="text-xs text-text/60">
+        <p className="text-sm text-text/60">
           {t("settings.style.apps.addSiteDescription")}
         </p>
         <div className="flex items-center gap-2">
@@ -145,7 +145,7 @@ export const StyleSettings: React.FC = () => {
           <select
             value={siteCategory}
             onChange={(e) => setSiteCategory(e.target.value as AppCategory)}
-            className="h-8 rounded-lg border border-stone/30 bg-surface px-2 text-[13px]"
+            className="h-8 rounded-lg border border-stone/30 bg-surface px-2 text-sm"
             aria-label={t("settings.style.apps.categoryFor")}
           >
             {CATEGORIES.map((c) => (

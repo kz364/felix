@@ -41,7 +41,7 @@ export const CleanupLevelPicker: React.FC<{ disabled?: boolean }> = ({
                   `settings.postProcessing.cleanup.levels.${level}.description`,
                 )}
               </span>
-              <span className="mt-auto rounded-lg bg-sunken p-2 font-display text-[13px] leading-snug text-text/80">
+              <span className="mt-auto rounded-lg bg-sunken p-2 font-display text-sm leading-snug text-text/80">
                 {t(`settings.postProcessing.cleanup.levels.${level}.example`)}
               </span>
             </button>

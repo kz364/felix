@@ -62,7 +62,7 @@ export const LearnedRules: React.FC<{
 
       {learned.words.length > 0 && (
         <section className="space-y-2">
-          <h4 className="text-[13px] font-medium text-text/70">
+          <h4 className="text-sm font-medium text-text/70">
             {t("settings.vocabulary.learned.words")}
           </h4>
           <div className="flex flex-wrap gap-1.5">
@@ -81,7 +81,7 @@ export const LearnedRules: React.FC<{
 
       {learned.corrections.length > 0 && (
         <section className="space-y-1.5">
-          <h4 className="text-[13px] font-medium text-text/70">
+          <h4 className="text-sm font-medium text-text/70">
             {t("settings.vocabulary.learned.corrections")}
           </h4>
           {learned.corrections.map((c, i) => (
@@ -103,7 +103,7 @@ export const LearnedRules: React.FC<{
 
       {learned.soundalikes.length > 0 && (
         <section className="space-y-1.5">
-          <h4 className="text-[13px] font-medium text-text/70">
+          <h4 className="text-sm font-medium text-text/70">
             {t("settings.vocabulary.learned.soundalikes")}
           </h4>
           {learned.soundalikes.map((s, i) => (

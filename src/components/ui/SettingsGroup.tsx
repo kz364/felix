@@ -15,9 +15,9 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
     <section className="space-y-2">
       {title && (
         <div className="px-1">
-          <h2 className="text-[13px] font-medium text-text/70">{title}</h2>
+          <h2 className="text-base font-medium text-text">{title}</h2>
           {description && (
-            <p className="mt-0.5 text-[13px] leading-snug text-text/55">
+            <p className="mt-0.5 text-sm leading-snug text-text/55">
               {description}
             </p>
           )}

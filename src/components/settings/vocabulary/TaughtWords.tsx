@@ -74,16 +74,16 @@ export const TaughtWords: React.FC = () => {
               </button>
             </div>
             {!entry ? (
-              <p className="text-xs text-text/60">
+              <p className="text-sm text-text/60">
                 {t("settings.vocabulary.taught.checking")}
               </p>
             ) : entry.variants.length === 0 ? (
-              <p className="text-xs text-success">
+              <p className="text-sm text-success">
                 {t("settings.vocabulary.taught.recognized")}
               </p>
             ) : (
               <div className="space-y-1">
-                <p className="text-xs text-text/60">
+                <p className="text-sm text-text/60">
                   {t("settings.vocabulary.taught.rewrites")}
                 </p>
                 {entry.variants.map((variant) => (

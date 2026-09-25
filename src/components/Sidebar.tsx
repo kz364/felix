@@ -140,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         key={section.id}
         type="button"
         aria-current={isActive ? "page" : undefined}
-        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 h-8 text-[13px] text-start transition-colors duration-150 cursor-pointer ${
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 h-8 text-sm text-start transition-colors duration-150 cursor-pointer ${
           isActive
             ? "bg-surface text-text font-medium shadow-sm ring-1 ring-stone/15"
             : "text-text/65 hover:text-text hover:bg-stone/10"

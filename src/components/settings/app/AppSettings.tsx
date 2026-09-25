@@ -61,7 +61,7 @@ export const AppSettings: React.FC = () => {
           grouped={true}
         >
           {/* eslint-disable-next-line i18next/no-literal-string */}
-          <span className="text-[13px] font-mono text-text/70">v{version}</span>
+          <span className="text-sm font-mono text-text/70">v{version}</span>
         </SettingContainer>
 
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />

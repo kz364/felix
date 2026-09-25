@@ -111,7 +111,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
             {title}
           </h3>
           <p
-            className={`mt-0.5 text-[13px] leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
+            className={`mt-0.5 text-sm leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
           >
             {description}
           </p>
@@ -187,7 +187,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
           {title}
         </h3>
         <p
-          className={`mt-0.5 text-[13px] leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
+          className={`mt-0.5 text-sm leading-snug text-text/60 ${disabled ? "opacity-50" : ""}`}
         >
           {description}
         </p>

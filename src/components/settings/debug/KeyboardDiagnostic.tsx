@@ -77,7 +77,7 @@ export const KeyboardDiagnostic: React.FC = () => {
           <p className="text-sm font-medium">
             {t("settings.debug.keyboardDiagnostic.title")}
           </p>
-          <p className="text-xs text-text/55">
+          <p className="text-sm text-text/55">
             {t("settings.debug.keyboardDiagnostic.description")}
           </p>
         </div>

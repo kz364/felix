@@ -280,7 +280,7 @@ export const ModelsSettings: React.FC = () => {
         <h2 className="font-display text-xl">
           {t("settings.models.sections.transcription")}
         </h2>
-        <p className="mt-0.5 text-[13px] text-text/60">
+        <p className="mt-0.5 text-sm text-text/60">
           {t("settings.models.sections.transcriptionDescription")}
         </p>
       </div>
@@ -301,7 +301,7 @@ export const ModelsSettings: React.FC = () => {
         {/* Downloaded Models Section — header always visible so filter stays accessible */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-[13px] font-medium text-text/70">
+            <h2 className="text-sm font-medium text-text/70">
               {t("settings.models.yourModels")}
             </h2>
             <div className="flex items-center gap-2">
@@ -462,7 +462,7 @@ export const ModelsSettings: React.FC = () => {
         {/* Available Models Section */}
         {availableModels.length > 0 && (
           <div className="space-y-3">
-            <h2 className="text-[13px] font-medium text-text/70">
+            <h2 className="text-sm font-medium text-text/70">
               {t("settings.models.availableModels")}
             </h2>
             {availableModels.map((model: ModelInfo) => (

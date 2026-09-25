@@ -179,7 +179,7 @@ const NotesEditor: React.FC<{ id: string; minRows?: number }> = ({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between px-1">
-        <span className="text-[13px] font-medium text-text/70">
+        <span className="text-sm font-medium text-text/70">
           {t("meetings.notes.title")}
         </span>
         <span className="text-xs text-text/40">
@@ -545,7 +545,7 @@ const TranscriptSection: React.FC<{
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3 px-1 text-[13px] font-medium text-text/70">
+      <div className="flex items-center gap-3 px-1 text-sm font-medium text-text/70">
         <span className="flex-1">{t("meetings.transcript.title")}</span>
         {hasOriginal && (
           <button
@@ -591,7 +591,7 @@ const TranscriptSection: React.FC<{
             </button>
           ))}
       </div>
-      {banner && <div className="px-1 text-xs text-text/60">{banner}</div>}
+      {banner && <div className="px-1 text-sm text-text/60">{banner}</div>}
       {progressPercent !== null && (
         <div className="mx-1 h-1 rounded-full bg-stone/15 overflow-hidden">
           <div
@@ -750,7 +750,7 @@ const SummarySection: React.FC<{
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3 px-1 text-[13px] font-medium text-text/70">
+      <div className="flex items-center gap-3 px-1 text-sm font-medium text-text/70">
         <span className="flex-1">{t("meetings.summary.title")}</span>
         {summary && (
           <button onClick={copyMarkdown} className={linkButton}>
@@ -765,7 +765,7 @@ const SummarySection: React.FC<{
           </button>
         )}
       </div>
-      {banner && <div className="px-1 text-xs text-text/60">{banner}</div>}
+      {banner && <div className="px-1 text-sm text-text/60">{banner}</div>}
       {summary && (
         <div
           className={`rounded-xl border border-stone/20 bg-accent/5 p-5 space-y-4 ${
@@ -968,10 +968,10 @@ const RecorderCard: React.FC<{
           </div>
         </div>
         {recording.system_error && (
-          <p className="text-xs text-text/60">{recording.system_error}</p>
+          <p className="text-sm text-text/60">{recording.system_error}</p>
         )}
         <NotesEditor id={recording.id} minRows={4} />
-        <p className="px-1 text-xs text-text/45">
+        <p className="px-1 text-sm text-text/45">
           {t("meetings.transcript.afterRecording")}
         </p>
         <div className="flex justify-center">
@@ -1027,7 +1027,7 @@ const RecorderCard: React.FC<{
               {modeIcon(m.id, "w-4 h-4")}
               {m.label}
             </div>
-            <p className="mt-1 text-xs text-text/60">{m.hint}</p>
+            <p className="mt-1 text-sm text-text/60">{m.hint}</p>
           </button>
         ))}
       </div>
@@ -1227,7 +1227,7 @@ export const MeetingsPage: React.FC = () => {
       ) : (
         groups.map((group) => (
           <div key={group.label} className="space-y-1">
-            <div className="flex items-center gap-1.5 px-1 text-[13px] font-medium text-text/70">
+            <div className="flex items-center gap-1.5 px-1 text-sm font-medium text-text/70">
               <Calendar className="w-3.5 h-3.5" />
               {group.label}
             </div>

@@ -65,7 +65,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         type="button"
-        className={`h-8 px-2.5 text-[13px] bg-surface border border-stone/30 rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-[border-color,box-shadow] duration-150 ${
+        className={`h-8 px-2.5 text-sm bg-surface border border-stone/30 rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-[border-color,box-shadow] duration-150 ${
           disabled
             ? "opacity-50 cursor-not-allowed"
             : "cursor-pointer hover:border-stone/50"
@@ -103,7 +103,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
               <button
                 key={option.value}
                 type="button"
-                className={`w-full rounded-lg text-[13px] text-start hover:bg-stone/10 transition-colors duration-150 ${
+                className={`w-full rounded-lg text-sm text-start hover:bg-stone/10 transition-colors duration-150 ${
                   option.description ? "px-2.5 py-2" : "px-2.5 py-1.5"
                 } ${
                   selectedValue === option.value

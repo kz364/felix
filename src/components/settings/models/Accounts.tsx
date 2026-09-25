@@ -51,7 +51,7 @@ export const Accounts: React.FC = () => {
               />
             )}
           </div>
-          <div className="text-xs text-text/50">{uses}</div>
+          <div className="text-sm text-text/60">{uses}</div>
         </div>
         <div className="flex items-center gap-2">
           {p.allow_base_url_edit && (

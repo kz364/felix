@@ -69,7 +69,7 @@ export const BenchmarkReview: React.FC<{ onChange?: () => void }> = ({
 
   if (items.length === 0) {
     return (
-      <p className="px-4 py-3 text-[13px] text-text/50">
+      <p className="px-4 py-3 text-sm text-text/50">
         {t("settings.app.benchmark.review.empty")}
       </p>
     );
@@ -78,7 +78,7 @@ export const BenchmarkReview: React.FC<{ onChange?: () => void }> = ({
   return (
     <AudioPlayerGroup>
       <div className="flex items-center justify-between gap-3 px-4 py-3">
-        <p className="text-[13px] text-text/60 max-w-md">
+        <p className="text-sm text-text/60 max-w-md">
           {t("settings.app.benchmark.review.intro")}
         </p>
         <Button
@@ -118,7 +118,7 @@ const Field: React.FC<{ label: string; text: string | null | undefined }> = ({
   text,
 }) =>
   text ? (
-    <div className="grid grid-cols-[88px_1fr] gap-3 text-[13px]">
+    <div className="grid grid-cols-[88px_1fr] gap-3 text-sm">
       <span className="text-text/50">{label}</span>
       <span className="text-text/85 select-text">{text}</span>
     </div>
@@ -182,7 +182,7 @@ const Entry: React.FC<{
 
       <div className="rounded-lg bg-sunken px-3 py-2.5 space-y-1.5">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[13px] font-medium text-text/70">
+          <span className="text-sm font-medium text-text/70">
             {t("settings.app.benchmark.review.guess")}
             {record.guess && (
               <span className="font-normal text-text/45">
@@ -224,7 +224,7 @@ const Entry: React.FC<{
               {record.guess.text || t("settings.app.benchmark.review.noSpeech")}
             </p>
             {(!record.guess.confident || record.guess.notes) && (
-              <p className="text-xs text-text/55">
+              <p className="text-sm text-text/55">
                 {!record.guess.confident &&
                   t("settings.app.benchmark.review.unsure", {
                     words: record.guess.unsure.join(", ") || "—",
@@ -237,7 +237,7 @@ const Entry: React.FC<{
       </div>
 
       <label className="block space-y-1.5">
-        <span className="text-[13px] font-medium text-text/70">
+        <span className="text-sm font-medium text-text/70">
           {t("settings.app.benchmark.review.truth")}
         </span>
         <Textarea

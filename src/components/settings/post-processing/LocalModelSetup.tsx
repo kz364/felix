@@ -105,7 +105,7 @@ export const LocalModelSetup: React.FC<{ model: string }> = ({ model }) => {
       >
         {installing ? (
           <div className="flex flex-col gap-1.5">
-            <div className="text-xs text-text/55">
+            <div className="text-sm text-text/55">
               {progress?.stage === "model"
                 ? t("settings.postProcessing.local.downloadingModel", {
                     model: status?.model ?? model,

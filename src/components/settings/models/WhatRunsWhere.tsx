@@ -109,7 +109,7 @@ export const WhatRunsWhere: React.FC = () => {
 
   return (
     <>
-      {advice && <p className="px-4 pt-3 text-xs text-text/60">{advice}</p>}
+      {advice && <p className="px-4 pt-3 text-sm text-text/60">{advice}</p>}
       <SettingContainer
         title={t("settings.models.where.speech.title")}
         description={t("settings.models.where.speech.description")}

@@ -330,7 +330,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
           <div className="w-full h-1.5 bg-stone/20 rounded-full overflow-hidden">
             <div className="h-full bg-accent rounded-full animate-pulse w-full" />
           </div>
-          <p className="text-xs text-text/50 mt-1">
+          <p className="text-sm text-text/50 mt-1">
             {t("modelSelector.verifyingGeneric")}
           </p>
         </div>
@@ -340,7 +340,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
           <div className="w-full h-1.5 bg-stone/20 rounded-full overflow-hidden">
             <div className="h-full bg-accent rounded-full animate-pulse w-full" />
           </div>
-          <p className="text-xs text-text/50 mt-1">
+          <p className="text-sm text-text/50 mt-1">
             {t("modelSelector.extractingGeneric")}
           </p>
         </div>

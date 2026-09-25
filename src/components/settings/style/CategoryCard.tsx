@@ -112,7 +112,7 @@ export const CategoryCard: React.FC<{
           <h3 className="text-sm font-medium">
             {t(`settings.style.categories.${category}`)}
           </h3>
-          <p className="mt-0.5 font-display text-[14px] text-text/60">
+          <p className="mt-0.5 font-display text-sm text-text/60">
             {t(`settings.style.formality.example.${formality}`)}
           </p>
         </div>
@@ -155,14 +155,14 @@ export const CategoryCard: React.FC<{
           ))}
         </div>
       ) : (
-        <p className="text-xs text-text/40">
+        <p className="text-sm text-text/40">
           {searching
             ? t("settings.style.apps.noMatches")
             : t("settings.style.apps.empty")}
         </p>
       )}
       {hidden > 0 && (
-        <p className="text-xs text-text/50">
+        <p className="text-sm text-text/50">
           {t("settings.style.apps.moreApps", { count: hidden })}
         </p>
       )}
