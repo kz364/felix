@@ -11,6 +11,36 @@ stay on your Mac.
 > Handy or its maintainers. Please don't file issues about this fork
 > upstream.
 
+## Status: personal, experimental, partly untested
+
+> [!WARNING]
+> Felix is one person's daily driver, not a finished product. Expect rough
+> edges, and expect some of the parts below to be wrong.
+
+- **Automatic gain control is unproven.** It's on by default and meant to
+  help quiet speech, but nobody has measured yet whether it actually
+  improves accuracy. It might just as well hurt. Benchmarking it on real
+  recordings is in progress ([docs/BENCHMARKING.md](docs/BENCHMARKING.md)).
+  If dictation seems worse than upstream Handy, try turning it off first.
+- **Silence-detection thresholds are guesswork.** The per-microphone
+  thresholds (`microphone_vad_thresholds`) have no UI and were set from a
+  handful of recordings. A too-sensitive threshold can let breathing or
+  background noise through, where the speech model may turn it into words
+  that were never said. A too-strict one drops quiet speech.
+- **The Felix assistant's "act on your Mac" mode is experimental and
+  paused.** It lets a model start Claude Code sessions and drive other apps
+  through Codex CLI and Cua Driver. That's powerful and not hardened:
+  leave it off unless you're developing it. The assistant itself (rewriting
+  the focused field) is off by default too.
+- **ChatGPT sign-in is unofficial.** The assistant, meeting summaries and
+  benchmark guesses can sign in with ChatGPT using the same public OAuth
+  client as OpenAI's Codex CLI. OpenAI doesn't officially support third-party
+  apps using it, and it may stop working.
+- **macOS on Apple Silicon only.** Windows and Linux builds, and the
+  upstream CI workflows, haven't been run against this fork's changes.
+- **Meetings and benchmark recording are new** and have seen little
+  real-world use.
+
 ## Standing on Handy's shoulders
 
 Everything here is built on [Handy](https://handy.computer) by

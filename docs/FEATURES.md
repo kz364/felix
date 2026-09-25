@@ -24,10 +24,14 @@ staging pipeline first:
 - Shortcuts, microphone, language, pasting, sounds and silence detection.
 - **Preferred microphones**: a priority list; the first one connected wins.
 - **Input gain and automatic gain control** before silence detection, so
-  quiet speech and weak mics reach the model.
+  quiet speech and weak mics reach the model. ⚠️ Whether automatic gain
+  control improves accuracy hasn't been measured yet; it's being
+  benchmarked.
 - **Per-microphone silence thresholds** (`microphone_vad_thresholds`, no UI
   yet): a close clip-on mic used for whispering can run a much more
-  sensitive Silero threshold than a laptop mic at arm's length.
+  sensitive Silero threshold than a laptop mic at arm's length. ⚠️
+  Values are provisional (set from a few recordings); too sensitive can
+  produce words from breath or noise.
 
 ## Vocabulary
 
@@ -59,8 +63,12 @@ Trigger phrases at the end of a dictation, and switching apps by voice.
 
 An optional voice assistant (off by default). Say its name and it takes
 the dictation and the focused field to a ChatGPT model, which inserts,
-replaces the selection or rewrites the field. An experimental "act on your
-Mac" mode is parked.
+replaces the selection or rewrites the field.
+
+⚠️ The "act on your Mac" mode (starting Claude Code sessions, running tasks
+in other apps through Codex CLI and Cua Driver) is experimental, paused and
+not hardened. Leave it off. ChatGPT sign-in reuses the Codex CLI's public
+OAuth client, which OpenAI doesn't officially support for other apps.
 
 ## Meetings
 
