@@ -237,7 +237,10 @@ fn parse_reply(
             project: reply.project.trim().to_string(),
         },
         ("replace_selection", _) if has_selection => Placement::ReplaceSelection,
-        ("replace_field", Some(field)) if whole_field && !field.value.is_empty() => {
+        // An empty field (Slack reports a lone newline) just takes an insert.
+        ("replace_field", Some(field))
+            if whole_field && crate::text_field::trimmed_len(&field.value) > 0 =>
+        {
             Placement::ReplaceField(field.value.clone())
         }
         _ => Placement::Insert,

@@ -79,8 +79,9 @@ pub fn pick_message_box(boxes: &[TextBox], window: Rect) -> Option<usize> {
                 && f.h > 0.0
                 && f.y >= window.y
                 && f.bottom() <= window.bottom() + 1.0
-                // In the lower part of the window, where chat apps put it.
-                && f.y + f.h / 2.0 >= window.y + window.h * 0.5
+                // Not near the top: chat apps put it at the bottom, or in
+                // the middle of an empty new-chat page.
+                && f.y + f.h / 2.0 >= window.y + window.h * 0.35
         })
         .max_by(|(_, a), (_, b)| {
             a.frame
@@ -371,9 +372,19 @@ pub fn focus_message_box() -> bool {
     {
         let focused = mac::focus_message_box(pid);
         if focused {
-            // Put the cursor after any draft, not before it.
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            crate::text_field::cursor_to_end();
+            // Put the cursor after any draft, not before it. Electron apps
+            // move focus and report the caret a moment later; wait until the
+            // field reports the caret at the end, so the text fitted to the
+            // draft (a space after its last word) sees the right position.
+            for _ in 0..12 {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                crate::text_field::cursor_to_end();
+                let at_end = crate::text_field::focused_field()
+                    .is_some_and(|f| f.selection == Some((f.value.len(), 0)));
+                if at_end {
+                    break;
+                }
+            }
             log::info!("Focused the message box in {bundle_id:?}");
         }
         focused
@@ -929,6 +940,9 @@ mod tests {
             tb("AXTextArea", "", 50.0, 800.0),
         ];
         assert_eq!(pick_message_box(&boxes, WINDOW), None);
+        // A new Codex chat: the box sits in the middle of an empty page.
+        let boxes = vec![tb("AXTextArea", "Ask ChatGPT", 380.0, 500.0)];
+        assert_eq!(pick_message_box(&boxes, WINDOW), Some(0));
         // WhatsApp's box, labelled only by its placeholder.
         let boxes = vec![tb("AXTextArea", "Type a message", 740.0, 700.0)];
         assert_eq!(pick_message_box(&boxes, WINDOW), Some(0));

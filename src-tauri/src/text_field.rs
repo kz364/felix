@@ -117,6 +117,63 @@ pub fn adapt_to_context(text: &str, before: &str, after: &str, vocabulary: &[Str
     out
 }
 
+/// The last dictation pasted, when casual style took its final period off.
+struct LastPaste {
+    pid: i32,
+    text: String,
+}
+
+static LAST_PASTE: std::sync::Mutex<Option<LastPaste>> = std::sync::Mutex::new(None);
+
+/// Remember what was just pasted, if its period was dropped; anything else
+/// forgets the last paste.
+pub fn remember_paste(pid: Option<i32>, pasted: &str, period_dropped: bool) {
+    let last = match pid {
+        Some(pid) if period_dropped && !pasted.trim().is_empty() => Some(LastPaste {
+            pid,
+            text: pasted.to_string(),
+        }),
+        _ => None,
+    };
+    *LAST_PASTE.lock().unwrap_or_else(|e| e.into_inner()) = last;
+}
+
+/// Whether `text` continues, as a new sentence, right after the last
+/// dictation whose period was dropped, so the period should come back.
+pub fn continues_last_paste(field: &FieldSnapshot, text: &str) -> bool {
+    let last = LAST_PASTE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(last) = last.as_ref().filter(|l| l.pid == field.pid) else {
+        return false;
+    };
+    let before = field.text_before_cursor(last.text.chars().count() + 2);
+    new_sentence_after(&before, &last.text, text)
+}
+
+/// Words that carry on the previous sentence rather than start one.
+const CONTINUATIONS: &[&str] = &[
+    "and", "but", "or", "nor", "because", "which", "who", "whose", "where", "then", "plus", "than",
+    "until", "unless", "while", "whereas", "though", "although", "if",
+];
+
+/// `before` (the text before the cursor) ends with the last pasted dictation
+/// and `text` starts a new sentence: capitalised, not a continuing word.
+fn new_sentence_after(before: &str, last: &str, text: &str) -> bool {
+    let last = last.trim();
+    if !before.trim_end().ends_with(last) || before.len() - before.trim_end().len() > 1 {
+        return false;
+    }
+    if !last.chars().last().is_some_and(char::is_alphanumeric) {
+        return false;
+    }
+    let first_word: String = text
+        .trim_start()
+        .chars()
+        .take_while(|c| is_word_char(*c))
+        .collect();
+    first_word.chars().next().is_some_and(char::is_uppercase)
+        && !CONTINUATIONS.contains(&first_word.to_lowercase().as_str())
+}
+
 /// Whether the focused element can take pasted text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteTarget {
@@ -470,13 +527,33 @@ pub fn select_whole_field(expected: &[u16]) -> bool {
         if !ax::select_range(0, expected.len()) {
             return false;
         }
-        ax::focused_field().and_then(|f| f.selection) == Some((0, expected.len()))
+        // Chromium and Electron apps (Slack) update the selection a moment
+        // later, and may stop it before a trailing newline they keep in the
+        // value. Accept a selection from the start over all the visible text.
+        let visible = trimmed_len(expected);
+        for _ in 0..10 {
+            if let Some((0, len)) = ax::focused_field().and_then(|f| f.selection) {
+                if len >= visible {
+                    return true;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        false
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = expected;
         false
     }
+}
+
+/// Length of UTF-16 text without its trailing whitespace.
+pub fn trimmed_len(text: &[u16]) -> usize {
+    String::from_utf16_lossy(text)
+        .trim_end()
+        .encode_utf16()
+        .count()
 }
 
 /// Chromium/Electron apps whose Accessibility tree Handy switched on, and
@@ -731,5 +808,35 @@ mod tests {
             classify_target("com.jetbrains.intellij", false, &el("AXWindow", false)),
             PasteTarget::Unknown
         );
+    }
+
+    #[test]
+    fn a_dropped_period_comes_back_before_a_new_sentence() {
+        let last = "I think the problem is the cache";
+        let before = "Notes: I think the problem is the cache";
+        assert!(new_sentence_after(
+            before,
+            last,
+            "Every time we deploy it breaks"
+        ));
+        assert!(new_sentence_after(
+            &format!("{before} "),
+            last,
+            "Every time"
+        ));
+        // A continuation, lowercase text, or text typed since: no period.
+        assert!(!new_sentence_after(before, last, "And it breaks"));
+        assert!(!new_sentence_after(before, last, "every time we deploy"));
+        assert!(!new_sentence_after(
+            "I think the problem is the cache, fixed",
+            last,
+            "Every"
+        ));
+        // The last dictation ended in something other than a word.
+        assert!(!new_sentence_after(
+            "run git reset --soft HEAD~1)",
+            "git reset --soft HEAD~1)",
+            "Then"
+        ));
     }
 }

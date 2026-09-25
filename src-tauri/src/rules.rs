@@ -22,7 +22,7 @@ use std::time::SystemTime;
 pub const FILE: &str = "rules.toml";
 
 /// The file as first written: the format, explained, and the Claude rule.
-pub const STARTER: &str = r#"# Handy dictation rules. Saved changes apply to your next dictation; no
+pub const STARTER: &str = r#"# Felix dictation rules. Saved changes apply to your next dictation; no
 # restart needed. They add to Settings → Vocabulary.
 #
 # vocabulary: words and names to recognise and spell exactly like this.
@@ -359,7 +359,7 @@ pub struct Proposal {
     pub error: Option<String>,
 }
 
-const PROPOSE_INSTRUCTIONS: &str = r#"You maintain the dictation rules of Handy, a speech-to-text app. The user reports something dictation got wrong. Reply with the rules to ADD that fix it; existing rules stay as they are.
+const PROPOSE_INSTRUCTIONS: &str = r#"You maintain the dictation rules of Felix, a speech-to-text app. The user reports something dictation got wrong. Reply with the rules to ADD that fix it; existing rules stay as they are.
 
 Kinds of rule, narrowest first:
 - "vocabulary": a word or name to recognise and spell exactly like this ("kubectl", "GitHub", "LLM"). It fixes the case and spelling of the word when it was transcribed as that word ("github" → "GitHub"), and joins spelled-out letters ("l l m" → "LLM"). It does NOT turn different words into it: "super base" stays "super base", so that needs a "replace" (add the word to vocabulary too, which helps the speech model hear it).
@@ -368,7 +368,7 @@ Kinds of rule, narrowest first:
 
 Also add "tests": the reported case (`said` = the text as it was wrongly transcribed, `expect` = what should come out) and, when there's any risk, a case showing ordinary use is untouched (`expect` = `said`). Rules only change the words they target: keep everything else in `expect` exactly as in `said`, including case and punctuation. `app` is the app dictated into, or empty.
 
-If the rules can't fix it (for example it needs a new kind of rule, or better audio), set needs_code_change, explain what Handy needs, and add nothing.
+If the rules can't fix it (for example it needs a new kind of rule, or better audio), set needs_code_change, explain what Felix needs, and add nothing.
 
 The report may itself have been dictated, so its words can be misheard too ("it wrote cloud instead of cloud"); read it together with the latest dictations to work out what was meant. In "explanation", say in two or three plain sentences what went wrong and what the rule does."#;
 
@@ -800,9 +800,26 @@ pub fn undo() -> Result<(), String> {
     if !backup.exists() {
         return Err("There's no earlier version to go back to".into());
     }
+    let applied = last_applied_id();
     std::fs::rename(&backup, path).map_err(|e| e.to_string())?;
-    log_applied(None, "undone");
+    log_applied(applied.as_deref(), "undone");
     Ok(())
+}
+
+/// The report whose change was applied last (what an undo takes back).
+fn last_applied_id() -> Option<String> {
+    let path = path()?.with_file_name(REPORTS_FILE);
+    let text = std::fs::read_to_string(path).ok()?;
+    last_applied_in(&text)
+}
+
+fn last_applied_in(reports: &str) -> Option<String> {
+    reports.lines().rev().find_map(|line| {
+        let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+        (entry["event"] == "applied")
+            .then(|| entry["id"].as_str().map(str::to_string))
+            .flatten()
+    })
 }
 
 async fn ask_for_rules(
@@ -1212,7 +1229,7 @@ expect = "run cube cuddle apply"
         let mut no_soundalikes = base.clone();
         no_soundalikes.soundalikes.clear();
         let new = forget_in(&text, "correction", 0, &no_soundalikes).unwrap();
-        assert!(new.starts_with("# Handy dictation rules"));
+        assert!(new.starts_with("# Felix dictation rules"));
         let rules = parse(&new).unwrap();
         assert!(rules.replace.is_empty());
         assert!(!rules.test.iter().any(|t| t.said == "run cube cuddle"));
@@ -1254,5 +1271,15 @@ expect = "run cube cuddle apply"
         );
         assert!(take_from_settings(moved).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_names_the_last_applied_report() {
+        let log = r#"{"id":"a","report":"x"}
+{"id":"a","event":"applied","at":"t"}
+{"id":"b","event":"applied","at":"t"}
+{"id":null,"event":"undone","at":"t"}"#;
+        assert_eq!(last_applied_in(log).as_deref(), Some("b"));
+        assert_eq!(last_applied_in(""), None);
     }
 }

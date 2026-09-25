@@ -27,6 +27,32 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
+/// Set while the assistant is working on a dictation, so the cancel
+/// shortcut (Esc) stays live until it has answered.
+static ASSISTANT_WORKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn assistant_working() -> bool {
+    ASSISTANT_WORKING.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Registers the cancel shortcut for as long as it lives.
+struct AssistantWorking(AppHandle);
+
+impl AssistantWorking {
+    fn start(app: &AppHandle) -> Self {
+        ASSISTANT_WORKING.store(true, std::sync::atomic::Ordering::Release);
+        shortcut::register_cancel_shortcut(app);
+        Self(app.clone())
+    }
+}
+
+impl Drop for AssistantWorking {
+    fn drop(&mut self) {
+        ASSISTANT_WORKING.store(false, std::sync::atomic::Ordering::Release);
+        shortcut::unregister_cancel_shortcut(&self.0);
+    }
+}
+
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, serde::Serialize)]
@@ -768,6 +794,9 @@ pub(crate) struct ProcessedTranscription {
     pub placement: Option<crate::assistant::Placement>,
     /// Why the assistant couldn't help; the dictation is shown, not pasted.
     pub assistant_error: Option<String>,
+    /// Casual style took the final period off, so a dictation continued
+    /// right after this one can put it back.
+    pub period_dropped: bool,
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -940,6 +969,8 @@ pub(crate) async fn process_transcription_output(
         && crate::assistant::is_addressed(&final_text, &settings.assistant_name)
     {
         crate::overlay::show_assistant_overlay(app);
+        // Esc cancels while the assistant works, as it does while recording.
+        let _working = AssistantWorking::start(app);
         let field = crate::text_field::focused_field();
         let context = crate::app_context::current();
         let destination = crate::assistant::Destination {
@@ -971,6 +1002,7 @@ pub(crate) async fn process_transcription_output(
                     switch_to_app: None,
                     placement: None,
                     assistant_error: None,
+                    period_dropped: false,
                 }
             }
             Ok(crate::assistant::Edit {
@@ -990,6 +1022,7 @@ pub(crate) async fn process_transcription_output(
                     switch_to_app: None,
                     placement: None,
                     assistant_error: None,
+                    period_dropped: false,
                 }
             }
             Ok(crate::assistant::Edit {
@@ -1009,6 +1042,7 @@ pub(crate) async fn process_transcription_output(
                     switch_to_app: None,
                     placement: None,
                     assistant_error: None,
+                    period_dropped: false,
                 }
             }
             Ok(edit) => {
@@ -1025,6 +1059,7 @@ pub(crate) async fn process_transcription_output(
                     switch_to_app: None,
                     placement: Some(edit.placement),
                     assistant_error: None,
+                    period_dropped: false,
                 }
             }
             Err(e) => {
@@ -1037,6 +1072,7 @@ pub(crate) async fn process_transcription_output(
                     switch_to_app: None,
                     placement: None,
                     assistant_error: Some(e),
+                    period_dropped: false,
                 }
             }
         };
@@ -1080,15 +1116,18 @@ pub(crate) async fn process_transcription_output(
     }
     // Deterministic styling for the destination: list layout, email layout
     // and the category's formality. Last, so the LLM can't undo it.
+    let mut period_dropped = false;
     if scratchpad.switch_to_app.is_none() {
         let context = crate::app_context::current();
         let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
-        final_text = crate::style::apply(
+        let styled = crate::style::apply(
             &final_text,
             category,
             settings.category_styles.get(category),
             &settings.custom_words,
         );
+        period_dropped = final_text.trim_end().ends_with('.') && !styled.trim_end().ends_with('.');
+        final_text = styled;
         let mut updated = get_settings(app);
         if crate::app_context::remember_recent(&mut updated, &context) {
             write_settings(app, updated);
@@ -1108,6 +1147,7 @@ pub(crate) async fn process_transcription_output(
         switch_to_app: scratchpad.switch_to_app,
         placement: None,
         assistant_error: None,
+        period_dropped,
     }
 }
 
@@ -1519,6 +1559,7 @@ impl ShortcutAction for TranscribeAction {
                                 let final_text = processed.final_text;
                                 let submit_key = processed.submit_key;
                                 let placement = processed.placement;
+                                let period_dropped = processed.period_dropped;
                                 let assistant_error = processed.assistant_error;
                                 let rm_for_paste = Arc::clone(&rm);
                                 let bench_id = bench_id.clone();
@@ -1593,12 +1634,28 @@ impl ShortcutAction for TranscribeAction {
                                         .then(crate::text_field::focused_field)
                                         .flatten();
                                     let final_text = match (&before, settings.context_aware_paste && inserting) {
-                                        (Some(field), true) => crate::text_field::adapt_to_context(
-                                            &final_text,
-                                            &field.text_before_cursor(40),
-                                            &field.text_after_cursor(10),
-                                            &settings.custom_words,
-                                        ),
+                                        (Some(field), true) => {
+                                            // Continuing right after the last
+                                            // dictation, whose period casual
+                                            // style took off: put it back.
+                                            let restore =
+                                                crate::text_field::continues_last_paste(field, &final_text);
+                                            let mut before_text = field.text_before_cursor(40);
+                                            if restore {
+                                                before_text.push('.');
+                                            }
+                                            let adapted = crate::text_field::adapt_to_context(
+                                                &final_text,
+                                                &before_text,
+                                                &field.text_after_cursor(10),
+                                                &settings.custom_words,
+                                            );
+                                            if restore {
+                                                format!(".{adapted}")
+                                            } else {
+                                                adapted
+                                            }
+                                        }
                                         _ => final_text,
                                     };
                                     let pasted_text = final_text.clone();
@@ -1624,6 +1681,11 @@ impl ShortcutAction for TranscribeAction {
                                                     );
                                                 }
                                             }
+                                            crate::text_field::remember_paste(
+                                                before.as_ref().map(|f| f.pid),
+                                                &pasted_text,
+                                                period_dropped && inserting,
+                                            );
                                             if !pasted_text.is_empty() {
                                                 crate::dictation_log::record_after_paste(
                                                     pasted_text,

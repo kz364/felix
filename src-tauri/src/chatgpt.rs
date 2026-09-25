@@ -219,9 +219,9 @@ fn authorize_url(redirect_uri: &str, challenge: &str, state: &str) -> String {
     url.to_string()
 }
 
-const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Handy</title>\
+const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Felix</title>\
 <body style=\"font:16px -apple-system,sans-serif;display:grid;place-items:center;height:90vh\">\
-<p>Signed in to ChatGPT. You can close this tab and go back to Handy.</p>";
+<p>Signed in to ChatGPT. You can close this tab and go back to Felix.</p>";
 
 async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     let response = format!(
