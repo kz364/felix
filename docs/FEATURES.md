@@ -33,6 +33,12 @@ staging pipeline first:
   Values are provisional (set from a few recordings); too sensitive can
   produce words from breath or noise.
 
+- **Quiet-speech safety net**: after each dictation the raw audio is run
+  through a much more sensitive silence threshold (a few milliseconds). If
+  that keeps clearly more audio, it's transcribed too, and used only when it
+  contains the first transcript plus real new words, not the "Thank you."
+  models invent from breathing.
+
 ## Vocabulary
 
 - **Native biasing** per model: Whisper's initial prompt, Qwen3-ASR's

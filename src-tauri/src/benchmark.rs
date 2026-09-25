@@ -71,6 +71,19 @@ pub struct Record {
     pub ground_truth: Option<String>,
     /// An OpenAI model's best guess at what was said, when asked for.
     pub guess: Option<Guess>,
+    /// The quiet-speech safety net, when it transcribed a second time.
+    pub rescue: Option<Rescue>,
+}
+
+/// A second transcription of audio a more sensitive silence threshold kept.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, Type)]
+#[serde(default)]
+pub struct Rescue {
+    pub threshold: f32,
+    pub kept_seconds: f32,
+    pub transcript: Option<String>,
+    /// Whether it replaced the first transcript.
+    pub used: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, Type)]
@@ -194,15 +207,18 @@ pub fn begin(
     app: &AppHandle,
     rm: &crate::managers::audio::AudioRecordingManager,
     kept_samples: usize,
+    recording: &crate::vad_rescue::Raw,
 ) -> Option<String> {
     let settings = crate::settings::get_settings(app);
-    if !settings.benchmark_recording {
+    if !settings.benchmark_recording || recording.samples.is_empty() {
         return None;
     }
-    let (raw, gain_at_start, gain_db, auto_gain) = rm.take_raw_recording();
-    if raw.is_empty() {
-        return None;
-    }
+    let raw = recording.samples.clone();
+    let (gain_at_start, gain_db, auto_gain) = (
+        recording.gain_at_start,
+        recording.gain_db,
+        recording.auto_gain,
+    );
     let dir = dir(app)?;
     let id = new_id();
     WATCH_GENERATION.fetch_add(1, Ordering::SeqCst);

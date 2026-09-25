@@ -522,7 +522,9 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             gain_config: GainConfig::new(settings.input_gain_db, settings.auto_gain_enabled),
-            raw_capture: RawCapture::new(settings.benchmark_recording),
+            // Always kept: the quiet-speech safety net replays it after each
+            // dictation (see `vad_rescue`); benchmark recording saves it.
+            raw_capture: RawCapture::new(true),
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
@@ -805,13 +807,8 @@ impl AudioRecordingManager {
         debug!("Input gain updated: fixed={gain_db:.1} dB, auto={auto_gain}");
     }
 
-    /// Benchmark recording on or off (applies from the next recording).
-    pub fn set_benchmark_recording(&self, enabled: bool) {
-        self.raw_capture.set_enabled(enabled);
-    }
-
     /// The last recording's audio before gain and VAD, with the gain settings
-    /// and learned levels it was recorded with. Empty unless benchmarking.
+    /// and learned levels it was recorded with.
     pub fn take_raw_recording(&self) -> (Vec<f32>, GainState, f32, bool) {
         let (samples, state) = self.raw_capture.take();
         (

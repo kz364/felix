@@ -46,6 +46,7 @@ mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
 mod utils;
+pub mod vad_rescue;
 mod vocab_teach;
 mod vocabulary;
 

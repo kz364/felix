@@ -2004,7 +2004,11 @@ ground_truth: string | null;
 /**
  * An OpenAI model's best guess at what was said, when asked for.
  */
-guess: Guess | null }
+guess: Guess | null; 
+/**
+ * The quiet-speech safety net, when it transcribed a second time.
+ */
+rescue: Rescue | null }
 export type BenchmarkSummary = { dictations: number; edited: number; 
 /**
  * Records with a ground truth from you.
@@ -2369,6 +2373,14 @@ change: string[];
  * "applied", "proposed" (not applied), "no change" or "failed".
  */
 status: string; error: string | null }
+/**
+ * A second transcription of audio a more sensitive silence threshold kept.
+ */
+export type Rescue = { threshold: number; kept_seconds: number; transcript: string | null; 
+/**
+ * Whether it replaced the first transcript.
+ */
+used: boolean }
 export type SecretMap = Partial<{ [key in string]: string }>
 export type SecureInputStatus = { 
 /**

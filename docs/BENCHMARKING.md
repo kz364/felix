@@ -59,6 +59,12 @@ sensitive 0.10 kept 15.5 of 15.5 s  ############################################
 per character). `--out` writes the kept audio per variant for listening or
 transcribing.
 
+`src-tauri/examples/rescue_eval.rs` replays recordings through the
+quiet-speech safety net and shows both transcripts and whether the second
+would be used (`cargo run --release --example rescue_eval -- <model.gguf>
+<benchmark/*.json>`). Records made with the app also carry `rescue` when
+the safety net transcribed a second time.
+
 Still to build: transcribing each variant and scoring word error rate
 against the references, split by microphone and by whispered vs voiced
 speech.

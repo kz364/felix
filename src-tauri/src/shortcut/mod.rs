@@ -1343,8 +1343,6 @@ pub fn change_auto_gain_setting(app: AppHandle, enabled: bool) -> Result<(), Str
 pub fn change_benchmark_recording_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.benchmark_recording = enabled;
-    app.state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
-        .set_benchmark_recording(enabled);
     settings::write_settings(&app, settings);
     Ok(())
 }

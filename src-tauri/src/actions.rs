@@ -350,6 +350,49 @@ async fn post_process_transcription(
     }
 }
 
+/// The quiet-speech safety net: the audio a more sensitive silence threshold
+/// keeps from the raw recording, when that's clearly more than the live pass
+/// kept. A few milliseconds per second of audio.
+fn rescue_audio(
+    app: &AppHandle,
+    rm: &AudioRecordingManager,
+    kept: usize,
+    raw: &crate::vad_rescue::Raw,
+) -> Option<(f32, Vec<f32>)> {
+    let settings = get_settings(app);
+    if !matches!(settings.vad_backend, crate::settings::VadBackend::Silero)
+        || raw.samples.is_empty()
+    {
+        return None;
+    }
+    let base = settings
+        .vad_threshold_for(rm.open_device_name().as_deref())
+        .unwrap_or(0.3);
+    let threshold = crate::vad_rescue::rescue_threshold(base);
+    let model = app
+        .path()
+        .resolve(
+            "resources/models/silero_vad_v4.onnx",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()?;
+    let started = Instant::now();
+    let rescued = match crate::vad_rescue::sensitive_pass(&model, raw, threshold) {
+        Ok(rescued) => rescued,
+        Err(e) => {
+            warn!("Quiet-speech check failed: {e}");
+            return None;
+        }
+    };
+    debug!(
+        "Quiet-speech check at {threshold}: {:.1}s kept vs {:.1}s, in {:?}",
+        rescued.len() as f32 / 16_000.0,
+        kept as f32 / 16_000.0,
+        started.elapsed()
+    );
+    crate::vad_rescue::worth_transcribing(kept, rescued.len()).then_some((threshold, rescued))
+}
+
 /// Dictation goes to a cloud provider instead of the model on this Mac.
 pub(crate) fn uses_cloud_transcription(settings: &AppSettings) -> bool {
     !matches!(settings.transcription_provider.as_str(), "" | "local")
@@ -1392,9 +1435,29 @@ impl ShortcutAction for TranscribeAction {
                     return;
                 }
 
-                // Benchmark recording (dev setting): keep the audio before
-                // gain and VAD, even when VAD kept nothing.
-                let bench_id = crate::benchmark::begin(&ah, &rm, samples.len());
+                // The audio before gain and VAD: replayed by the quiet-speech
+                // safety net, and kept by benchmark recording (dev setting)
+                // even when VAD kept nothing.
+                let (raw_samples, gain_at_start, gain_db, auto_gain) = rm.take_raw_recording();
+                let raw = crate::vad_rescue::Raw {
+                    samples: raw_samples,
+                    gain_at_start,
+                    gain_db,
+                    auto_gain,
+                };
+                let rescue = rescue_audio(&ah, &rm, samples.len(), &raw);
+                let bench_id = crate::benchmark::begin(&ah, &rm, samples.len(), &raw);
+                drop(raw);
+                // Silence detection kept nothing but a more sensitive pass
+                // found speech: transcribe that instead of giving up.
+                let rescue_only = samples.is_empty() && rescue.is_some();
+                let samples = match (&rescue, rescue_only) {
+                    (Some((_, audio)), true) => {
+                        info!("Silence detection kept nothing; transcribing what a more sensitive pass kept");
+                        audio.clone()
+                    }
+                    _ => samples,
+                };
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
@@ -1448,6 +1511,55 @@ impl ShortcutAction for TranscribeAction {
                         Err(err) => Err(err),
                     };
 
+                    // The safety net: transcribe what the sensitive pass kept
+                    // and use it only if it adds real words to the first.
+                    let mut rescue_record = None;
+                    let transcription_result = match (transcription_result, rescue) {
+                        (Ok(first), Some((threshold, audio))) => {
+                            let kept_seconds = audio.len() as f32 / 16_000.0;
+                            let second = if rescue_only {
+                                Some(first.clone())
+                            } else {
+                                let started = Instant::now();
+                                let (result, _) = transcribe_dictation(&ah, &tm, audio).await;
+                                debug!("Quiet-speech second pass took {:?}", started.elapsed());
+                                result.ok()
+                            };
+                            let first_for_check = if rescue_only { "" } else { first.as_str() };
+                            let used = second
+                                .as_deref()
+                                .is_some_and(|t| crate::vad_rescue::accept(first_for_check, t));
+                            info!(
+                                "Quiet-speech safety net ({threshold}): {:.1}s kept, {} words vs {}, {}",
+                                kept_seconds,
+                                second.as_deref().map_or(0, |t| t.split_whitespace().count()),
+                                first_for_check.split_whitespace().count(),
+                                if used { "used" } else { "not used" }
+                            );
+                            rescue_record = Some(crate::benchmark::Rescue {
+                                threshold,
+                                kept_seconds,
+                                transcript: second.clone(),
+                                used,
+                            });
+                            match (used, second) {
+                                (true, Some(text)) => Ok(text),
+                                _ if rescue_only => Ok(String::new()),
+                                _ => Ok(first),
+                            }
+                        }
+                        (result, _) => result,
+                    };
+                    if rescue_only && transcription_result.as_ref().is_ok_and(|t| t.is_empty()) {
+                        if let Some(id) = &bench_id {
+                            let record = rescue_record.clone();
+                            crate::benchmark::update(&ah, id, move |r| r.rescue = record);
+                        }
+                        utils::hide_recording_overlay(&ah);
+                        set_tray_state(&ah, TrayIconState::Idle);
+                        return;
+                    }
+
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
                         Ok(Ok(())) if !keep_audio => false,
@@ -1486,10 +1598,12 @@ impl ShortcutAction for TranscribeAction {
                             Ok(text) => (Some(text.clone()), None),
                             Err(e) => (None, Some(e.to_string())),
                         };
+                        let record = rescue_record.clone();
                         crate::benchmark::update(&ah, id, move |r| {
                             r.model = model;
                             r.transcript = text;
                             r.error = error;
+                            r.rescue = record;
                         });
                     }
 
