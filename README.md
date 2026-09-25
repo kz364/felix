@@ -27,6 +27,8 @@ stay on your Mac.
   handful of recordings. A too-sensitive threshold can let breathing or
   background noise through, where the speech model may turn it into words
   that were never said. A too-strict one drops quiet speech.
+- **Work in progress: Meetings and the assistant's agent mode.** Both are
+  unfinished and still changing; expect missing pieces and breakage.
 - **The Felix assistant's "act on your Mac" mode is experimental and
   paused.** It lets a model start Claude Code sessions and drive other apps
   through Codex CLI and Cua Driver. That's powerful and not hardened:
@@ -38,8 +40,7 @@ stay on your Mac.
   apps using it, and it may stop working.
 - **macOS on Apple Silicon only.** Windows and Linux builds, and the
   upstream CI workflows, haven't been run against this fork's changes.
-- **Meetings and benchmark recording are new** and have seen little
-  real-world use.
+- **Benchmark recording is new** and has seen little real-world use.
 
 ## Standing on Handy's shoulders
 
@@ -78,8 +79,8 @@ A short tour; [docs/FEATURES.md](docs/FEATURES.md) has the details.
   detection, and per-microphone detection thresholds, so whispering into a
   clip-on mic isn't thrown away as silence.
 - **Voice commands.** "New line", "press enter", switching apps by voice.
-- **Meetings.** Record, transcribe (locally, or with an OpenAI / Groq API
-  key) and summarise meetings.
+- **Meetings** (work in progress). Record, transcribe (locally, or with an
+  OpenAI / Groq API key) and summarise meetings.
 - **The Felix assistant** (optional, off by default): say its name and a
   ChatGPT model rewrites the focused field for you.
 - **A redesign.** New information architecture and visual language —

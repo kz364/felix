@@ -65,12 +65,14 @@ An optional voice assistant (off by default). Say its name and it takes
 the dictation and the focused field to a ChatGPT model, which inserts,
 replaces the selection or rewrites the field.
 
-⚠️ The "act on your Mac" mode (starting Claude Code sessions, running tasks
+⚠️ Work in progress. The "act on your Mac" (agent) mode (starting Claude Code sessions, running tasks
 in other apps through Codex CLI and Cua Driver) is experimental, paused and
 not hardened. Leave it off. ChatGPT sign-in reuses the Codex CLI's public
 OAuth client, which OpenAI doesn't officially support for other apps.
 
 ## Meetings
+
+⚠️ Work in progress: unfinished and still changing.
 
 Record meetings (microphone and system audio), transcribe them locally or
 with an OpenAI or Groq API key, identify speakers and write summaries.
