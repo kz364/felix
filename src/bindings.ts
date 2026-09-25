@@ -873,6 +873,27 @@ async dismissResultOverlay() : Promise<void> {
     await TAURI_INVOKE("dismiss_result_overlay");
 },
 /**
+ * Recent tasks, newest first.
+ */
+async recentAgentRuns() : Promise<AgentRunRecord[]> {
+    return await TAURI_INVOKE("recent_agent_runs");
+},
+async answerAgentQuestion(answer: AgentAnswer) : Promise<void> {
+    await TAURI_INVOKE("answer_agent_question", { answer });
+},
+/**
+ * Stop the task, or close the card once it's finished.
+ */
+async closeAgentCard() : Promise<void> {
+    await TAURI_INVOKE("close_agent_card");
+},
+async stopAgentTask() : Promise<void> {
+    await TAURI_INVOKE("stop_agent_task");
+},
+async removeAgentAppAccess(key: string) : Promise<void> {
+    await TAURI_INVOKE("remove_agent_app_access", { key });
+},
+/**
  * Copy the popup's text so it can be pasted where it was meant to go.
  */
 async copyResultText(text: string) : Promise<Result<null, string>> {
@@ -1653,10 +1674,54 @@ owner: string;
  * Where in the meeting it came up.
  */
 at_ms: number | null }
+export type AgentAnswer = "always_allow" | "allow_once" | "deny" | "confirm" | "cancel"
 /**
- * A spoken name for an app the app switcher can bring to the front
- * ("chat" → /Applications/Claude.app).
+ * An app Felix may always use for computer tasks ("Always allow").
  */
+export type AgentAppAccess = { name: string; bundle_id: string }
+/**
+ * What the overlay card shows.
+ */
+export type AgentCard = { 
+/**
+ * Who's working ("Felix").
+ */
+name: string; 
+/**
+ * The task, as the user asked for it.
+ */
+task: string; 
+/**
+ * The last few finished steps, oldest first.
+ */
+steps: string[]; 
+/**
+ * What it's doing now.
+ */
+current: string | null; status: AgentStatus; 
+/**
+ * How it ended, in a sentence or two.
+ */
+message: string | null; question: AgentQuestion | null; 
+/**
+ * Auto-close delay once finished; 0 = stays until closed.
+ */
+timeout_ms: number }
+export type AgentQuestion = 
+/**
+ * First use of an app in this task.
+ */
+{ kind: "app_access"; app: string; can_always: boolean } | 
+/**
+ * A step that sends, posts, deletes or buys.
+ */
+{ kind: "confirm"; action: string }
+export type AgentRunRecord = { at: string; task: string; steps: string[]; status: AgentStatus; message: string; seconds: number }
+export type AgentStatus = "working" | "done" | 
+/**
+ * Stopped before a step only the user should do, or the user said no.
+ */
+"needs_you" | "failed" | "stopped"
 /**
  * Destination category of the app or website being dictated into.
  */
@@ -1844,7 +1909,12 @@ agent_auto_send?: boolean;
  * default; renamed from `agent_fast_driver` so earlier "on" defaults
  * don't carry over.
  */
-agent_fast_mode?: boolean; assistant_model?: string; 
+agent_fast_mode?: boolean; 
+/**
+ * Apps Felix may always use for computer tasks; others are asked for
+ * each task.
+ */
+agent_app_access?: AgentAppAccess[]; assistant_model?: string; 
 /**
  * Reasoning effort: "none", "low", "medium" or "high".
  */

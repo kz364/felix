@@ -219,7 +219,9 @@ const RESPONSES: Record<string, unknown> = {
 };
 
 export function installTauriMock() {
-  mockWindows("main");
+  mockWindows(
+    window.location.pathname.includes("overlay") ? "recording_overlay" : "main",
+  );
   mockConvertFileSrc("macos");
   mockIPC(
     (cmd) => {

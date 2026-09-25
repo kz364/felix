@@ -12,6 +12,8 @@ import type {
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 import { ResultCard } from "./ResultCard";
+import { AgentCard } from "./AgentCard";
+import type { AgentCard as AgentCardData } from "@/bindings";
 
 /** `result-text` event payload (overlay.rs `ResultPopup`). */
 interface ResultPopup {
@@ -27,7 +29,8 @@ type OverlayState =
   | "transcribing"
   | "processing"
   | "assistant"
-  | "result";
+  | "result"
+  | "agent";
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
@@ -65,6 +68,8 @@ const RecordingOverlay: React.FC = () => {
     timeout_ms: 0,
   });
   const [resultSession, setResultSession] = useState(0);
+  // Felix's computer task, shown while it works.
+  const [agentCard, setAgentCard] = useState<AgentCardData | null>(null);
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -124,6 +129,10 @@ const RecordingOverlay: React.FC = () => {
         },
       );
 
+      const unlistenAgent = await listen<AgentCardData>("agent-card", (event) =>
+        setAgentCard(event.payload),
+      );
+
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
         setCaptureReady(true);
@@ -155,6 +164,7 @@ const RecordingOverlay: React.FC = () => {
         unlistenShow();
         unlistenHide();
         unlistenResult();
+        unlistenAgent();
         unlistenReady();
         unlistenLevel();
         unlistenStream();
@@ -269,6 +279,15 @@ const RecordingOverlay: React.FC = () => {
           timeoutMs={result.timeout_ms}
           session={resultSession}
         />
+      </div>
+    );
+  }
+
+  // ---- Felix working on a task: stays up with each step ----
+  if (state === "agent" && agentCard) {
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        <AgentCard card={agentCard} />
       </div>
     );
   }

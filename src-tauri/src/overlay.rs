@@ -64,7 +64,7 @@ const OVERLAY_RESULT_MAX_HEIGHT: f64 = 320.0;
 fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
-        "result" => (OVERLAY_RESULT_WIDTH, OVERLAY_RESULT_HEIGHT),
+        "result" | "agent" => (OVERLAY_RESULT_WIDTH, OVERLAY_RESULT_HEIGHT),
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
@@ -684,6 +684,31 @@ pub fn show_result_overlay_titled(app_handle: &AppHandle, text: String, title: O
     });
 }
 
+/// Overlay generation the agent card was last shown at: while nothing else
+/// has taken the overlay since, an update only sends the new card.
+static AGENT_CARD_GENERATION: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Show Felix's task card, or update it in place (see `agent_run`). Shown
+/// even with the recording overlay turned off, like the result card.
+pub fn show_agent_card(app_handle: &AppHandle, card: crate::agent_run::AgentCard) {
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let _ = handle.emit_to("recording_overlay", "agent-card", card);
+        let current = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+        if AGENT_CARD_GENERATION.load(Ordering::SeqCst) == current {
+            return;
+        }
+        show_overlay_state_on_main(&handle, "agent");
+        AGENT_CARD_GENERATION.store(
+            OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+        let (width, height) = overlay_dimensions("agent");
+        remember_result_rect(&handle, width, height);
+        watch_result_hover(&handle);
+    });
+}
+
 fn remember_result_rect(app_handle: &AppHandle, width: f64, height: f64) {
     #[cfg(not(target_os = "windows"))]
     let rect =
@@ -838,6 +863,12 @@ static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Hides the recording overlay window with fade-out animation
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
+    // Felix's task card comes back after a dictation or another card.
+    if crate::agent_run::card_shown() {
+        crate::agent_run::reshow();
+        return;
+    }
+    AGENT_CARD_GENERATION.store(u64::MAX, Ordering::SeqCst);
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {

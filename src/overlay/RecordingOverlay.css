@@ -622,3 +622,130 @@
 .scard.result.hovered .rbar i {
   opacity: 0.35;
 }
+
+/* ============================================================
+   Agent card — Felix working on a task: the result card's shape, with the
+   task, a short step list (ticks for done, a spinner for now), questions
+   with buttons, and how it ended.
+   ============================================================ */
+.scard.agent .rtitle.agent-done {
+  color: var(--s-accent);
+}
+.scard.agent .rtitle.agent-needs_you,
+.scard.agent .rtitle.agent-failed {
+  color: var(--color-text);
+}
+.atask {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.asteps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asteps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.asteps li.adone {
+  color: var(--s-muted);
+}
+.asteps li.adone svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  color: var(--s-accent);
+}
+.asteps li.anow {
+  color: var(--color-text);
+  animation: astep-in 220ms ease-out;
+}
+@keyframes astep-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.aspin {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 3px 1px 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--s-hair);
+  border-top-color: var(--s-accent);
+  animation: aspin 800ms linear infinite;
+}
+@keyframes aspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.aask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--s-accent-soft);
+}
+.aask p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.aask p.ahint {
+  font-size: 11px;
+  color: var(--s-muted);
+}
+.abtns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.abtn {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--s-hair);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    transform 100ms ease;
+}
+.abtn:hover {
+  background: color-mix(in srgb, var(--s-accent) 18%, transparent);
+}
+.abtn:active {
+  transform: scale(0.96);
+}
+.abtn.primary {
+  border-color: transparent;
+  background: var(--s-accent);
+  color: var(--color-background, #fff);
+}
+.abtn.primary:hover {
+  background: color-mix(in srgb, var(--s-accent) 85%, black);
+}

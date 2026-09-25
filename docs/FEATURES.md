@@ -73,9 +73,16 @@ replaces the selection or rewrites the field. "Felix, go to Codex" brings
 that app to the front, and "Felix, it keeps writing cloud instead of Claude"
 fixes the dictation rules.
 
-⚠️ Work in progress. The "act on your Mac" (agent) mode (starting Claude Code sessions, running tasks
-in other apps through Codex CLI and Cua Driver) is experimental, paused and
-not hardened. Leave it off. ChatGPT sign-in reuses the Codex CLI's public
+⚠️ Work in progress. The "act on your Mac" (agent) mode (starting Claude Code
+sessions, running tasks in other apps through Codex CLI and Cua Driver) is
+experimental and not hardened. While a task runs, a card shows each step in
+plain words; closing it stops the task. Every driver call goes through one
+gate in Felix: it asks before Felix first uses an app (Always allow / Allow
+this time / Deny), never uses password managers or System Settings, asks
+every time for terminals, and asks for a confirmation (button or a spoken
+"yes") before anything that sends, posts, deletes or buys. Recent tasks are
+listed step by step on the Felix page. Fast mode (Simple Jev picks each
+step) is very experimental and off by default. ChatGPT sign-in reuses the Codex CLI's public
 OAuth client, which OpenAI doesn't officially support for other apps.
 
 ## Meetings

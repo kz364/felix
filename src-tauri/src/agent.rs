@@ -4,9 +4,11 @@
 //! Cua Driver runs as Handy's own child in its "embedded" mode, so macOS
 //! checks Handy's Accessibility and Screen Recording grants rather than asking
 //! for new ones. Handy starts the daemon on a private socket and gives Codex
-//! the driver's MCP proxy as its only tool server. Codex drives apps in the
-//! background through the accessibility tree (element indices, not
-//! screenshots), and its own shell stays sandboxed.
+//! the driver's MCP proxy as its only tool server, behind Felix's gate
+//! (`cua_gate`), so every call is checked, confirmed when it needs to be and
+//! shown on the card (`agent_run`). Codex drives apps in the background
+//! through the accessibility tree (element indices, not screenshots), and its
+//! own shell stays sandboxed.
 
 use log::{debug, info, warn};
 use once_cell::sync::Lazy;
@@ -129,15 +131,23 @@ Do it with the `cua` tools, which work apps in the background through accessibil
 - Your shell is sandboxed: it can read files and write in the working folder, but it can't open apps. Use the cua tools for anything on screen.
 Take the most direct path; don't explore beyond what the task needs.
 
-Don't do anything that can't be undone or that reaches other people: sending a message or email, posting, deleting, buying or paying, or changing account or security settings. Get it ready instead (for example a drafted message) and say it's waiting for them.
+Don't do anything that can't be undone or that reaches other people (sending a message or email, posting, deleting, buying or paying, changing account or security settings) unless they asked for exactly that. Felix asks the user to confirm those steps and to allow each app the first time; if a tool call comes back refused, don't try another way around it: stop and say what's left for them.
 
 End with one or two short sentences for the user: what you did, or what's left for them. No Markdown."#
     )
 }
 
-/// Arguments for `codex exec`: Cua's MCP proxy as the only tool server, the
-/// user's own Codex config ignored (its MCP servers and settings don't apply).
-fn codex_args(driver: &Path, socket: &Path, out: &Path, task: &str) -> Vec<String> {
+/// Arguments for `codex exec`: Cua's MCP proxy, behind Felix's gate, as the
+/// only tool server; the user's own Codex config ignored (its MCP servers and
+/// settings don't apply).
+fn codex_args(
+    felix: &Path,
+    gate: &Path,
+    driver: &Path,
+    socket: &Path,
+    out: &Path,
+    task: &str,
+) -> Vec<String> {
     let toml_str = |s: &str| format!("{s:?}");
     let env = driver_env()
         .iter()
@@ -156,11 +166,13 @@ fn codex_args(driver: &Path, socket: &Path, out: &Path, task: &str) -> Vec<Strin
         "-c".into(),
         format!(
             "mcp_servers.cua.command={}",
-            toml_str(&driver.to_string_lossy())
+            toml_str(&felix.to_string_lossy())
         ),
         "-c".into(),
         format!(
-            "mcp_servers.cua.args=[\"mcp\",\"--embedded\",\"--socket\",{}]",
+            "mcp_servers.cua.args=[\"--cua-gate\",{},{},{}]",
+            toml_str(&gate.to_string_lossy()),
+            toml_str(&driver.to_string_lossy()),
             toml_str(&socket.to_string_lossy())
         ),
         "-c".into(),
@@ -185,6 +197,7 @@ pub fn run_task(task: &str, app: &str, content: &str, fast: bool) -> Result<Stri
         match outcome {
             crate::agent_decide::Outcome::Done(reply)
             | crate::agent_decide::Outcome::Handoff(reply) => return Ok(reply),
+            _ if crate::agent_run::stopped() => return Err("Stopped".into()),
             crate::agent_decide::Outcome::GaveUp { done, .. } if !done.is_empty() => {
                 task = format!(
                     "{task}\n\nAlready done in {app}, don't repeat it: {}. Carry on from there.",
@@ -204,9 +217,11 @@ pub fn run_task(task: &str, app: &str, content: &str, fast: bool) -> Result<Stri
     let log = std::env::temp_dir().join("handy-felix-task.log");
     let log_file = std::fs::File::create(&log).map_err(|e| e.to_string())?;
 
+    let felix = std::env::current_exe().map_err(|e| e.to_string())?;
+    let gate = crate::agent_run::gate_socket()?;
     let started = Instant::now();
     let mut child = Command::new(&codex)
-        .args(codex_args(&driver, &socket, &out, task))
+        .args(codex_args(&felix, &gate, &driver, &socket, &out, task))
         .current_dir(&workdir)
         .stdin(Stdio::null())
         .stdout(log_file.try_clone().map_err(|e| e.to_string())?)
@@ -216,6 +231,11 @@ pub fn run_task(task: &str, app: &str, content: &str, fast: bool) -> Result<Stri
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
+            Ok(None) if crate::agent_run::stopped() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Stopped".into());
+            }
             Ok(None) if started.elapsed() > TASK_TIMEOUT => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -246,8 +266,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_gets_cua_as_its_only_tool_server() {
+    fn codex_gets_cua_through_felixs_gate_as_its_only_tool_server() {
         let args = codex_args(
+            Path::new("/Apps/Handy.app/Contents/MacOS/handy"),
+            Path::new("/tmp/handy-gate-1.sock"),
             Path::new("/Apps/Handy.app/Contents/MacOS/cua-driver"),
             Path::new("/tmp/handy-cua-1.sock"),
             Path::new("/tmp/out.txt"),
@@ -256,10 +278,11 @@ mod tests {
         let joined = args.join(" ");
         assert!(joined.contains("--ignore-user-config"));
         assert!(joined.contains("--sandbox workspace-write"));
-        assert!(joined
-            .contains(r#"mcp_servers.cua.command="/Apps/Handy.app/Contents/MacOS/cua-driver""#));
+        assert!(
+            joined.contains(r#"mcp_servers.cua.command="/Apps/Handy.app/Contents/MacOS/handy""#)
+        );
         assert!(joined.contains(
-            r#"mcp_servers.cua.args=["mcp","--embedded","--socket","/tmp/handy-cua-1.sock"]"#
+            r#"mcp_servers.cua.args=["--cua-gate","/tmp/handy-gate-1.sock","/Apps/Handy.app/Contents/MacOS/cua-driver","/tmp/handy-cua-1.sock"]"#
         ));
         assert!(joined.contains(r#"CUA_DRIVER_EMBEDDED="1""#));
         assert!(joined.contains(r#"CUA_TELEMETRY_ENABLED="false""#));

@@ -5,6 +5,13 @@ use clap::Parser;
 use handy_app_lib::CliArgs;
 
 fn main() {
+    // Felix's gate between Codex and Cua Driver (see cua_gate): a relay, not
+    // the app, so it runs before anything else and exits.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--cua-gate") {
+        std::process::exit(handy_app_lib::cua_gate::relay(&args[2..]));
+    }
+
     let cli_args = CliArgs::parse();
 
     #[cfg(target_os = "linux")]

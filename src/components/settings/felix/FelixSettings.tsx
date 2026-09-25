@@ -5,6 +5,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { AssistantSettings } from "../voice-control/AssistantSettings";
 import { useSettings } from "../../../hooks/useSettings";
+import { AgentApps, AgentRuns } from "./AgentActivity";
 
 /** The assistant's own page: off by default, since it acts for the user. */
 export const FelixSettings: React.FC = () => {
@@ -75,6 +76,17 @@ export const FelixSettings: React.FC = () => {
               grouped={true}
             />
           )}
+        </SettingsGroup>
+      )}
+      {enabled && agentActions && (
+        <SettingsGroup
+          title={t("settings.voiceControl.assistant.computer.safety.title")}
+          description={t(
+            "settings.voiceControl.assistant.computer.safety.description",
+          )}
+        >
+          <AgentApps />
+          <AgentRuns />
         </SettingsGroup>
       )}
     </div>

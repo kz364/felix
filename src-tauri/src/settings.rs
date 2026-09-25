@@ -324,6 +324,24 @@ pub enum AppRuleKind {
     Website,
 }
 
+/// An app Felix may always use for computer tasks ("Always allow").
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
+pub struct AgentAppAccess {
+    pub name: String,
+    pub bundle_id: String,
+}
+
+impl AgentAppAccess {
+    /// Bundle id, or the name when there's none.
+    pub fn key(&self) -> String {
+        if self.bundle_id.is_empty() {
+            self.name.to_lowercase()
+        } else {
+            self.bundle_id.clone()
+        }
+    }
+}
+
 /// Assigns an app or website to a category.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 pub struct AppRule {
@@ -744,6 +762,10 @@ pub struct AppSettings {
     /// don't carry over.
     #[serde(default)]
     pub agent_fast_mode: bool,
+    /// Apps Felix may always use for computer tasks; others are asked for
+    /// each task.
+    #[serde(default)]
+    pub agent_app_access: Vec<AgentAppAccess>,
     #[serde(default = "default_assistant_model")]
     pub assistant_model: String,
     /// Reasoning effort: "none", "low", "medium" or "high".
@@ -1457,6 +1479,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
         agent_fast_mode: false,
+        agent_app_access: Vec::new(),
         assistant_model: default_assistant_model(),
         assistant_effort: default_assistant_effort(),
         assistant_notes: String::new(),

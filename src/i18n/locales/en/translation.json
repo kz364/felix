@@ -854,7 +854,7 @@
         },
         "computer": {
           "groupTitle": "On your Mac",
-          "groupDescription": "\"Felix, open Notes and start a packing list\" works your apps in the background through Codex and Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
+          "groupDescription": "\"Felix, open Notes and start a packing list\" works your apps in the background through Codex and Cua Driver, with a card showing each step; close the card to stop it. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
           "toggle": {
             "label": "Act on your Mac",
             "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
@@ -866,6 +866,29 @@
           "fastMode": {
             "label": "Fast mode (very experimental)",
             "description": "Very experimental and mostly untested; expect it to click the wrong thing. Simple Jev (Featherless's classifier) picks each click, about a second per step, and Codex takes over anything it can't finish. The names of buttons and fields in that app, and the text you asked for, go to Simple Jev's public demo."
+          },
+          "safety": {
+            "title": "Permissions and activity",
+            "description": "Felix asks before it first uses an app, and before anything that sends, posts, deletes or buys (click Do it, or dictate “yes”). It never uses password managers or System Settings, and asks every time for terminals. While a task runs, what's in the app's windows goes to OpenAI through Codex, and in Fast mode button names and your text also go to Simple Jev's public demo."
+          },
+          "apps": {
+            "title": "Always allowed",
+            "description": "Apps Felix can use without asking. Others are asked about in each task.",
+            "empty": "None yet. Choose Always allow on the card to add one.",
+            "remove": "Stop always allowing {{app}}"
+          },
+          "runs": {
+            "title": "Recent tasks",
+            "empty": "No tasks yet.",
+            "steps_one": "{{count}} step",
+            "steps_other": "{{count}} steps",
+            "status": {
+              "done": "Done",
+              "needs_you": "Left for you",
+              "failed": "Couldn't finish",
+              "stopped": "Stopped",
+              "working": "Working"
+            }
           }
         },
         "notes": {
@@ -1146,7 +1169,28 @@
       "copy": "Copy",
       "copied": "Copied"
     },
-    "assistant": "Working on it..."
+    "assistant": "Working on it...",
+    "agent": {
+      "working": "{{name}} is working",
+      "status": {
+        "done": "{{name}} is done",
+        "needs_you": "{{name}} needs you",
+        "failed": "{{name}} couldn't finish",
+        "stopped": "{{name}} stopped",
+        "working": "{{name}} is working"
+      },
+      "stop": "Stop",
+      "appAccess": "Let {{name}} use {{app}}?",
+      "alwaysAllow": "Always allow",
+      "allowOnce": "Allow this time",
+      "deny": "Deny",
+      "sayAppAccess": "Or dictate “always”, “yes” or “no”.",
+      "sayAppAccessOnce": "Asked every time for this app. Or dictate “yes” or “no”.",
+      "confirm": "{{action}}?",
+      "doIt": "Do it",
+      "cancel": "Cancel",
+      "sayConfirm": "Or dictate “yes” or “no”."
+    }
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} may be blocking 1 shortcut",

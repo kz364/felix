@@ -6,14 +6,13 @@
 //! picks one, in about a second. A classifier can't write, so the text to
 //! type comes from Felix's router.
 //!
-//! Guardrails are code, not prompt: Felix never presses anything that sends,
-//! posts, deletes, buys or pays (it stops and hands over), types the text at
-//! most once, and gives up when the same action changes nothing. Whatever it
+//! Guardrails are code, not prompt: every driver call goes through
+//! `agent_run::check_call` (the user's app permissions, a confirmation before
+//! anything that sends, posts, deletes or buys, and the live card); it types
+//! the text at most once, and gives up when the same action changes nothing. Whatever it
 //! can't finish goes to Codex (see `agent`).
 
 use log::{debug, info};
-use once_cell::sync::Lazy;
-use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,10 +29,6 @@ const LABEL_CHARS: usize = 40;
 const FINISHED: &str = "finished: nothing left to do";
 const NEXT_QUESTION: &str = "Which single action should be taken next toward the goal? Never add to or change existing, unrelated content: if the goal is to start or create something, create a new one first.";
 const DONE_QUESTION: &str = "Has the goal already been fully achieved?";
-
-static BLOCKED: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(send|post|publish|share|reply|forward|delete|remove|erase|empty|trash|buy|purchase|pay|checkout|place order|transfer|submit|sign out|log ?out|unsubscribe)\b").unwrap()
-});
 
 const PRESSABLE: &[&str] = &[
     "AXButton",
@@ -76,6 +71,13 @@ struct Driver<'a> {
 
 impl Driver<'_> {
     fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
+        self.call_on(tool, args, None)
+    }
+
+    /// A driver call, checked and shown on the card first. `label` names
+    /// the element it acts on.
+    fn call_on(&self, tool: &str, args: Value, label: Option<&str>) -> Result<Value, String> {
+        crate::agent_run::check_call(tool, &args, label)?;
         let out = Command::new(self.path)
             .args(["call", tool, &args.to_string(), "--socket"])
             .arg(self.socket)
@@ -144,6 +146,13 @@ fn main_window(windows: &Value) -> Option<u64> {
             (w["is_on_screen"] == true, area as u64)
         })
         .and_then(|w| w["window_id"].as_u64())
+}
+
+/// The element's name inside a candidate ("press button 'New Note'" → New Note).
+fn element_label(choice: &str) -> Option<String> {
+    let start = choice.find('\'')? + 1;
+    let end = choice.rfind('\'')?;
+    (end > start).then(|| choice[start..end].to_string())
 }
 
 fn describe(element: &Value) -> Option<String> {
@@ -368,16 +377,6 @@ pub fn run(driver: &Path, socket: &Path, goal: &str, app: &str, content: &str) -
         if finished >= 0.7 || *action == Step::Finish {
             return Outcome::Done(summary(&done));
         }
-        if matches!(action, Step::Press(_)) && BLOCKED.is_match(&choice) {
-            let mut msg = summary(&done);
-            if done.is_empty() {
-                msg.clear();
-            } else {
-                msg.push(' ');
-            }
-            let target = choice.trim_start_matches("press ");
-            return Outcome::Handoff(format!("{msg}The last step, {target}, is yours to do."));
-        }
         // The same choice on an unchanged window: it isn't getting anywhere.
         let seen = (choice.clone(), Value::Array(elements.clone()).to_string());
         if last.as_ref() == Some(&seen) {
@@ -385,18 +384,40 @@ pub fn run(driver: &Path, socket: &Path, goal: &str, app: &str, content: &str) -
         }
         last = Some(seen);
         let snapshot_id = snap["snapshot_id"].clone();
+        let label = element_label(&choice);
         let result = match action {
-            Step::Press(idx) => cua.call(
+            Step::Press(idx) => cua.call_on(
                 "click",
                 json!({"pid": pid, "window_id": window, "snapshot_id": snapshot_id, "element_index": idx}),
+                label.as_deref(),
             ),
-            Step::Type(idx) => cua.call(
+            Step::Type(idx) => cua.call_on(
                 "type_text",
                 json!({"pid": pid, "window_id": window, "snapshot_id": snapshot_id, "element_index": idx, "text": content}),
+                label.as_deref(),
             ),
             Step::Finish => unreachable!(),
         };
         if let Err(e) = result {
+            if crate::agent_run::stopped() {
+                return Outcome::Handoff("Stopped.".into());
+            }
+            if matches!(action, Step::Press(_))
+                && label
+                    .as_deref()
+                    .is_some_and(|l| crate::agent_run::RISKY.is_match(l))
+            {
+                let mut msg = summary(&done);
+                if done.is_empty() {
+                    msg.clear();
+                } else {
+                    msg.push(' ');
+                }
+                return Outcome::Handoff(format!(
+                    "{msg}{} is yours to do.",
+                    label.unwrap_or_default()
+                ));
+            }
             return give_up(e, &done);
         }
         debug!("Fast step done: {choice}");
@@ -489,15 +510,28 @@ mod tests {
             "press button 'Share'",
             "press button 'Buy Now'",
         ] {
-            assert!(BLOCKED.is_match(label), "{label}");
+            assert!(crate::agent_run::RISKY.is_match(label), "{label}");
         }
         for label in [
             "press button 'New Note'",
             "press button 'Checklist'",
             "press row 'Sender notes'",
         ] {
-            assert!(!BLOCKED.is_match(label), "{label}");
+            assert!(!crate::agent_run::RISKY.is_match(label), "{label}");
         }
+    }
+
+    #[test]
+    fn reads_the_element_name_from_a_choice() {
+        assert_eq!(
+            element_label("press button 'New Note'").as_deref(),
+            Some("New Note")
+        );
+        assert_eq!(
+            element_label("type the text into textarea 'Body'").as_deref(),
+            Some("Body")
+        );
+        assert_eq!(element_label(FINISHED), None);
     }
 
     #[test]

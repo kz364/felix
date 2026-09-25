@@ -900,29 +900,29 @@ fn start_claude_session(app: &AppHandle, project: String, prompt: String, send: 
     });
 }
 
-/// Felix's computer task: says it's on it, runs it (Simple Jev or Codex, with Cua) in the
-/// background, and shows its answer when it's done.
+/// Felix's computer task: runs it (Simple Jev or Codex, with Cua) in the
+/// background while the card shows each step, asks for permissions and
+/// confirmations, and ends with Felix's answer.
 fn run_computer_task(app: &AppHandle, task: String, target_app: String, content: String) {
     let app = app.clone();
     let settings = get_settings(&app);
     let (name, fast) = (settings.assistant_name, settings.agent_fast_mode);
-    crate::overlay::show_result_overlay_titled(
-        &app,
-        task.clone(),
-        Some(format!("{name} is on it")),
-    );
+    if let Err(e) = crate::agent_run::start(&name, &task) {
+        crate::overlay::show_result_overlay_titled(&app, task, Some(e));
+        return;
+    }
     std::thread::spawn(move || {
         let started = Instant::now();
         let result = crate::agent::run_task(&task, &target_app, &content, fast);
         info!("Computer task took {:?}", started.elapsed());
-        let (title, text) = match result {
-            Ok(reply) => (format!("{name} is done"), reply),
+        match result {
+            // Ends as "needs you" when the user said no to a step on the way.
+            Ok(reply) => crate::agent_run::finish(crate::agent_run::AgentStatus::Done, &reply),
             Err(e) => {
                 error!("Computer task failed: {e}");
-                (format!("{name} couldn't finish"), e)
+                crate::agent_run::finish(crate::agent_run::AgentStatus::Failed, &e);
             }
-        };
-        crate::overlay::show_result_overlay_titled(&app, text, Some(title));
+        }
     });
 }
 
@@ -980,6 +980,19 @@ pub(crate) async fn process_transcription_output(
     transcription: &str,
     post_process: bool,
 ) -> ProcessedTranscription {
+    // "Yes" / "no" / "always" while Felix's card is asking something
+    // answers it instead of being pasted.
+    if crate::agent_run::answer_by_voice(transcription) {
+        return ProcessedTranscription {
+            final_text: String::new(),
+            post_processed_text: None,
+            post_process_prompt: None,
+            submit_key: None,
+            placement: None,
+            assistant_error: None,
+            period_dropped: false,
+        };
+    }
     let settings = crate::rules::with_rules(get_settings(app));
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;

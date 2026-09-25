@@ -1,6 +1,7 @@
 mod actions;
 pub mod agent;
 pub mod agent_decide;
+pub mod agent_run;
 pub mod agent_skills;
 mod app_categories;
 mod app_context;
@@ -19,6 +20,7 @@ mod cleanup;
 pub mod cli;
 mod clipboard;
 mod commands;
+pub mod cua_gate;
 mod dictation_log;
 mod helpers;
 mod input;
@@ -804,6 +806,11 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_agent_fast_mode_setting,
             overlay::fit_result_overlay,
             overlay::dismiss_result_overlay,
+            agent_run::recent_agent_runs,
+            agent_run::answer_agent_question,
+            agent_run::close_agent_card,
+            agent_run::stop_agent_task,
+            agent_run::remove_agent_app_access,
             overlay::copy_result_text,
             dictation_log::get_recent_dictations,
             shortcut::change_history_retention_days_setting,
@@ -900,6 +907,8 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
         ])
+        // Sent to the overlay as a plain event (see overlay::show_agent_card).
+        .typ::<agent_run::AgentCard>()
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
             managers::transcription::StreamTextEvent,
@@ -1143,6 +1152,7 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
+            agent_run::init(&app_handle);
             local_llm::sync_with_settings(&settings::get_settings(&app_handle));
 
             // Secure Input monitor (macOS): detects stuck secure input that
