@@ -21,11 +21,10 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
-    self, get_settings, AppAlias, AppCategory, AppRule, AppRuleKind, AutoSubmitKey,
-    CategoryInstructions, CategoryStyles, CleanupLevel, ClipboardHandling, KeyboardImplementation,
-    LLMPrompt, OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding,
-    SoundTheme, TextReplacement, Theme, TypingTool, VadBackend, VoiceTrigger,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
+    self, get_settings, AppCategory, AppRule, AppRuleKind, AutoSubmitKey, CategoryInstructions,
+    CategoryStyles, CleanupLevel, ClipboardHandling, KeyboardImplementation, LLMPrompt,
+    OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding, SoundTheme,
+    TextReplacement, Theme, TypingTool, VadBackend, VoiceTrigger, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -1546,7 +1545,7 @@ pub fn list_app_categories(app: AppHandle) -> Vec<CategorizedEntry> {
             rule.category,
         );
     }
-    for installed in crate::app_switcher::installed_apps() {
+    for installed in crate::installed_apps::installed_apps() {
         let Some(bundle_id) = installed.bundle_id else {
             continue;
         };
@@ -1597,50 +1596,6 @@ pub fn clear_recent_contexts(app: AppHandle) -> Result<(), String> {
     settings.recent_contexts.clear();
     settings::write_settings(&app, settings);
     Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_app_switch_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.app_switch_enabled = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_app_switch_any_installed_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.app_switch_any_installed = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn update_app_aliases(app: AppHandle, aliases: Vec<AppAlias>) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.app_aliases = aliases
-        .into_iter()
-        .map(|a| AppAlias {
-            phrase: a.phrase.trim().to_string(),
-            app_path: a.app_path.trim().to_string(),
-        })
-        .filter(|a| !a.phrase.is_empty() && !a.app_path.is_empty())
-        .collect();
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// Apps the app switcher can target, for the alias picker.
-#[tauri::command]
-#[specta::specta]
-pub fn list_installed_apps() -> Vec<crate::app_switcher::InstalledApp> {
-    crate::app_switcher::installed_apps()
 }
 
 #[tauri::command]
@@ -1875,6 +1830,15 @@ pub fn change_agent_actions_setting(app: AppHandle, enabled: bool) -> Result<(),
 pub fn change_agent_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.agent_auto_send = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_fast_mode_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_fast_mode = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

@@ -852,6 +852,14 @@ async changeAgentAutoSendSetting(enabled: boolean) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+async changeAgentFastModeSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_fast_mode_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Resize the result popup to the card the overlay measured.
  */
@@ -955,36 +963,6 @@ async clearRecentContexts() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-async changeAppSwitchEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_app_switch_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async changeAppSwitchAnyInstalledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_app_switch_any_installed_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateAppAliases(aliases: AppAlias[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_app_aliases", { aliases }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Apps the app switcher can target, for the alias picker.
- */
-async listInstalledApps() : Promise<InstalledApp[]> {
-    return await TAURI_INVOKE("list_installed_apps");
 },
 async updateVoiceTriggers(triggers: VoiceTrigger[]) : Promise<Result<null, string>> {
     try {
@@ -1679,7 +1657,6 @@ at_ms: number | null }
  * A spoken name for an app the app switcher can bring to the front
  * ("chat" → /Applications/Claude.app).
  */
-export type AppAlias = { phrase: string; app_path: string }
 /**
  * Destination category of the app or website being dictated into.
  */
@@ -1860,7 +1837,14 @@ agent_actions_enabled?: boolean;
  * Send the prompt when Felix starts a Claude Code session, rather than
  * leaving it filled in.
  */
-agent_auto_send?: boolean; assistant_model?: string; 
+agent_auto_send?: boolean; 
+/**
+ * Very experimental: try computer tasks with Simple Jev picking each
+ * step (about a second each) before handing them to Codex. Off by
+ * default; renamed from `agent_fast_driver` so earlier "on" defaults
+ * don't carry over.
+ */
+agent_fast_mode?: boolean; assistant_model?: string; 
 /**
  * Reasoning effort: "none", "low", "medium" or "high".
  */
@@ -1913,17 +1897,9 @@ benchmark_recording?: boolean;
 microphone_vad_thresholds?: Partial<{ [key in string]: number }>; 
 /**
  * Voice Control mode: end-of-dictation key triggers, spoken
- * "new line" / "new paragraph", and the app switcher.
+ * "new line" / "new paragraph" and spoken symbols.
  */
 voice_control_enabled?: boolean; voice_triggers?: VoiceTrigger[]; text_replacements?: TextReplacement[]; 
-/**
- * "go to <app>" as a whole dictation brings that app to the front.
- */
-app_switch_enabled?: boolean; 
-/**
- * Also match any installed app by its name, not only `app_aliases`.
- */
-app_switch_any_installed?: boolean; app_aliases?: AppAlias[]; 
 /**
  * AI cleanup level for every dictation (needs Post Processing on).
  */
@@ -2122,11 +2098,6 @@ reset_bindings: string[] }
  * Accessibility API uses them).
  */
 export type InsertedSpan = { start: number; length: number; text: string }
-export type InstalledApp = { name: string; path: string; 
-/**
- * CFBundleIdentifier, used to assign the app to a style category.
- */
-bundle_id: string | null }
 /**
  * Where a background step (the summary) has got to.
  */

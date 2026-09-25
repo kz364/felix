@@ -831,8 +831,6 @@ pub(crate) struct ProcessedTranscription {
     pub post_process_prompt: Option<String>,
     /// Key a voice trigger asked for after the paste ("… press enter").
     pub submit_key: Option<crate::settings::AutoSubmitKey>,
-    /// App to bring to the front instead of pasting ("go to Claude").
-    pub switch_to_app: Option<String>,
     /// Where the text goes, when the assistant wrote it.
     pub placement: Option<crate::assistant::Placement>,
     /// Why the assistant couldn't help; the dictation is shown, not pasted.
@@ -902,11 +900,12 @@ fn start_claude_session(app: &AppHandle, project: String, prompt: String, send: 
     });
 }
 
-/// Felix's computer task: says it's on it, runs Codex with Cua in the
-/// background, and shows Codex's answer when it's done.
-fn run_computer_task(app: &AppHandle, task: String) {
+/// Felix's computer task: says it's on it, runs it (Simple Jev or Codex, with Cua) in the
+/// background, and shows its answer when it's done.
+fn run_computer_task(app: &AppHandle, task: String, target_app: String, content: String) {
     let app = app.clone();
-    let name = get_settings(&app).assistant_name;
+    let settings = get_settings(&app);
+    let (name, fast) = (settings.assistant_name, settings.agent_fast_mode);
     crate::overlay::show_result_overlay_titled(
         &app,
         task.clone(),
@@ -914,7 +913,7 @@ fn run_computer_task(app: &AppHandle, task: String) {
     );
     std::thread::spawn(move || {
         let started = Instant::now();
-        let result = crate::agent::run_task(&task);
+        let result = crate::agent::run_task(&task, &target_app, &content, fast);
         info!("Computer task took {:?}", started.elapsed());
         let (title, text) = match result {
             Ok(reply) => (format!("{name} is done"), reply),
@@ -1008,7 +1007,6 @@ pub(crate) async fn process_transcription_output(
     // Saying the assistant's name hands the dictation to it instead of the
     // cleanup model.
     if settings.assistant_enabled
-        && scratchpad.switch_to_app.is_none()
         && crate::assistant::is_addressed(&final_text, &settings.assistant_name)
     {
         crate::overlay::show_assistant_overlay(app);
@@ -1042,7 +1040,6 @@ pub(crate) async fn process_transcription_output(
                     post_processed_text: Some(text),
                     post_process_prompt: Some(label),
                     submit_key: None,
-                    switch_to_app: None,
                     placement: None,
                     assistant_error: None,
                     period_dropped: false,
@@ -1062,7 +1059,6 @@ pub(crate) async fn process_transcription_output(
                     post_processed_text: Some(text),
                     post_process_prompt: Some(label),
                     submit_key: None,
-                    switch_to_app: None,
                     placement: None,
                     assistant_error: None,
                     period_dropped: false,
@@ -1070,19 +1066,51 @@ pub(crate) async fn process_transcription_output(
             }
             Ok(crate::assistant::Edit {
                 text,
-                placement: crate::assistant::Placement::ComputerTask,
+                placement: crate::assistant::Placement::OpenApp,
+            }) => {
+                let apps = crate::installed_apps::installed_apps();
+                let opened = match crate::installed_apps::find(&text, &apps) {
+                    Some(found) => {
+                        crate::installed_apps::activate(&found.path).map(|()| found.name.clone())
+                    }
+                    None => Err(format!("Couldn't find an app called {text}")),
+                };
+                match &opened {
+                    Ok(name) => info!("{label} opens {name} after {:?}", started.elapsed()),
+                    Err(e) => error!("{label} couldn't open an app: {e}"),
+                }
+                ProcessedTranscription {
+                    final_text: if opened.is_ok() {
+                        String::new()
+                    } else {
+                        final_text
+                    },
+                    post_processed_text: Some(text),
+                    post_process_prompt: Some(label),
+                    submit_key: None,
+                    placement: None,
+                    assistant_error: opened.err(),
+                    period_dropped: false,
+                }
+            }
+            Ok(crate::assistant::Edit {
+                text,
+                placement:
+                    crate::assistant::Placement::ComputerTask {
+                        app: target_app,
+                        content,
+                    },
             }) => {
                 info!(
                     "{label} starts a computer task after {:?}",
                     started.elapsed()
                 );
-                run_computer_task(app, text.clone());
+                run_computer_task(app, text.clone(), target_app, content);
                 ProcessedTranscription {
                     final_text: String::new(),
                     post_processed_text: Some(text),
                     post_process_prompt: Some(label),
                     submit_key: None,
-                    switch_to_app: None,
                     placement: None,
                     assistant_error: None,
                     period_dropped: false,
@@ -1099,7 +1127,6 @@ pub(crate) async fn process_transcription_output(
                     post_processed_text: Some(edit.text),
                     post_process_prompt: Some(label),
                     submit_key: scratchpad.submit_key,
-                    switch_to_app: None,
                     placement: Some(edit.placement),
                     assistant_error: None,
                     period_dropped: false,
@@ -1112,7 +1139,6 @@ pub(crate) async fn process_transcription_output(
                     post_processed_text: None,
                     post_process_prompt: Some(label),
                     submit_key: None,
-                    switch_to_app: None,
                     placement: None,
                     assistant_error: Some(e),
                     period_dropped: false,
@@ -1136,7 +1162,7 @@ pub(crate) async fn process_transcription_output(
     } else {
         None
     };
-    if let (Some(request), None) = (request, &scratchpad.switch_to_app) {
+    if let Some(request) = request {
         if let Some(processed_text) =
             post_process_transcription(&settings, &final_text, request).await
         {
@@ -1159,22 +1185,19 @@ pub(crate) async fn process_transcription_output(
     }
     // Deterministic styling for the destination: list layout, email layout
     // and the category's formality. Last, so the LLM can't undo it.
-    let mut period_dropped = false;
-    if scratchpad.switch_to_app.is_none() {
-        let context = crate::app_context::current();
-        let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
-        let styled = crate::style::apply(
-            &final_text,
-            category,
-            settings.category_styles.get(category),
-            &settings.custom_words,
-        );
-        period_dropped = final_text.trim_end().ends_with('.') && !styled.trim_end().ends_with('.');
-        final_text = styled;
-        let mut updated = get_settings(app);
-        if crate::app_context::remember_recent(&mut updated, &context) {
-            write_settings(app, updated);
-        }
+    let context = crate::app_context::current();
+    let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
+    let styled = crate::style::apply(
+        &final_text,
+        category,
+        settings.category_styles.get(category),
+        &settings.custom_words,
+    );
+    let period_dropped = final_text.trim_end().ends_with('.') && !styled.trim_end().ends_with('.');
+    final_text = styled;
+    let mut updated = get_settings(app);
+    if crate::app_context::remember_recent(&mut updated, &context) {
+        write_settings(app, updated);
     }
     // History keeps what was actually pasted (after cleanup and styling)
     // next to the raw transcript.
@@ -1187,7 +1210,6 @@ pub(crate) async fn process_transcription_output(
         post_processed_text,
         post_process_prompt,
         submit_key: scratchpad.submit_key,
-        switch_to_app: scratchpad.switch_to_app,
         placement: None,
         assistant_error: None,
         period_dropped,
@@ -1654,14 +1676,7 @@ impl ShortcutAction for TranscribeAction {
                                 error!("Failed to save history entry: {}", err);
                             }
 
-                            if let Some(app_path) = processed.switch_to_app {
-                                debug!("Voice control: switching to {app_path}");
-                                if let Err(e) = crate::app_switcher::activate(&app_path) {
-                                    error!("App switch failed: {e}");
-                                }
-                                utils::hide_recording_overlay(&ah);
-                                set_tray_state(&ah, TrayIconState::Idle);
-                            } else if processed.final_text.is_empty()
+                            if processed.final_text.is_empty()
                                 && processed.submit_key.is_none()
                                 && processed.assistant_error.is_none()
                             {
@@ -1677,6 +1692,8 @@ impl ShortcutAction for TranscribeAction {
                                 let assistant_error = processed.assistant_error;
                                 let rm_for_paste = Arc::clone(&rm);
                                 let bench_id = bench_id.clone();
+                                // Felix can't ask itself from the main thread.
+                                let own_target = crate::text_field::own_app_paste_target();
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
@@ -1736,7 +1753,8 @@ impl ShortcutAction for TranscribeAction {
                                     // instead of pasting into the void.
                                     if !final_text.is_empty()
                                         && settings.result_popup_enabled
-                                        && crate::text_field::paste_target()
+                                        && own_target
+                                            .unwrap_or_else(crate::text_field::paste_target)
                                             == crate::text_field::PasteTarget::NoText
                                     {
                                         info!("No text field focused; showing the dictation instead of pasting");

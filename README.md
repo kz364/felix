@@ -78,11 +78,12 @@ A short tour; [docs/FEATURES.md](docs/FEATURES.md) has the details.
 - **Quiet speech.** Input gain and automatic gain control ahead of silence
   detection, and per-microphone detection thresholds, so whispering into a
   clip-on mic isn't thrown away as silence.
-- **Voice commands.** "New line", "press enter", switching apps by voice.
+- **Voice commands.** "New line", "press enter", spoken symbols.
 - **Meetings** (work in progress). Record, transcribe (locally, or with an
   OpenAI / Groq API key) and summarise meetings.
 - **The Felix assistant** (optional, off by default): say its name and a
-  ChatGPT model rewrites the focused field for you.
+  ChatGPT model rewrites the focused field for you, or opens an app ("Felix,
+  go to Codex").
 - **A redesign.** New information architecture and visual language —
   see [docs/DESIGN.md](docs/DESIGN.md).
 - **Benchmark recording** for developers: keep raw audio, what was pasted,

@@ -1,9 +1,9 @@
 mod actions;
 pub mod agent;
+pub mod agent_decide;
 pub mod agent_skills;
 mod app_categories;
 mod app_context;
-mod app_switcher;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
 pub mod assistant;
@@ -22,6 +22,7 @@ mod commands;
 mod dictation_log;
 mod helpers;
 mod input;
+mod installed_apps;
 mod llm_client;
 mod local_llm;
 mod local_llm_install;
@@ -800,6 +801,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,
             shortcut::change_agent_auto_send_setting,
+            shortcut::change_agent_fast_mode_setting,
             overlay::fit_result_overlay,
             overlay::dismiss_result_overlay,
             overlay::copy_result_text,
@@ -813,10 +815,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::update_app_rules,
             shortcut::list_app_categories,
             shortcut::clear_recent_contexts,
-            shortcut::change_app_switch_enabled_setting,
-            shortcut::change_app_switch_any_installed_setting,
-            shortcut::update_app_aliases,
-            shortcut::list_installed_apps,
             shortcut::update_voice_triggers,
             shortcut::update_text_replacements,
             shortcut::suspend_all_bindings,

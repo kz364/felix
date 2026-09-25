@@ -63,13 +63,15 @@ staging pipeline first:
 
 ## Voice commands
 
-Trigger phrases at the end of a dictation, and switching apps by voice.
+Trigger phrases at the end of a dictation, "new line", and spoken symbols.
 
 ## Felix
 
 An optional voice assistant (off by default). Say its name and it takes
 the dictation and the focused field to a ChatGPT model, which inserts,
-replaces the selection or rewrites the field.
+replaces the selection or rewrites the field. "Felix, go to Codex" brings
+that app to the front, and "Felix, it keeps writing cloud instead of Claude"
+fixes the dictation rules.
 
 ⚠️ Work in progress. The "act on your Mac" (agent) mode (starting Claude Code sessions, running tasks
 in other apps through Codex CLI and Cua Driver) is experimental, paused and

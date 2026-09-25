@@ -58,13 +58,15 @@ fn main() {
             let secs = started.elapsed().as_secs_f32();
             let line = match result {
                 Ok(edit) => {
-                    let project = match &edit.placement {
-                        handy_app_lib::assistant::Placement::ClaudeSession { project } => {
-                            Some(project.clone())
+                    use handy_app_lib::assistant::Placement;
+                    let (project, app, content) = match &edit.placement {
+                        Placement::ClaudeSession { project } => (Some(project.clone()), None, None),
+                        Placement::ComputerTask { app, content } => {
+                            (None, Some(app.clone()), Some(content.clone()))
                         }
-                        _ => None,
+                        _ => (None, None, None),
                     };
-                    serde_json::json!({"id": case["id"], "secs": secs, "placement": edit.placement_kind(), "project": project, "text": edit.text})
+                    serde_json::json!({"id": case["id"], "secs": secs, "placement": edit.placement_kind(), "project": project, "app": app, "content": content, "text": edit.text})
                 }
                 Err(e) => serde_json::json!({"id": case["id"], "secs": secs, "error": e}),
             };

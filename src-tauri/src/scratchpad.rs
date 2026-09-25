@@ -22,20 +22,9 @@ pub struct ScratchpadOutput {
     pub text: String,
     /// Key to press once the text has been pasted (from a voice trigger).
     pub submit_key: Option<AutoSubmitKey>,
-    /// App to bring to the front instead of pasting ("go to Claude").
-    pub switch_to_app: Option<String>,
 }
 
 pub fn run_rules(text: &str, settings: &AppSettings) -> ScratchpadOutput {
-    // A whole-dictation app-switch command replaces the paste entirely.
-    if let Some(app) = crate::app_switcher::detect(text, settings) {
-        return ScratchpadOutput {
-            text: String::new(),
-            submit_key: None,
-            switch_to_app: Some(app),
-        };
-    }
-
     let text = crate::vocabulary::apply_canonical_forms(text, &settings.custom_words);
     let text = crate::spelling::apply_spelled_words(&text);
     let text = crate::vocab_teach::apply_taught_rules(&text, settings);
@@ -48,11 +37,7 @@ pub fn run_rules(text: &str, settings: &AppSettings) -> ScratchpadOutput {
         submit_key = key;
     }
 
-    ScratchpadOutput {
-        text,
-        submit_key,
-        switch_to_app: None,
-    }
+    ScratchpadOutput { text, submit_key }
 }
 
 /// Word tokens with their byte ranges. Apostrophes stay inside words so
@@ -437,25 +422,5 @@ mod tests {
         let out = run_rules("hello new line world press enter", &settings);
         assert_eq!(out.text, "hello\nWorld");
         assert_eq!(out.submit_key, Some(AutoSubmitKey::Enter));
-    }
-
-    #[test]
-    fn app_switch_command_replaces_paste() {
-        let mut settings = crate::settings::get_default_settings();
-        settings.app_switch_any_installed = false;
-        settings.app_aliases = vec![crate::settings::AppAlias {
-            phrase: "chat".into(),
-            app_path: "/Applications/Claude.app".into(),
-        }];
-        let out = run_rules("Go to chat.", &settings);
-        assert_eq!(out.text, "");
-        assert_eq!(
-            out.switch_to_app.as_deref(),
-            Some("/Applications/Claude.app")
-        );
-
-        let out = run_rules("Go to the chat room later.", &settings);
-        assert_eq!(out.switch_to_app, None);
-        assert_eq!(out.text, "Go to the chat room later.");
     }
 }

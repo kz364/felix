@@ -374,14 +374,6 @@ pub fn legacy_default_app_rules() -> Vec<AppRule> {
     .collect()
 }
 
-/// A spoken name for an app the app switcher can bring to the front
-/// ("chat" → /Applications/Claude.app).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
-pub struct AppAlias {
-    pub phrase: String,
-    pub app_path: String,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordingRetentionPeriod {
@@ -746,6 +738,12 @@ pub struct AppSettings {
     /// leaving it filled in.
     #[serde(default = "default_agent_auto_send")]
     pub agent_auto_send: bool,
+    /// Very experimental: try computer tasks with Simple Jev picking each
+    /// step (about a second each) before handing them to Codex. Off by
+    /// default; renamed from `agent_fast_driver` so earlier "on" defaults
+    /// don't carry over.
+    #[serde(default)]
+    pub agent_fast_mode: bool,
     #[serde(default = "default_assistant_model")]
     pub assistant_model: String,
     /// Reasoning effort: "none", "low", "medium" or "high".
@@ -826,7 +824,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub microphone_vad_thresholds: HashMap<String, f32>,
     /// Voice Control mode: end-of-dictation key triggers, spoken
-    /// "new line" / "new paragraph", and the app switcher.
+    /// "new line" / "new paragraph" and spoken symbols.
     #[serde(
         default = "default_voice_control_enabled",
         alias = "voice_triggers_enabled"
@@ -836,14 +834,6 @@ pub struct AppSettings {
     pub voice_triggers: Vec<VoiceTrigger>,
     #[serde(default)]
     pub text_replacements: Vec<TextReplacement>,
-    /// "go to <app>" as a whole dictation brings that app to the front.
-    #[serde(default = "default_app_switch_enabled")]
-    pub app_switch_enabled: bool,
-    /// Also match any installed app by its name, not only `app_aliases`.
-    #[serde(default = "default_app_switch_any_installed")]
-    pub app_switch_any_installed: bool,
-    #[serde(default)]
-    pub app_aliases: Vec<AppAlias>,
     /// AI cleanup level for every dictation (needs Post Processing on).
     #[serde(default)]
     pub cleanup_level: CleanupLevel,
@@ -865,14 +855,6 @@ pub struct AppSettings {
     /// offered in the Style page for one-click assignment.
     #[serde(default)]
     pub recent_contexts: Vec<AppRule>,
-}
-
-fn default_app_switch_enabled() -> bool {
-    true
-}
-
-fn default_app_switch_any_installed() -> bool {
-    true
 }
 
 fn default_auto_gain_enabled() -> bool {
@@ -1474,6 +1456,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_diarize: true,
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
+        agent_fast_mode: false,
         assistant_model: default_assistant_model(),
         assistant_effort: default_assistant_effort(),
         assistant_notes: String::new(),
@@ -1505,9 +1488,6 @@ pub fn get_default_settings() -> AppSettings {
         voice_control_enabled: default_voice_control_enabled(),
         voice_triggers: default_voice_triggers(),
         text_replacements: Vec::new(),
-        app_switch_enabled: default_app_switch_enabled(),
-        app_switch_any_installed: default_app_switch_any_installed(),
-        app_aliases: Vec::new(),
         cleanup_level: CleanupLevel::default(),
         custom_instructions: String::new(),
         category_instructions: CategoryInstructions::default(),

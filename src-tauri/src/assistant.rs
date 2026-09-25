@@ -30,8 +30,11 @@ pub enum Placement {
     /// Nothing pasted: start a Claude Code session in the desktop app, in
     /// this project's folder, with the text as its first message.
     ClaudeSession { project: String },
-    /// Nothing pasted: do the text, a task, on the computer (Codex + Cua).
-    ComputerTask,
+    /// Nothing pasted: do the text, a task, on the computer, in `app` if
+    /// the task names one, typing `content` where it needs text written.
+    ComputerTask { app: String, content: String },
+    /// Nothing pasted: bring the app named in the text to the front.
+    OpenApp,
     /// Nothing pasted: the text reports a dictation that came out wrong;
     /// fix the rules file (see `rules`).
     ReportMistake,
@@ -51,8 +54,9 @@ impl Edit {
             Placement::ReplaceSelection => "replace selection",
             Placement::ReplaceField(_) => "replace field",
             Placement::ClaudeSession { .. } => "claude session",
-            Placement::ComputerTask => "computer task",
+            Placement::ComputerTask { .. } => "computer task",
             Placement::ReportMistake => "report mistake",
+            Placement::OpenApp => "open app",
         }
     }
 }
@@ -72,7 +76,7 @@ pub fn is_addressed(text: &str, name: &str) -> bool {
 fn agent_rules(name: &str) -> String {
     format!(
         r#"- They asked you to start a Claude Code session, thread or project ("{name}, open Claude Code and start a new project that…"): use "start_claude_session". "text" is the first message for that session, written as a clear task in their words; "project" is a short name for the project folder (the one they named, or a few words describing it). Only when they clearly ask for this.
-- They asked you to do something on the computer other than writing into this field (open an app and do something in it, find or change something in an app): use "computer_task". "text" is the task as a clear instruction with every detail they gave. Only when they tell you, {name}, to do it now; a reminder or note they are writing ("remember to open Calendar") is dictation, not a task. Claude Code sessions use "start_claude_session".
+- They asked you to do something on the computer other than writing into this field (do something in an app, find or change something in an app): use "computer_task". "text" is the task as a clear instruction with every detail they gave; "app" is the one app to do it in, as its name is usually written ("" if it isn't clear or takes several apps); "content" is the exact text to type in that app when the task involves writing something (a note, a list, a search, an event title), written out in full the way it should appear, otherwise "". Only when they tell you, {name}, to do it now; a reminder or note they are writing ("remember to open Calendar") is dictation, not a task. Claude Code sessions use "start_claude_session".
 "#
     )
 }
@@ -82,7 +86,7 @@ fn instructions(name: &str, agent_actions: bool) -> String {
         (
             agent_rules(name),
             "- \"start_claude_session\", \"computer_task\": nothing goes in the field; see above.\n",
-            "\n\"project\" is empty unless you start a Claude session.\n",
+            "\n\"project\" is empty unless you start a Claude session; \"app\" and \"content\" are empty unless it's a computer task.\n",
         )
     } else {
         (String::new(), "", "")
@@ -99,11 +103,12 @@ Work out what they want and write the text that should end up in the field:
 - They selected text and asked for a change: rewrite the selection.
 - They asked to change the draft already in the field (fix, shorten, rephrase, translate it): rewrite the whole field.
 - They're telling you dictation got something wrong, to fix how a word or name is written, or that it should hear something differently ("{name}, it keeps writing cloud instead of Claude", "{name}, kubectl is spelled k-u-b-e-c-t-l", "{name}, that last one came out wrong, I said…"): use "report_mistake". "text" is their report in their own words, with every detail they gave, including how it was written and what they meant. This is about how dictation transcribes, not a request to edit the field.
+- They asked you to open, go to, switch to or take them to an app and nothing more ("{name}, go to Codex", "{name}, open Slack", "{name}, take me to the terminal"): use "open_app". "text" is the app's name as it is usually written, fixing speech-recognition mistakes ("cloud" is Claude). Only when they tell you, {name}, to do it now.
 {agent_rules}- They only mention "{name}" as a word in their text, talking about you, an app, a person or anything else called {name}, not to you ("I've been using {name} for dictation", "ask {name} from marketing", "the {name} repo is private"): it's ordinary dictation. Return it exactly as they said it, with "{name}" kept where they said it, with "insert_at_cursor". Only a name spoken to you, like calling someone, and followed or preceded by an instruction, is a request.
 - There is no instruction next to your name (for example, your name alone at the end of an email): do nothing. Return the dictation exactly as they said it, without your name, with "insert_at_cursor". Don't continue, complete or polish the text, and don't touch the field.
 
 Choose where the text goes:
-- "report_mistake": nothing goes in the field; see above.
+- "report_mistake", "open_app": nothing goes in the field; see above.
 - "insert_at_cursor": at the cursor, between the text before and after it.
 - "replace_selection": replaces the selected text. Only when there is a selection.
 - "replace_field": replaces everything in the field. Only when the field is included in full.
@@ -125,13 +130,16 @@ fn schema(agent_actions: bool) -> serde_json::Value {
         "replace_selection",
         "replace_field",
         "report_mistake",
+        "open_app",
     ];
     let mut properties = serde_json::json!({"text": {"type": "string"}});
     let mut required = vec!["placement", "text"];
     if agent_actions {
         placements.extend(["start_claude_session", "computer_task"]);
-        properties["project"] = serde_json::json!({"type": "string"});
-        required.push("project");
+        for field in ["project", "app", "content"] {
+            properties[field] = serde_json::json!({"type": "string"});
+            required.push(field);
+        }
     }
     properties["placement"] = serde_json::json!({"type": "string", "enum": placements});
     serde_json::json!({
@@ -217,6 +225,10 @@ struct Reply {
     text: String,
     #[serde(default)]
     project: String,
+    #[serde(default)]
+    app: String,
+    #[serde(default)]
+    content: String,
 }
 
 /// Turn the model's JSON into an edit, falling back to inserting when it asks
@@ -231,8 +243,12 @@ fn parse_reply(
     let text = reply.text.trim().to_string();
     let has_selection = field.is_some_and(|f| f.selection.is_some_and(|(_, len)| len > 0));
     let placement = match (reply.placement.as_str(), field) {
-        ("computer_task", _) if !text.is_empty() => Placement::ComputerTask,
+        ("computer_task", _) if !text.is_empty() => Placement::ComputerTask {
+            app: reply.app.trim().to_string(),
+            content: reply.content.trim().to_string(),
+        },
         ("report_mistake", _) if !text.is_empty() => Placement::ReportMistake,
+        ("open_app", _) if !text.is_empty() => Placement::OpenApp,
         ("start_claude_session", _) if !text.is_empty() => Placement::ClaudeSession {
             project: reply.project.trim().to_string(),
         },
@@ -308,7 +324,7 @@ pub async fn ask(
         if !assistant.agent_actions
             && matches!(
                 edit.placement,
-                Placement::ClaudeSession { .. } | Placement::ComputerTask
+                Placement::ClaudeSession { .. } | Placement::ComputerTask { .. }
             )
         {
             edit.placement = Placement::Insert;
@@ -451,12 +467,18 @@ mod tests {
         );
 
         let edit = parse_reply(
-            r#"{"placement":"computer_task","text":"Open Notes and start a shopping list","project":""}"#,
+            r#"{"placement":"computer_task","text":"Open Notes and start a shopping list","project":"","app":" Notes ","content":"Shopping list: eggs"}"#,
             None,
             false,
         )
         .unwrap();
-        assert_eq!(edit.placement, Placement::ComputerTask);
+        assert_eq!(
+            edit.placement,
+            Placement::ComputerTask {
+                app: "Notes".into(),
+                content: "Shopping list: eggs".into()
+            }
+        );
         assert_eq!(edit.text, "Open Notes and start a shopping list");
     }
 
@@ -471,8 +493,10 @@ mod tests {
 
         let schema_off = schema(false).to_string();
         assert!(!schema_off.contains("computer_task") && !schema_off.contains("project"));
+        assert!(!schema_off.contains("\"app\"") && !schema_off.contains("content"));
         let schema_on = schema(true).to_string();
         assert!(schema_on.contains("computer_task") && schema_on.contains("project"));
+        assert!(schema_on.contains("\"app\"") && schema_on.contains("\"content\""));
     }
 
     #[test]

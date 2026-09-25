@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
   MeetingSettingsUpdate,
-  AppAlias,
   AppRule,
   CategoryInstructions,
   CategoryStyles,
@@ -219,6 +218,8 @@ const settingUpdaters: {
     commands.changeAgentActionsSetting(value as boolean),
   agent_auto_send: (value) =>
     commands.changeAgentAutoSendSetting(value as boolean),
+  agent_fast_mode: (value) =>
+    commands.changeAgentFastModeSetting(value as boolean),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),
@@ -260,11 +261,6 @@ const settingUpdaters: {
     commands.changeBenchmarkRecordingSetting(value as boolean),
   voice_control_enabled: (value) =>
     commands.changeVoiceControlEnabledSetting(value as boolean),
-  app_switch_enabled: (value) =>
-    commands.changeAppSwitchEnabledSetting(value as boolean),
-  app_switch_any_installed: (value) =>
-    commands.changeAppSwitchAnyInstalledSetting(value as boolean),
-  app_aliases: (value) => commands.updateAppAliases(value as AppAlias[]),
   cleanup_level: (value) =>
     commands.changeCleanupLevelSetting(value as CleanupLevel),
   custom_instructions: (value) =>

@@ -627,12 +627,67 @@ pub fn paste_target() -> PasteTarget {
     }
 }
 
+/// Paste target when Felix itself is in front, else `None`. Must run off
+/// the main thread: Felix's main thread answers the Accessibility query, so
+/// asking from it times out. In Felix only a text box takes a paste; anything
+/// else (a button, the page, nothing) shows the dictation instead.
+pub fn own_app_paste_target() -> Option<PasteTarget> {
+    #[cfg(target_os = "macos")]
+    {
+        if crate::app_context::frontmost_pid()? != std::process::id() as i32 {
+            return None;
+        }
+        let probe = ax::probe_focus();
+        let target = own_app_target(&probe);
+        log::debug!("Paste target in Felix: {probe:?} -> {target:?}");
+        Some(target)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn own_app_target(probe: &FocusProbe) -> PasteTarget {
+    match probe {
+        FocusProbe::Element { role, editable }
+            if *editable || TEXT_ROLES.contains(&role.as_str()) =>
+        {
+            PasteTarget::Text
+        }
+        _ => PasteTarget::NoText,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn u16s(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn in_felix_only_a_text_box_takes_a_paste() {
+        let element = |role: &str, editable| FocusProbe::Element {
+            role: role.into(),
+            editable,
+        };
+        assert_eq!(
+            own_app_target(&element("AXTextField", false)),
+            PasteTarget::Text
+        );
+        assert_eq!(own_app_target(&element("AXGroup", true)), PasteTarget::Text);
+        assert_eq!(
+            own_app_target(&element("AXButton", false)),
+            PasteTarget::NoText
+        );
+        assert_eq!(
+            own_app_target(&element("AXWebArea", false)),
+            PasteTarget::NoText
+        );
+        assert_eq!(own_app_target(&FocusProbe::NoFocus), PasteTarget::NoText);
+        assert_eq!(own_app_target(&FocusProbe::Failed), PasteTarget::NoText);
     }
 
     #[test]

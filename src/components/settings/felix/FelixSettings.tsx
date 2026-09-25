@@ -13,6 +13,7 @@ export const FelixSettings: React.FC = () => {
   const enabled = getSetting("assistant_enabled") ?? false;
   const agentActions = getSetting("agent_actions_enabled") ?? false;
   const autoSend = getSetting("agent_auto_send") ?? true;
+  const fastMode = getSetting("agent_fast_mode") ?? false;
 
   return (
     <div className="max-w-2xl w-full mx-auto space-y-6">
@@ -20,7 +21,7 @@ export const FelixSettings: React.FC = () => {
         title={t("settings.voiceControl.assistant.pageTitle")}
         description={t("settings.voiceControl.assistant.groupDescription")}
       />
-      <p className="rounded-xl bg-highlight/15 px-4 py-3 text-[13px] leading-snug text-text/80">
+      <p className="rounded-xl bg-highlight/15 px-4 py-3 text-sm leading-snug text-text/80">
         {t("settings.voiceControl.assistant.warning")}
       </p>
       <SettingsGroup title={t("settings.voiceControl.assistant.groupTitle")}>
@@ -44,6 +45,21 @@ export const FelixSettings: React.FC = () => {
             descriptionMode="tooltip"
             grouped={true}
           />
+          {agentActions && (
+            <ToggleSwitch
+              checked={fastMode}
+              onChange={(v) => updateSetting("agent_fast_mode", v)}
+              isUpdating={isUpdating("agent_fast_mode")}
+              label={t(
+                "settings.voiceControl.assistant.computer.fastMode.label",
+              )}
+              description={t(
+                "settings.voiceControl.assistant.computer.fastMode.description",
+              )}
+              descriptionMode="tooltip"
+              grouped={true}
+            />
+          )}
           {agentActions && (
             <ToggleSwitch
               checked={autoSend}

@@ -27,7 +27,7 @@ struct Daemon {
 static DAEMON: Lazy<Mutex<Option<Daemon>>> = Lazy::new(|| Mutex::new(None));
 
 /// Environment for the driver: embedded in Handy, telemetry off.
-fn driver_env() -> [(&'static str, &'static str); 4] {
+pub(crate) fn driver_env() -> [(&'static str, &'static str); 4] {
     [
         ("CUA_DRIVER_EMBEDDED", "1"),
         ("CUA_DRIVER_HOST_BUNDLE_ID", HOST_BUNDLE_ID),
@@ -171,12 +171,31 @@ fn codex_args(driver: &Path, socket: &Path, out: &Path, task: &str) -> Vec<Strin
     ]
 }
 
-/// Carry out a computer task; Codex's closing message for the user.
-/// Blocking; run it off the main thread.
-pub fn run_task(task: &str) -> Result<String, String> {
+/// Carry out a computer task; a closing message for the user. With `fast`
+/// and a known app, Simple Jev drives first (see `agent_decide`); Codex
+/// takes over whatever it can't finish. Blocking; run it off the main thread.
+pub fn run_task(task: &str, app: &str, content: &str, fast: bool) -> Result<String, String> {
     let driver = driver_path().ok_or("Cua Driver isn't installed")?;
-    let codex = codex_path().ok_or("Codex CLI isn't installed (brew install --cask codex)")?;
     let socket = ensure_daemon(&driver)?;
+    let mut task = task.to_string();
+    if fast && !app.trim().is_empty() {
+        let started = Instant::now();
+        let outcome = crate::agent_decide::run(&driver, &socket, &task, app.trim(), content.trim());
+        info!("Fast path finished in {:?}: {outcome:?}", started.elapsed());
+        match outcome {
+            crate::agent_decide::Outcome::Done(reply)
+            | crate::agent_decide::Outcome::Handoff(reply) => return Ok(reply),
+            crate::agent_decide::Outcome::GaveUp { done, .. } if !done.is_empty() => {
+                task = format!(
+                    "{task}\n\nAlready done in {app}, don't repeat it: {}. Carry on from there.",
+                    done.join("; ")
+                );
+            }
+            crate::agent_decide::Outcome::GaveUp { .. } => {}
+        }
+    }
+    let task = task.as_str();
+    let codex = codex_path().ok_or("Codex CLI isn't installed (brew install --cask codex)")?;
     let workdir = crate::agent_skills::projects_dir()
         .filter(|d| d.is_dir())
         .or_else(home)

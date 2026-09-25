@@ -802,7 +802,7 @@
     "voiceControl": {
       "toggle": {
         "label": "Listen for commands",
-        "description": "Turns on everything on this page: trigger phrases, “new line” and “new paragraph”, spoken flags like “dash dash force”, and switching apps."
+        "description": "Turns on everything on this page: trigger phrases, “new line” and “new paragraph”, and spoken flags like “dash dash force”."
       },
       "triggers": {
         "groupTitle": "Trigger phrases",
@@ -814,22 +814,6 @@
         "remove": "Remove trigger {{phrase}}",
         "duplicate": "\"{{phrase}}\" is already a trigger",
         "item": "\"{{phrase}}\" → {{key}}"
-      },
-      "appSwitcher": {
-        "groupTitle": "Switching apps",
-        "groupDescription": "Say \"go to\", \"switch to\" or \"open\" followed by an app as the whole dictation to bring that app to the front instead of typing.",
-        "toggleLabel": "Switch apps by voice",
-        "toggleDescription": "When a dictation is only \"go to <app>\", open that app instead of pasting the text. Anything that doesn't match an app is pasted as usual.",
-        "anyInstalledLabel": "Match any installed app",
-        "anyInstalledDescription": "Recognize apps in /Applications by name (\"go to Safari\"), in addition to the names you add below. Close mishearings like \"cloud\" for Claude are accepted.",
-        "aliasesTitle": "App names",
-        "aliasesDescription": "Your own spoken names for apps, e.g. \"chat\" → Claude. These are checked before installed app names.",
-        "phrasePlaceholder": "chat",
-        "appPlaceholder": "Choose app…",
-        "add": "Add",
-        "remove": "Remove app name {{phrase}}",
-        "duplicate": "\"{{phrase}}\" is already an app name",
-        "item": "\"{{phrase}}\" → {{app}}"
       },
       "assistant": {
         "groupTitle": "Assistant",
@@ -870,7 +854,7 @@
         },
         "computer": {
           "groupTitle": "On your Mac",
-          "groupDescription": "\"Felix, open Notes and start a packing list\" hands the task to Codex, which works your apps in the background through Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
+          "groupDescription": "\"Felix, open Notes and start a packing list\" works your apps in the background through Codex and Cua Driver. It won't send, post, delete or buy anything; it gets things ready and tells you. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
           "toggle": {
             "label": "Act on your Mac",
             "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
@@ -878,6 +862,10 @@
           "autoSend": {
             "label": "Send the first message",
             "description": "Send the request as soon as the session opens. Off leaves it filled in for you to check and send."
+          },
+          "fastMode": {
+            "label": "Fast mode (very experimental)",
+            "description": "Very experimental and mostly untested; expect it to click the wrong thing. Simple Jev (Featherless's classifier) picks each click, about a second per step, and Codex takes over anything it can't finish. The names of buttons and fields in that app, and the text you asked for, go to Simple Jev's public demo."
           }
         },
         "notes": {
@@ -888,7 +876,7 @@
         "pageTitle": "Assistant"
       },
       "title": "Voice commands",
-      "description": "Say “new line”, end with “press enter”, or say “go to Safari”. Commands run before cleanup."
+      "description": "Say “new line” or end with “press enter”. Commands run before cleanup."
     },
     "vocabulary": {
       "report": {
