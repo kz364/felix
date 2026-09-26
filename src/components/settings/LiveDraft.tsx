@@ -22,7 +22,7 @@ export const LiveDraft: React.FC<LiveDraftProps> = ({
 }) => {
   const { t } = useTranslation();
   const { getSetting, refreshSettings } = useSettings();
-  const enabled = getSetting("live_draft") ?? true;
+  const enabled = getSetting("live_draft") ?? false;
   const [busy, setBusy] = useState(false);
 
   const toggle = async (on: boolean) => {

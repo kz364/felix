@@ -167,8 +167,8 @@
         "privacy": "When on and you're signed in, a dictation with its name and the text in the field go to ChatGPT."
       },
       "draft": {
-        "title": "See words as you speak",
-        "description": "While you talk, a rough, underlined draft appears in the text box, then the real text replaces it when you stop. It runs a second small model, so it uses a little extra processing power. Two one-time steps:"
+        "title": "See words as you speak (experimental)",
+        "description": "Optional: while you talk, a rough, underlined draft appears in the text box, then the real text replaces it when you stop. It's rough, doesn't show inline in every app, and uses a little extra processing power. Turn it on to set it up, or skip."
       },
       "scratchpad": {
         "title": "Scratchpad",
@@ -1108,8 +1108,8 @@
         "listeningDescription": "How Felix tells speech from silence. The defaults suit most people."
       },
       "liveDraft": {
-        "label": "Live draft",
-        "description": "Shows a rough, underlined draft in the text field while you talk, from a small fast model. When you stop it disappears and the real text is pasted as usual. Skipped in password fields and when text is selected. Running the second model uses a little extra processing power while you dictate.",
+        "label": "Live draft (experimental)",
+        "description": "Experimental, off by default. Shows a rough, underlined draft in the text field while you talk, from a small fast model; when you stop, the real text replaces it. The draft is rough, and some apps (like WhatsApp) show it in a floating bubble instead. Skipped in password fields and when text is selected. Uses a little extra processing power while you dictate.",
         "needsModel": "Download the small draft model (Moonshine Streaming Tiny, 50 MB).",
         "download": "Download",
         "needsInputSource": "Add Felix Draft as an input source: System Settings → Keyboard → Input Sources → Edit → + → English → Felix Draft.",

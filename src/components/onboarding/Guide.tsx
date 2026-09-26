@@ -10,7 +10,7 @@ import { ShortcutInput } from "../settings/ShortcutInput";
 import { ChatGptAccount } from "../settings/voice-control/AssistantSettings";
 import { useSettings } from "../../hooks/useSettings";
 import { TeachWord } from "../settings/vocabulary/TeachWord";
-import { LiveDraftSetup } from "../settings/LiveDraft";
+import { LiveDraft } from "../settings/LiveDraft";
 
 /** Settings → "Show the guided tour" opens the tour with this event. */
 export const OPEN_GUIDE_EVENT = "felix-open-guide";
@@ -78,7 +78,11 @@ const Guide: React.FC<{ onDone: () => void }> = ({ onDone }) => {
           </div>
 
           {step === "dictate" && <DictateStep done={scratch.trim() !== ""} />}
-          {step === "draft" && <LiveDraftSetup showReady />}
+          {step === "draft" && (
+            <Card>
+              <LiveDraft descriptionMode="inline" grouped={true} />
+            </Card>
+          )}
           {step === "teach" && <TeachWord autoFocus />}
           {step === "chatgpt" && <ChatGptStep />}
           {step === "felix" && <FelixStep />}

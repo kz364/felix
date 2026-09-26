@@ -770,8 +770,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub agent_fast_mode: bool,
     /// Show a rough live draft in the focused field while dictating
-    /// (`draft.rs`).
-    #[serde(default = "default_true")]
+    /// (`draft.rs`). Experimental, off by default.
+    #[serde(default)]
     pub live_draft: bool,
     /// Apps Felix may always use for computer tasks, or never; others are
     /// asked for each task.
@@ -1490,7 +1490,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
         agent_fast_mode: false,
-        live_draft: true,
+        live_draft: false,
         agent_app_access: Vec::new(),
         assistant_model: default_assistant_model(),
         assistant_effort: default_assistant_effort(),

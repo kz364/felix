@@ -7,8 +7,7 @@ assistant is on, but sends nothing until you sign in to ChatGPT) and listed unde
 ## Getting started
 
 After the model is picked, a short tour where every step can be skipped: try
-a dictation, set up the live draft (download the small model, add the
-input source), teach a word (added to the vocabulary, then said three times
+a dictation, optionally turn on the experimental live draft, teach a word (added to the vocabulary, then said three times
 spoken and twice whispered), sign in to ChatGPT, and meet the assistant.
 The dictation steps have a scratchpad beside them to watch it happen.
 Settings → About → "Show the tour" opens it again. Teach a word is also on the Vocabulary page. The settings window now
@@ -49,8 +48,9 @@ staging pipeline first:
   contains the first transcript plus real new words, not the "Thank you."
   models invent from breathing.
 
-**Live draft** (on by default; the second model costs a little extra
-processing while you dictate): while you talk, Moonshine
+**Live draft** (experimental, off by default: the Tiny model's draft is
+rough, some apps such as WhatsApp show it in a floating bubble instead of
+inline, and the second model costs a little extra processing): while you talk, Moonshine
 Streaming Tiny transcribes alongside the main model and its rough text shows
 as underlined marked text in the focused field, through Felix Draft, a small
 input method (`src-tauri/draft-ime/`, built by `scripts/build-draft-ime.sh`,
