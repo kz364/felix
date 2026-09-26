@@ -1674,11 +1674,12 @@ owner: string;
  * Where in the meeting it came up.
  */
 at_ms: number | null }
-export type AgentAnswer = "always_allow" | "allow_once" | "deny" | "confirm" | "cancel"
+export type AgentAnswer = "always_allow" | "allow_once" | "deny" | "always_deny" | "confirm" | "cancel"
 /**
- * An app Felix may always use for computer tasks ("Always allow").
+ * An app Felix may always use for computer tasks ("Always allow"), or
+ * never ("Always deny").
  */
-export type AgentAppAccess = { name: string; bundle_id: string }
+export type AgentAppAccess = { name: string; bundle_id: string; allowed?: boolean }
 /**
  * What the overlay card shows.
  */
@@ -1911,8 +1912,8 @@ agent_auto_send?: boolean;
  */
 agent_fast_mode?: boolean; 
 /**
- * Apps Felix may always use for computer tasks; others are asked for
- * each task.
+ * Apps Felix may always use for computer tasks, or never; others are
+ * asked for each task.
  */
 agent_app_access?: AgentAppAccess[]; assistant_model?: string; 
 /**

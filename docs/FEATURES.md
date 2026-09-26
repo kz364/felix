@@ -78,11 +78,13 @@ sessions, running tasks in other apps through Codex CLI and Cua Driver) is
 experimental and not hardened. While a task runs, a card shows each step in
 plain words; closing it stops the task. Every driver call goes through one
 gate in Felix: it asks before Felix first uses an app (Always allow / Allow
-this time / Deny), never uses password managers or System Settings, asks
+this time / Deny / Always deny; saved choices can be removed on the Felix
+page), never uses password managers or System Settings, asks
 every time for terminals, and asks for a confirmation (button or a spoken
 "yes") before anything that sends, posts, deletes or buys. Recent tasks are
 listed step by step on the Felix page. Fast mode (Simple Jev picks each
-step) is very experimental and off by default. ChatGPT sign-in reuses the Codex CLI's public
+step) is very experimental and off by default. The bundled Cua driver is pinned: its update check and
+telemetry are off. ChatGPT sign-in reuses the Codex CLI's public
 OAuth client, which OpenAI doesn't officially support for other apps.
 
 ## Meetings

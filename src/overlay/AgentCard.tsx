@@ -107,6 +107,9 @@ export const AgentCard: React.FC<{ card: Card }> = ({ card }) => {
             })}
           </p>
           <div className="abtns">
+            <button className="abtn" onClick={() => answer("always_deny")}>
+              {t("overlay.agent.alwaysDeny")}
+            </button>
             <button className="abtn" onClick={() => answer("deny")}>
               {t("overlay.agent.deny")}
             </button>

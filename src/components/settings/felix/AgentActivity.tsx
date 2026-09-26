@@ -5,7 +5,7 @@ import { commands } from "@/bindings";
 import type { AgentRunRecord } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 
-/** Apps Felix may always use, each removable. */
+/** Apps Felix may always use, or never, each removable. */
 export const AgentApps: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, refreshSettings } = useSettings();
@@ -16,23 +16,18 @@ export const AgentApps: React.FC = () => {
     await refreshSettings();
   };
 
-  return (
-    <div className="px-4 py-3 space-y-2">
-      <div>
-        <h3 className="text-sm font-medium">
-          {t("settings.voiceControl.assistant.computer.apps.title")}
-        </h3>
-        <p className="mt-0.5 text-sm leading-snug text-text/60">
-          {t("settings.voiceControl.assistant.computer.apps.description")}
-        </p>
-      </div>
-      {apps.length === 0 ? (
-        <p className="text-sm text-text/50">
-          {t("settings.voiceControl.assistant.computer.apps.empty")}
-        </p>
-      ) : (
+  const group = (allowed: boolean) => {
+    const list = apps.filter((a) => a.allowed === allowed);
+    if (list.length === 0) return null;
+    return (
+      <div className="space-y-1">
+        <div className="text-sm text-text/60">
+          {t(
+            `settings.voiceControl.assistant.computer.apps.${allowed ? "allowed" : "denied"}`,
+          )}
+        </div>
         <div className="flex flex-wrap gap-1.5">
-          {apps.map((a) => {
+          {list.map((a) => {
             const key = a.bundle_id || a.name.toLowerCase();
             return (
               <span
@@ -54,6 +49,29 @@ export const AgentApps: React.FC = () => {
             );
           })}
         </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="px-4 py-3 space-y-2">
+      <div>
+        <h3 className="text-sm font-medium">
+          {t("settings.voiceControl.assistant.computer.apps.title")}
+        </h3>
+        <p className="mt-0.5 text-sm leading-snug text-text/60">
+          {t("settings.voiceControl.assistant.computer.apps.description")}
+        </p>
+      </div>
+      {apps.length === 0 ? (
+        <p className="text-sm text-text/50">
+          {t("settings.voiceControl.assistant.computer.apps.empty")}
+        </p>
+      ) : (
+        <>
+          {group(true)}
+          {group(false)}
+        </>
       )}
     </div>
   );

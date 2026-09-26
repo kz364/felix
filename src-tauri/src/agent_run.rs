@@ -89,6 +89,7 @@ pub enum AgentAnswer {
     AlwaysAllow,
     AllowOnce,
     Deny,
+    AlwaysDeny,
     Confirm,
     Cancel,
 }
@@ -303,6 +304,9 @@ const NEGATIVE: &[&str] = &[
     "no", "nope", "nah", "don't", "not", "cancel", "stop", "deny", "never",
 ];
 const ALWAYS_WORDS: &[&str] = &["always", "allow", "yes", "yeah", "ok", "okay", "please"];
+const NEVER_WORDS: &[&str] = &[
+    "never", "always", "deny", "no", "don't", "allow", "it", "please",
+];
 
 /// Read a dictation as the answer to the card's question. Only a few words,
 /// all of them answer words, count; anything else is an ordinary dictation.
@@ -326,6 +330,10 @@ fn spoken_answer(question: &AgentQuestion, text: &str) -> Option<AgentAnswer> {
         AgentQuestion::AppAccess { can_always, .. } => {
             if *can_always && all_in(ALWAYS_WORDS) && has(&["always"]) {
                 Some(AgentAnswer::AlwaysAllow)
+            } else if all_in(NEVER_WORDS)
+                && (has(&["never"]) || (has(&["always"]) && has(&["deny"])))
+            {
+                Some(AgentAnswer::AlwaysDeny)
             } else if no {
                 Some(AgentAnswer::Deny)
             } else if yes {
@@ -561,8 +569,12 @@ fn app_of(tool: &str, args: &Value, last: Option<&App>) -> Option<App> {
 
 enum Access {
     Allowed,
+    /// The user chose "Always deny".
+    Denied,
     Blocked,
-    Ask { can_always: bool },
+    Ask {
+        can_always: bool,
+    },
 }
 
 fn access(app: &App, always: &[AgentAppAccess]) -> Access {
@@ -570,14 +582,31 @@ fn access(app: &App, always: &[AgentAppAccess]) -> Access {
     if BLOCKED_APPS.iter().any(|b| b.eq_ignore_ascii_case(id)) {
         return Access::Blocked;
     }
+    let saved = always.iter().find(|a| a.key() == app.key());
+    if saved.is_some_and(|a| !a.allowed) {
+        return Access::Denied;
+    }
     if ASK_EVERY_TIME.iter().any(|b| b.eq_ignore_ascii_case(id)) {
         return Access::Ask { can_always: false };
     }
-    if always.iter().any(|a| a.key() == app.key()) {
+    if saved.is_some() {
         Access::Allowed
     } else {
         Access::Ask { can_always: true }
     }
+}
+
+/// Save "Always allow" or "Always deny" for an app.
+fn remember_access(app: &App, allowed: bool) {
+    let Some(handle) = app_handle() else { return };
+    let mut settings = get_settings(handle);
+    settings.agent_app_access.retain(|a| a.key() != app.key());
+    settings.agent_app_access.push(AgentAppAccess {
+        name: app.name.clone(),
+        bundle_id: app.bundle_id.clone(),
+        allowed,
+    });
+    write_settings(handle, settings);
 }
 
 /// Whether the task may use this app, asking the first time.
@@ -603,6 +632,10 @@ fn check_app(app: &App) -> Result<(), String> {
         .unwrap_or_default();
     match access(app, &always) {
         Access::Allowed => Ok(()),
+        Access::Denied => Err(format!(
+            "The user never lets Felix use {}. Don't use it.",
+            app.name
+        )),
         Access::Blocked => Err(format!(
             "Felix never uses {}: passwords and the Mac's settings are off limits.",
             app.name
@@ -617,16 +650,20 @@ fn check_app(app: &App) -> Result<(), String> {
             match answer {
                 AgentAnswer::AlwaysAllow if can_always => {
                     drop(guard);
-                    if let Some(handle) = app_handle() {
-                        let mut settings = get_settings(handle);
-                        settings.agent_app_access.push(AgentAppAccess {
-                            name: app.name.clone(),
-                            bundle_id: app.bundle_id.clone(),
-                        });
-                        write_settings(handle, settings);
-                    }
+                    remember_access(app, true);
                     info!("Felix may always use {}", app.name);
                     Ok(())
+                }
+                AgentAnswer::AlwaysDeny => {
+                    run.denied.insert(key);
+                    run.refused = true;
+                    drop(guard);
+                    remember_access(app, false);
+                    info!("Felix may never use {}", app.name);
+                    Err(format!(
+                        "The user never lets Felix use {}. Don't use it.",
+                        app.name
+                    ))
                 }
                 AgentAnswer::AlwaysAllow | AgentAnswer::AllowOnce | AgentAnswer::Confirm => {
                     run.allowed_once.insert(key);
@@ -1034,14 +1071,44 @@ mod tests {
             can_always: false,
         };
         assert_eq!(spoken_answer(&terminal, "Always"), None);
+        assert_eq!(
+            spoken_answer(&terminal, "Never."),
+            Some(AgentAnswer::AlwaysDeny)
+        );
+        assert_eq!(
+            spoken_answer(&access, "Always deny"),
+            Some(AgentAnswer::AlwaysDeny)
+        );
+        assert_eq!(spoken_answer(&access, "No"), Some(AgentAnswer::Deny));
+        assert_eq!(
+            spoken_answer(&access, "Never mind"),
+            Some(AgentAnswer::Deny)
+        );
     }
 
     #[test]
     fn password_managers_are_off_limits_and_terminals_always_ask() {
-        let always = vec![AgentAppAccess {
-            name: "Notes".into(),
-            bundle_id: "com.apple.Notes".into(),
-        }];
+        let always = vec![
+            AgentAppAccess {
+                name: "Notes".into(),
+                bundle_id: "com.apple.Notes".into(),
+                allowed: true,
+            },
+            AgentAppAccess {
+                name: "Mail".into(),
+                bundle_id: "com.apple.mail".into(),
+                allowed: false,
+            },
+            AgentAppAccess {
+                name: "Terminal".into(),
+                bundle_id: "com.apple.Terminal".into(),
+                allowed: true,
+            },
+        ];
+        assert!(matches!(
+            access(&app("Mail", "com.apple.mail"), &always),
+            Access::Denied
+        ));
         assert!(matches!(
             access(&app("1Password", "com.1password.1password"), &always),
             Access::Blocked

@@ -28,9 +28,11 @@ struct Daemon {
 
 static DAEMON: Lazy<Mutex<Option<Daemon>>> = Lazy::new(|| Mutex::new(None));
 
-/// Environment for the driver: embedded in Handy, telemetry off.
-pub(crate) fn driver_env() -> [(&'static str, &'static str); 4] {
+/// Environment for the driver: embedded in Handy, telemetry and the GitHub
+/// update check off (Felix pins its bundled driver).
+pub(crate) fn driver_env() -> [(&'static str, &'static str); 5] {
     [
+        ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
         ("CUA_DRIVER_EMBEDDED", "1"),
         ("CUA_DRIVER_HOST_BUNDLE_ID", HOST_BUNDLE_ID),
         ("CUA_TELEMETRY_ENABLED", "false"),

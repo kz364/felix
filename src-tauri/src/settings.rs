@@ -324,11 +324,18 @@ pub enum AppRuleKind {
     Website,
 }
 
-/// An app Felix may always use for computer tasks ("Always allow").
+/// An app Felix may always use for computer tasks ("Always allow"), or
+/// never ("Always deny").
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 pub struct AgentAppAccess {
     pub name: String,
     pub bundle_id: String,
+    #[serde(default = "default_true")]
+    pub allowed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl AgentAppAccess {
@@ -762,8 +769,8 @@ pub struct AppSettings {
     /// don't carry over.
     #[serde(default)]
     pub agent_fast_mode: bool,
-    /// Apps Felix may always use for computer tasks; others are asked for
-    /// each task.
+    /// Apps Felix may always use for computer tasks, or never; others are
+    /// asked for each task.
     #[serde(default)]
     pub agent_app_access: Vec<AgentAppAccess>,
     #[serde(default = "default_assistant_model")]

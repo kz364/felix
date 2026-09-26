@@ -872,10 +872,12 @@
             "description": "Felix asks before it first uses an app, and before anything that sends, posts, deletes or buys (click Do it, or dictate “yes”). It never uses password managers or System Settings, and asks every time for terminals. While a task runs, what's in the app's windows goes to OpenAI through Codex, and in Fast mode button names and your text also go to Simple Jev's public demo."
           },
           "apps": {
-            "title": "Always allowed",
-            "description": "Apps Felix can use without asking. Others are asked about in each task.",
-            "empty": "None yet. Choose Always allow on the card to add one.",
-            "remove": "Stop always allowing {{app}}"
+            "title": "Apps you've decided on",
+            "description": "Felix uses these without asking, or never. Others are asked about in each task.",
+            "allowed": "Always allowed",
+            "denied": "Never allowed",
+            "empty": "None yet. Choose Always allow or Always deny on the card.",
+            "remove": "Forget the choice for {{app}}"
           },
           "runs": {
             "title": "Recent tasks",
@@ -1183,13 +1185,14 @@
       "appAccess": "Let {{name}} use {{app}}?",
       "alwaysAllow": "Always allow",
       "allowOnce": "Allow this time",
-      "deny": "Deny",
-      "sayAppAccess": "Or dictate “always”, “yes” or “no”.",
-      "sayAppAccessOnce": "Asked every time for this app. Or dictate “yes” or “no”.",
+      "deny": "Deny this time",
+      "sayAppAccess": "Or dictate “always”, “yes”, “no” or “never”.",
+      "sayAppAccessOnce": "Asked every time for this app. Or dictate “yes”, “no” or “never”.",
       "confirm": "{{action}}?",
       "doIt": "Do it",
       "cancel": "Cancel",
-      "sayConfirm": "Or dictate “yes” or “no”."
+      "sayConfirm": "Or dictate “yes” or “no”.",
+      "alwaysDeny": "Always deny"
     }
   },
   "secureInput": {
