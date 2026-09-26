@@ -1018,9 +1018,11 @@ pub(crate) async fn process_transcription_output(
     final_text = scratchpad.text;
 
     // Saying the assistant's name hands the dictation to it instead of the
-    // cleanup model.
+    // cleanup model. It's on by default, so without a ChatGPT sign-in it
+    // stays out of the way and the dictation is pasted as usual.
     if settings.assistant_enabled
         && crate::assistant::is_addressed(&final_text, &settings.assistant_name)
+        && crate::chatgpt::signed_in_as().is_some()
     {
         crate::overlay::show_assistant_overlay(app);
         // Esc cancels while the assistant works, as it does while recording.
@@ -1373,6 +1375,7 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
+            crate::draft::start(app);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -1406,6 +1409,9 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        // The live draft goes first, so nothing after this reads it as text
+        // in the field.
+        crate::draft::stop(app);
         // Prevent a slow microphone from emitting a ready event or start chime
         // after the user has already requested stop.
         app.state::<Arc<AudioRecordingManager>>()

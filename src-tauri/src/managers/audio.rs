@@ -427,6 +427,7 @@ fn create_audio_recorder(
             let router = stream_router;
             move |frame| {
                 router.feed(frame);
+                crate::draft::feed(frame);
             }
         });
 

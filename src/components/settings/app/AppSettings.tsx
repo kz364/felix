@@ -16,6 +16,7 @@ import { AutostartToggle } from "../AutostartToggle";
 import { ShowTrayIcon } from "../ShowTrayIcon";
 import { ShowOverlay } from "../ShowOverlay";
 import { BenchmarkRecording } from "./BenchmarkRecording";
+import { OPEN_GUIDE_EVENT } from "../../onboarding/Guide";
 
 /** How the app itself behaves and looks, plus version and credits. */
 export const AppSettings: React.FC = () => {
@@ -65,6 +66,20 @@ export const AppSettings: React.FC = () => {
         </SettingContainer>
 
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
+
+        <SettingContainer
+          title={t("settings.about.guide.title")}
+          description={t("settings.about.guide.description")}
+          grouped={true}
+        >
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => window.dispatchEvent(new Event(OPEN_GUIDE_EVENT))}
+          >
+            {t("settings.about.guide.button")}
+          </Button>
+        </SettingContainer>
 
         <SettingContainer
           title={t("settings.about.sourceCode.title")}

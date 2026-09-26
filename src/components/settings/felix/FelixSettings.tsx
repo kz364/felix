@@ -7,11 +7,11 @@ import { AssistantSettings } from "../voice-control/AssistantSettings";
 import { useSettings } from "../../../hooks/useSettings";
 import { AgentApps, AgentRuns } from "./AgentActivity";
 
-/** The assistant's own page: off by default, since it acts for the user. */
+/** The assistant's own page. On by default, but inactive until ChatGPT sign-in. */
 export const FelixSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
-  const enabled = getSetting("assistant_enabled") ?? false;
+  const enabled = getSetting("assistant_enabled") ?? true;
   const agentActions = getSetting("agent_actions_enabled") ?? false;
   const autoSend = getSetting("agent_auto_send") ?? true;
   const fastMode = getSetting("agent_fast_mode") ?? false;

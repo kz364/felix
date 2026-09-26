@@ -52,3 +52,4 @@ src-tauri/binaries/
 # Private data: never commit (benchmark and meeting recordings, local fixtures)
 benchmark/
 *.local.json
+src-tauri/resources/draft-ime/

@@ -863,6 +863,9 @@ static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Hides the recording overlay window with fade-out animation
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
+    // Normally gone already (stop clears it first); this catches any path
+    // that ends a dictation without stopping.
+    crate::draft::stop(app_handle);
     // Felix's task card comes back after a dictation or another card.
     if crate::agent_run::card_shown() {
         crate::agent_run::reshow();

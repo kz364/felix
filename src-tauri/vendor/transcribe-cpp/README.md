@@ -108,7 +108,7 @@ With the **default static** build there is nothing to do — the native code is
 baked into your binary. But if you enable `shared` or `dynamic-backends`, your
 installer must ship the runtime libraries (and, for `dynamic-backends`, the
 backend modules) next to your executable. Bundling for distribution (e.g. a
-Tauri/Electron installer) happens at *build* time, so a runtime lookup is the
+Tauri/Electron installer) happens at _build_ time, so a runtime lookup is the
 wrong tool — you need the artifact path while you build.
 
 This crate forwards the native build's output directories to **your** build

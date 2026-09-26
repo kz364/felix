@@ -21,10 +21,50 @@ use std::time::SystemTime;
 
 pub const FILE: &str = "rules.toml";
 
+/// How to read the file, for AI agents and other apps: at the top of every
+/// rules file.
+macro_rules! agent_section {
+    () => {
+        r#"# ---------------------------------------------------------------------
+# For AI agents and other apps reading this file
+#
+# This is plain TOML describing how one person's dictation should be
+# corrected. To apply it to a raw speech-to-text transcript, in this order:
+#  1. soundalike: for each [[soundalike]], occurrences of `heard` (whole
+#     words, any case) become `word` when the sentence is about the name:
+#     always when followed by one of `compounds`; never right after a word in
+#     `ordinary_after` (default: the, my, our, a, an, your, their, this,
+#     that), unless the text is going into an app in `name_in_apps`, or
+#     `name_if_on_screen` is true and the name is visible on screen. Other
+#     cases are a judgment call from `meaning`.
+#  2. vocabulary: any word here that was transcribed with different casing
+#     or spacing is rewritten to exactly this spelling. Speech models can
+#     also be biased toward these words.
+#  3. replace: each [[replace]] in file order. `from` matches a whole phrase,
+#     case-insensitively; `/…/` is a regex, and `to` may use $1, $2.
+#  [[test]] entries are examples: `said` is the raw transcript, `expect` is
+#  the right result (in `app`, or with `screen` text visible, if given).
+#  Use them to check your reading of the rules.
+#
+# Editing: keep it valid TOML and keep these comments. Add words to the
+# existing `vocabulary` list rather than a second one. Felix re-reads the
+# file before each dictation and keeps the last good version if it breaks.
+# ---------------------------------------------------------------------
+"#
+    };
+}
+const AGENT_SECTION: &str = agent_section!();
+/// Its first line, to tell whether a file has it.
+const AGENT_MARKER: &str = "# For AI agents and other apps reading this file";
+
 /// The file as first written: the format, explained, and the Claude rule.
-pub const STARTER: &str = r#"# Felix dictation rules. Saved changes apply to your next dictation; no
+pub const STARTER: &str = concat!(
+    r#"# Felix dictation rules. Saved changes apply to your next dictation; no
 # restart needed. They add to Settings → Vocabulary.
 #
+"#,
+    agent_section!(),
+    r#"#
 # vocabulary: words and names to recognise and spell exactly like this.
 # [[replace]]: fix a mishearing. `from` is a whole phrase, any case; write it
 #   as /regex/ for a pattern (then `to` may use $1). Applied in order.
@@ -61,7 +101,8 @@ expect = "our cloud bill went up"
 said = "restart my cloud instance"
 app = "Codex"
 expect = "restart my Claude instance"
-"#;
+"#
+);
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,7 +180,55 @@ pub fn init(app_data_dir: &Path) {
             log::warn!("Couldn't create {}: {e}", path.display());
         }
     }
-    let _ = PATH.set(path);
+    let _ = PATH.set(path.clone());
+    // Files from before the section for agents get it added on top.
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Some(new) = with_agent_section(&text) {
+            if let Err(e) = save(&new) {
+                log::warn!("Couldn't add the agent notes to {}: {e}", path.display());
+            }
+        }
+    }
+}
+
+/// `text` with the section for agents added on top, or `None` if it has
+/// one already.
+fn with_agent_section(text: &str) -> Option<String> {
+    (!text.contains(AGENT_MARKER)).then(|| format!("{AGENT_SECTION}\n{text}"))
+}
+
+/// Rules in a form other apps can load: the file's contents as JSON, with
+/// how to apply them, plus the words taught by voice for the current model.
+pub fn export_json(settings: &AppSettings) -> Result<String, String> {
+    let rules = current();
+    let taught: Vec<serde_json::Value> = settings
+        .taught_words
+        .iter()
+        .filter_map(|t| {
+            let entry = t
+                .by_model
+                .iter()
+                .find(|m| m.model_id == settings.selected_model)
+                .or_else(|| t.by_model.last())?;
+            let heard_as: Vec<&String> = entry
+                .variants
+                .iter()
+                .filter(|v| !entry.excluded.contains(v))
+                .collect();
+            Some(serde_json::json!({"word": t.word, "heard_as": heard_as}))
+        })
+        .collect();
+    let json = serde_json::json!({
+        "format": "felix-dictation-rules",
+        "version": 1,
+        "how_to_apply": "Apply to a raw transcript in this order: soundalike (heard -> word when the sentence is about the name), vocabulary (rewrite to these exact spellings; can also bias speech models), replace (in order; `from` is a whole phrase, any case, or /regex/ with $1 in `to`), then taught (each heard_as phrase -> word). `test` entries are examples: said -> expect.",
+        "vocabulary": rules.vocabulary,
+        "replace": rules.replace,
+        "soundalike": rules.soundalike,
+        "taught": taught,
+        "test": rules.test,
+    });
+    serde_json::to_string_pretty(&json).map_err(|e| e.to_string())
 }
 
 pub fn path() -> Option<&'static Path> {
@@ -868,6 +957,26 @@ pub fn learned() -> Learned {
     }
 }
 
+/// Add a word to the vocabulary (no-op if it's already there).
+pub fn add_word(word: &str) -> Result<(), String> {
+    let word = word.trim();
+    if word.is_empty() {
+        return Err("Type a word first".into());
+    }
+    let path = path().ok_or("The rules file isn't set up")?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    if parse(&text)?.vocabulary.iter().any(|w| w == word) {
+        return Ok(());
+    }
+    let add = Additions {
+        vocabulary: vec![word.to_string()],
+        ..Default::default()
+    };
+    save(&render(&text, &add)?)?;
+    log_applied(None, &format!("added word {word}"));
+    Ok(())
+}
+
 /// Remove one entry ("word", "correction" or "soundalike", by position),
 /// keeping the file's comments. Tests that only passed because of it go too.
 pub fn forget(kind: &str, index: usize) -> Result<(), String> {
@@ -1103,6 +1212,17 @@ pub fn save(text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_files_get_the_agent_notes_once() {
+        assert!(STARTER.contains(AGENT_MARKER));
+        assert_eq!(with_agent_section(STARTER), None);
+        let old = "vocabulary = [\"kubectl\"]\n";
+        let new = with_agent_section(old).unwrap();
+        assert!(new.ends_with(old));
+        assert_eq!(parse(&new).unwrap().vocabulary, vec!["kubectl"]);
+        assert_eq!(with_agent_section(&new), None);
+    }
 
     #[test]
     fn the_starter_file_parses_and_its_tests_pass() {

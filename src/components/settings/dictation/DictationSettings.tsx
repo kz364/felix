@@ -24,6 +24,7 @@ import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { VoiceActivityDetection } from "../VoiceActivityDetection";
 import { VadBackendSelector } from "../VadBackendSelector";
 import { LanguageCard } from "./LanguageCard";
+import { LiveDraft } from "../LiveDraft";
 
 /** Everything about talking and getting text out: keys, mic, language, pasting. */
 export const DictationSettings: React.FC = () => {
@@ -51,6 +52,7 @@ export const DictationSettings: React.FC = () => {
       </SettingsGroup>
       <LanguageCard />
       <SettingsGroup title={t("settings.dictation.groups.pasting")}>
+        <LiveDraft descriptionMode="tooltip" grouped={true} />
         <PasteMethodSetting descriptionMode="tooltip" grouped={true} />
         <TypingToolSetting descriptionMode="tooltip" grouped={true} />
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped={true} />

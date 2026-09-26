@@ -769,6 +769,10 @@ pub struct AppSettings {
     /// don't carry over.
     #[serde(default)]
     pub agent_fast_mode: bool,
+    /// Show a rough live draft in the focused field while dictating
+    /// (`draft.rs`).
+    #[serde(default = "default_true")]
+    pub live_draft: bool,
     /// Apps Felix may always use for computer tasks, or never; others are
     /// asked for each task.
     #[serde(default)]
@@ -1021,7 +1025,7 @@ fn default_result_popup_enabled() -> bool {
 
 /// Off until the user turns it on: it rewrites text and acts on the computer.
 fn default_assistant_enabled() -> bool {
-    false
+    true
 }
 
 fn default_meeting_mode() -> crate::meetings::MeetingMode {
@@ -1486,6 +1490,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
         agent_fast_mode: false,
+        live_draft: true,
         agent_app_access: Vec::new(),
         assistant_model: default_assistant_model(),
         assistant_effort: default_assistant_effort(),

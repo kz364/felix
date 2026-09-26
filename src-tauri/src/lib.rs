@@ -22,6 +22,7 @@ mod clipboard;
 mod commands;
 pub mod cua_gate;
 mod dictation_log;
+pub mod draft;
 mod helpers;
 mod input;
 mod installed_apps;
@@ -773,6 +774,11 @@ pub fn run(cli_args: CliArgs) {
             commands::rules::undo_rules,
             commands::rules::learned_rules,
             commands::rules::forget_rule,
+            commands::rules::add_vocabulary_word,
+            commands::rules::export_rules,
+            draft::live_draft_status,
+            draft::set_live_draft,
+            draft::open_input_sources,
             commands::rules::mistake_reports,
             commands::rules::forget_mistake_report,
             shortcut::change_result_popup_enabled_setting,
@@ -1087,7 +1093,7 @@ pub fn run(cli_args: CliArgs) {
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("Felix")
-                    .inner_size(680.0, 570.0)
+                    .inner_size(860.0, 680.0)
                     .min_inner_size(680.0, 570.0)
                     .resizable(true)
                     .maximizable(true)
@@ -1153,6 +1159,14 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
             agent_run::init(&app_handle);
+            if settings::get_settings(&app_handle).live_draft {
+                let app = app_handle.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = draft::install(&app) {
+                        log::warn!("Felix Draft: {e}");
+                    }
+                });
+            }
             local_llm::sync_with_settings(&settings::get_settings(&app_handle));
 
             // Secure Input monitor (macOS): detects stuck secure input that

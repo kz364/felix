@@ -190,6 +190,7 @@ const RESPONSES: Record<string, unknown> = {
     local_cleanup: true,
   },
   chatgpt_account: "sam.rivera@example.com",
+  live_draft_status: { model_ready: true, installed: true, enabled: false },
   benchmark_summary: {
     dictations: 42,
     edited: 7,

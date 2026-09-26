@@ -18,7 +18,11 @@ import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
 import Footer from "./components/footer";
-import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
+import Onboarding, {
+  AccessibilityOnboarding,
+  Guide,
+  OPEN_GUIDE_EVENT,
+} from "./components/onboarding";
 import {
   DebugSettings,
   type OnboardingPreviewStep,
@@ -31,7 +35,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
-type OnboardingStep = "accessibility" | "model" | "done";
+type OnboardingStep = "accessibility" | "model" | "guide" | "done";
 
 // Stable identity so preview effects do not re-run due to callback changes.
 const NOOP = () => {};
@@ -74,7 +78,8 @@ function App() {
   const isShowingOnboarding =
     onboardingPreview !== null ||
     onboardingStep === "accessibility" ||
-    onboardingStep === "model";
+    onboardingStep === "model" ||
+    onboardingStep === "guide";
 
   // Classic scrollbars consume layout space. Reserve a matching gutter on the
   // opposite edge while onboarding is visible so its content stays centered in
@@ -94,6 +99,12 @@ function App() {
     checkOnboardingStatus();
   }, []);
 
+  useEffect(() => {
+    const open = () => setOnboardingStep("guide");
+    window.addEventListener(OPEN_GUIDE_EVENT, open);
+    return () => window.removeEventListener(OPEN_GUIDE_EVENT, open);
+  }, []);
+
   // Initialize RTL direction when language changes
   useEffect(() => {
     initializeRTL(i18n.language);
@@ -101,7 +112,10 @@ function App() {
 
   // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
   useEffect(() => {
-    if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {
+    if (
+      (onboardingStep === "done" || onboardingStep === "guide") &&
+      !hasCompletedPostOnboardingInit.current
+    ) {
       hasCompletedPostOnboardingInit.current = true;
       Promise.all([
         commands.initializeEnigo(),
@@ -288,8 +302,8 @@ function App() {
   };
 
   const handleModelSelected = () => {
-    // Transition to main app - user has started a download
-    setOnboardingStep("done");
+    // Model ready: a short tour, then the main app
+    setOnboardingStep("guide");
   };
 
   // Rendered once around every step below (including onboarding) so
@@ -349,6 +363,8 @@ function App() {
     );
   } else if (onboardingStep === "model") {
     content = <Onboarding onModelSelected={handleModelSelected} />;
+  } else if (onboardingStep === "guide") {
+    content = <Guide onDone={() => setOnboardingStep("done")} />;
   } else {
     content = (
       <div

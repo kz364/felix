@@ -129,6 +129,53 @@
         "checkFailed": "Failed to check permissions. Please try again.",
         "requestFailed": "Failed to request permission. Please try again."
       }
+    },
+    "guide": {
+      "stepOf": "Step {{n}} of {{total}}",
+      "skipAll": "Skip the tour",
+      "back": "Back",
+      "skip": "Skip",
+      "next": "Next",
+      "finish": "Start using Felix",
+      "dictate": {
+        "title": "Try a dictation",
+        "description": "Click in the scratchpad, then use your shortcut and say a sentence. You can change the shortcut here.",
+        "placeholder": "Your words appear here",
+        "worked": "It works. Dictate like this in any app."
+      },
+      "teach": {
+        "title": "Teach a word",
+        "description": "Names and jargon are what speech models get wrong most. Type one you use, like a colleague's name or a tool, then say it a few times, spoken and whispered. Felix spells it your way from then on.",
+        "placeholder": "A name or term, like kubectl",
+        "start": "Teach it",
+        "willRewrite": "Felix will write “{{word}}” when it hears {{variants}}."
+      },
+      "chatgpt": {
+        "title": "Sign in to ChatGPT",
+        "description": "Optional. Your ChatGPT subscription powers the smarter parts of Felix, with no API key to manage.",
+        "usesAssistant": "The assistant: rewrite, reply or fill in text by asking for it while you dictate.",
+        "usesReports": "Fixing mistakes you report: it writes and tests a correction rule for you.",
+        "notSpeech": "Your speech is still transcribed on this Mac; the sign-in isn't used for that."
+      },
+      "felix": {
+        "title": "Meet {{name}}",
+        "description": "Say its name anywhere in a dictation to hand that dictation to ChatGPT.",
+        "toggle": "Turn on {{name}}",
+        "needsSignIn": "Sign in to ChatGPT on the previous step first.",
+        "tryIt": "Try it in the scratchpad: dictate a sentence, select it, then say “{{name}}, make this more formal”.",
+        "more": "More on the {{name}} page: its name, model, notes about you, and acting on your Mac (experimental, off by default).",
+        "privacy": "When on and you're signed in, a dictation with its name and the text in the field go to ChatGPT."
+      },
+      "draft": {
+        "title": "See words as you speak",
+        "description": "While you talk, a rough, underlined draft appears in the text box, then the real text replaces it when you stop. It runs a second small model, so it uses a little extra processing power. Two one-time steps:"
+      },
+      "scratchpad": {
+        "title": "Scratchpad",
+        "dictate": "Click here and dictate…",
+        "draft": "Dictate here to see the draft appear as you talk…",
+        "felix": "Dictate a sentence here, select it, then ask {{name}} to change it…"
+      }
     }
   },
   "modelSelector": {
@@ -797,6 +844,11 @@
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Felix's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
+      },
+      "guide": {
+        "title": "Guided tour",
+        "description": "Try a dictation, teach a word, sign in to ChatGPT and meet the assistant.",
+        "button": "Show the tour"
       }
     },
     "voiceControl": {
@@ -817,7 +869,7 @@
       },
       "assistant": {
         "groupTitle": "Assistant",
-        "warning": "Off by default. When it's on, saying the assistant's name sends that dictation and the text in the field to ChatGPT and lets it rewrite or replace what's in the field. Acting on your Mac is a separate switch below. Turn it on once you're comfortable with that.",
+        "warning": "On by default, but it does nothing until you sign in to ChatGPT. Once you're signed in, saying the assistant's name sends that dictation and the text in the field to ChatGPT and lets it rewrite or replace what's in the field. Acting on your Mac is a separate switch below.",
         "groupDescription": "Say the assistant's name anywhere in a dictation to hand it to a ChatGPT model: \"my email is Felix put my email here\", \"Felix, reply saying I'm in\", or select text and say \"Felix, make this shorter\". The dictation and the text in the field are sent to ChatGPT.",
         "toggleLabel": "Assistant",
         "toggleDescription": "Listen for the assistant's name in dictations.",
@@ -920,7 +972,9 @@
         "apply": "Apply",
         "applyAnyway": "Apply anyway",
         "discard": "Discard",
-        "undo": "Undo"
+        "undo": "Undo",
+        "export": "Export…",
+        "exported": "Rules exported"
       },
       "biasing": {
         "title": "Biasing",
@@ -932,7 +986,7 @@
       },
       "teach": {
         "title": "Teach a word",
-        "description": "Say a vocabulary word a few times, spoken and whispered. The clips are kept so the word can be re-checked automatically whenever you switch transcription models; mishearings are rewritten to the word.",
+        "description": "Type a name or term Felix gets wrong, then say it three times normally and twice whispered. Mishearings are rewritten to your word, and the clips are kept so it's re-checked whenever you switch speech models.",
         "pickWord": "Choose a word…",
         "start": "Teach",
         "dialogTitle": "Teach \"{{word}}\"",
@@ -954,7 +1008,9 @@
         "addRule": "Save and rewrite these",
         "again": "Try again",
         "done": "Save",
-        "saved": "Saved \"{{word}}\""
+        "saved": "Saved \"{{word}}\"",
+        "another": "Teach another word",
+        "differentWord": "Use a different word"
       },
       "taught": {
         "title": "Taught words",
@@ -1050,6 +1106,17 @@
         "sounds": "Sounds",
         "listening": "Listening",
         "listeningDescription": "How Felix tells speech from silence. The defaults suit most people."
+      },
+      "liveDraft": {
+        "label": "Live draft",
+        "description": "Shows a rough, underlined draft in the text field while you talk, from a small fast model. When you stop it disappears and the real text is pasted as usual. Skipped in password fields and when text is selected. Running the second model uses a little extra processing power while you dictate.",
+        "needsModel": "Download the small draft model (Moonshine Streaming Tiny, 50 MB).",
+        "download": "Download",
+        "needsInputSource": "Add Felix Draft as an input source: System Settings → Keyboard → Input Sources → Edit → + → English → Felix Draft.",
+        "openKeyboard": "Open Keyboard settings",
+        "downloading": "Downloading…",
+        "modelReady": "Draft model downloaded",
+        "inputSourceReady": "Felix Draft added as an input source"
       }
     },
     "writing": {
@@ -1340,6 +1407,7 @@
       "actionItems": "Action items",
       "by": "Written by {{model}}",
       "afterTranscript": "Notes are written once the transcript is done."
-    }
+    },
+    "wip": "Work in progress: meetings are unfinished and still changing. Keep your own notes for anything important."
   }
 }

@@ -1,8 +1,18 @@
 # What this fork changes
 
 A map of what's been added on top of [Handy](https://github.com/cjpais/Handy),
-by sidebar section. Anything that sends data off your Mac is off by default
-and listed under Models → "What runs where".
+by sidebar section. Anything that sends data off your Mac is off by default (the
+assistant is on, but sends nothing until you sign in to ChatGPT) and listed under Models → "What runs where".
+
+## Getting started
+
+After the model is picked, a short tour where every step can be skipped: try
+a dictation, set up the live draft (download the small model, add the
+input source), teach a word (added to the vocabulary, then said three times
+spoken and twice whispered), sign in to ChatGPT, and meet the assistant.
+The dictation steps have a scratchpad beside them to watch it happen.
+Settings → About → "Show the tour" opens it again. Teach a word is also on the Vocabulary page. The settings window now
+opens at 860×680.
 
 ## The pipeline
 
@@ -39,6 +49,17 @@ staging pipeline first:
   contains the first transcript plus real new words, not the "Thank you."
   models invent from breathing.
 
+**Live draft** (on by default; the second model costs a little extra
+processing while you dictate): while you talk, Moonshine
+Streaming Tiny transcribes alongside the main model and its rough text shows
+as underlined marked text in the focused field, through Felix Draft, a small
+input method (`src-tauri/draft-ime/`, built by `scripts/build-draft-ime.sh`,
+installed to ~/Library/Input Methods on first use; you add it once under
+Keyboard → Input Sources). Felix switches to it for each dictation and back
+afterwards. The draft is cleared the moment recording stops, before anything
+reads the field, and the main model's text is pasted as before. Skipped in
+secure input and when text is selected.
+
 ## Vocabulary
 
 - **Native biasing** per model: Whisper's initial prompt, Qwen3-ASR's
@@ -49,6 +70,9 @@ staging pipeline first:
 - **Spelled-out words**: "Rivera, R I V E R A" becomes "Rivera".
 - **Report a mistake**, by voice or text; a model proposes the rule and
   shows the change before applying it.
+- **Portable rules**: everything lives in a commented `rules.toml` that
+  explains itself to AI agents and other apps; Vocabulary → Export saves it
+  as TOML or JSON (with the words taught by voice) to load elsewhere.
 
 ## Writing
 
@@ -67,7 +91,7 @@ Trigger phrases at the end of a dictation, "new line", and spoken symbols.
 
 ## Felix
 
-An optional voice assistant (off by default). Say its name and it takes
+A voice assistant, on by default but inactive until you sign in to ChatGPT. Say its name and it takes
 the dictation and the focused field to a ChatGPT model, which inserts,
 replaces the selection or rewrites the field. "Felix, go to Codex" brings
 that app to the front, and "Felix, it keeps writing cloud instead of Claude"

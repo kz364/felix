@@ -1217,6 +1217,9 @@ export const MeetingsPage: React.FC = () => {
         title={t("meetings.heading")}
         description={t("meetings.subheading")}
       />
+      <p className="rounded-xl bg-highlight/15 px-4 py-3 text-sm leading-snug text-text/80">
+        {t("meetings.wip")}
+      </p>
 
       <RecorderCard live={live} onChanged={refresh} />
 

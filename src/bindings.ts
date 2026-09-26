@@ -591,6 +591,54 @@ async forgetRule(kind: string, index: number) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Add a word to the vocabulary, e.g. before teaching it.
+ */
+async addVocabularyWord(word: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_vocabulary_word", { word }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save a copy of the rules for another app: `.json` gets JSON (with the
+ * words taught by voice), anything else the TOML file as it is.
+ */
+async exportRules(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_rules", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async liveDraftStatus() : Promise<LiveDraftStatus> {
+    return await TAURI_INVOKE("live_draft_status");
+},
+/**
+ * Turn the live draft on or off; turning it on installs Felix Draft.
+ */
+async setLiveDraft(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_live_draft", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open System Settings → Keyboard, where input sources are added.
+ */
+async openInputSources() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_input_sources") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Past mistake reports, newest first.
  */
 async mistakeReports() : Promise<Report[]> {
@@ -1912,6 +1960,11 @@ agent_auto_send?: boolean;
  */
 agent_fast_mode?: boolean; 
 /**
+ * Show a rough live draft in the focused field while dictating
+ * (`draft.rs`).
+ */
+live_draft?: boolean; 
+/**
  * Apps Felix may always use for computer tasks, or never; others are
  * asked for each task.
  */
@@ -2188,6 +2241,19 @@ export type Learned = { words: string[]; corrections: TextReplacement[]; soundal
  * The file has a mistake (the list is from the last good version).
  */
 error: string | null }
+/**
+ * What the Dictation page shows about the live draft.
+ */
+export type LiveDraftStatus = { model_ready: boolean; 
+/**
+ * Felix Draft is in ~/Library/Input Methods and macOS knows it.
+ */
+installed: boolean; 
+/**
+ * Added in System Settings → Keyboard → Input Sources (only the user
+ * can do this).
+ */
+enabled: boolean }
 export type LocalModelEntry = { 
 /**
  * Ollama tag, e.g. `qwen3.5:4b`.

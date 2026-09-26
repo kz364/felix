@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import { commands, type Proposal } from "@/bindings";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
@@ -49,6 +51,21 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
   const changed = proposal?.diff.some((l) => l.kind !== "same") ?? false;
   const failing = proposal?.tests.filter((r) => !r.passed).length ?? 0;
 
+  // A copy for another app: JSON for most, or the TOML file itself.
+  const exportRules = async () => {
+    const path = await saveDialog({
+      defaultPath: "felix-rules.json",
+      filters: [
+        { name: "JSON", extensions: ["json"] },
+        { name: "TOML", extensions: ["toml"] },
+      ],
+    });
+    if (!path) return;
+    const result = await commands.exportRules(path);
+    if (result.status === "error") toast.error(result.error);
+    else toast.success(t("settings.vocabulary.report.exported"));
+  };
+
   return (
     <div className="px-4 py-3">
       <div className="space-y-3">
@@ -71,6 +88,9 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
             onClick={() => commands.openRulesFile()}
           >
             {t("settings.vocabulary.report.openFile")}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={exportRules}>
+            {t("settings.vocabulary.report.export")}
           </Button>
         </div>
         {error && <p className="text-sm text-error">{error}</p>}

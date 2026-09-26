@@ -88,6 +88,29 @@ pub fn learned_rules() -> crate::rules::Learned {
     crate::rules::learned()
 }
 
+/// Save a copy of the rules for another app: `.json` gets JSON (with the
+/// words taught by voice), anything else the TOML file as it is.
+#[tauri::command]
+#[specta::specta]
+pub fn export_rules(app: AppHandle, path: String) -> Result<(), String> {
+    let text = if path.to_lowercase().ends_with(".json") {
+        crate::rules::export_json(&get_settings(&app))?
+    } else {
+        let file = crate::rules::path().ok_or("The rules file isn't set up")?;
+        std::fs::read_to_string(file).map_err(|e| e.to_string())?
+    };
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+/// Add a word to the vocabulary, e.g. before teaching it.
+#[tauri::command]
+#[specta::specta]
+pub fn add_vocabulary_word(app: AppHandle, word: String) -> Result<(), String> {
+    crate::rules::add_word(&word)?;
+    let _ = tauri::Emitter::emit(&app, "rules-changed", ());
+    Ok(())
+}
+
 /// Remove one learned entry: `kind` is "word", "correction" or "soundalike".
 #[tauri::command]
 #[specta::specta]

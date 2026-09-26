@@ -126,7 +126,7 @@ export const AssistantSettings: React.FC<AssistantSettingsProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
-    const enabled = getSetting("assistant_enabled") ?? false;
+    const enabled = getSetting("assistant_enabled") ?? true;
     const name = getSetting("assistant_name") ?? "Felix";
     const model = getSetting("assistant_model") ?? "gpt-6-sol";
     const effort = getSetting("assistant_effort") ?? "low";

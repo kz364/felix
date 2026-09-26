@@ -7,6 +7,7 @@ import { LearnedRules } from "./LearnedRules";
 import { MistakeReports } from "./MistakeReports";
 import { ReportMistake } from "./ReportMistake";
 import { TaughtWords } from "./TaughtWords";
+import { TeachWord } from "./TeachWord";
 
 /** Vocabulary is changed only by describing mistakes; what Handy learned
  *  from them is listed below, each entry deletable. */
@@ -34,6 +35,14 @@ export const VocabularySettings: React.FC = () => {
         description={t("settings.vocabulary.report.description")}
       >
         <ReportMistake onChange={changed} />
+      </SettingsGroup>
+      <SettingsGroup
+        title={t("settings.vocabulary.teach.title")}
+        description={t("settings.vocabulary.teach.description")}
+      >
+        <div className="px-4 py-3">
+          <TeachWord />
+        </div>
       </SettingsGroup>
       <SettingsGroup
         title={t("settings.vocabulary.learned.title")}
