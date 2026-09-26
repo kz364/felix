@@ -856,8 +856,8 @@
           "groupTitle": "On your Mac",
           "groupDescription": "\"Felix, open Notes and start a packing list\" works your apps in the background through Codex and Cua Driver, with a card showing each step; close the card to stop it. \"Felix, open Claude Code and start a new project that…\" creates the project folder in Documents/Agent Work and opens a Claude Code session there with your request. Needs Codex CLI signed in to ChatGPT, and Accessibility and Screen Recording access for Felix.",
           "toggle": {
-            "label": "Act on your Mac",
-            "description": "Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
+            "label": "Act on your Mac (experimental)",
+            "description": "Experimental and not hardened; check what it does. Off by default. Lets the assistant start Claude Code sessions and do tasks in your other apps. Off, it only writes into the field you're dictating into."
           },
           "autoSend": {
             "label": "Send the first message",
