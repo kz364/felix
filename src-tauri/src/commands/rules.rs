@@ -48,21 +48,46 @@ pub async fn recent_dictations(history: &HistoryManager) -> Vec<crate::rules::Re
         .unwrap_or_default()
 }
 
-/// Ask a remote model for the rules change that fixes `report`, given the
-/// last few dictations. Nothing is saved until `save_rules`.
+/// What came of a typed report: the proposal, and whether it was applied.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ReportOutcome {
+    pub proposal: Proposal,
+    pub applied: bool,
+}
+
+/// Fix a typed report the way a spoken one is fixed: propose rules and, if
+/// they're safe (they parse, change something and pass every test), apply
+/// them straight away so the user can move on; Undo takes them back.
+/// Anything else comes back unapplied for the user to look at. Runs to the
+/// end even if the page that asked is closed.
 #[tauri::command]
 #[specta::specta]
-pub async fn propose_rules(
+pub async fn report_mistake(
     app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
     report: String,
-) -> Result<Proposal, String> {
+) -> Result<ReportOutcome, String> {
     if report.trim().is_empty() {
         return Err("Describe what came out wrong".into());
     }
     let recent = recent_dictations(&history_manager).await;
     let settings = get_settings(&app);
-    crate::rules::propose(&settings, &report, &recent, "typed").await
+    let proposal = crate::rules::propose(&settings, &report, &recent, "typed").await?;
+    let applied = crate::rules::safe_to_apply(&proposal)
+        && match crate::rules::save(&proposal.rules) {
+            Ok(()) => {
+                crate::rules::log_applied(Some(&proposal.id), "applied");
+                true
+            }
+            Err(e) => {
+                log::warn!("Couldn't apply the reported fix: {e}");
+                false
+            }
+        };
+    if applied {
+        let _ = tauri::Emitter::emit(&app, "rules-changed", ());
+    }
+    Ok(ReportOutcome { proposal, applied })
 }
 
 /// Save a new rules file; it's used from the next dictation.

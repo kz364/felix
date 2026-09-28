@@ -6,7 +6,9 @@ import { commands, type Proposal } from "@/bindings";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
 
-/** Describe a mistranscription; a remote model proposes a rules-file fix. */
+/** Describe a mistranscription; a remote model writes a rules-file fix.
+ *  A safe fix (parses, passes its tests) is applied straight away with an
+ *  Undo, so you can move on while it works; others wait for a look. */
 export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
   onChange,
 }) => {
@@ -16,16 +18,25 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
   const [error, setError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [saved, setSaved] = useState(false);
+  // The fix applied straight away, kept to show its change on request.
+  const [applied, setApplied] = useState<Proposal | null>(null);
+  const [showChange, setShowChange] = useState(false);
 
   const propose = async () => {
     setBusy(true);
     setError(null);
     setProposal(null);
     setSaved(false);
-    const result = await commands.proposeRules(report);
+    setApplied(null);
+    setShowChange(false);
+    const result = await commands.reportMistake(report);
     setBusy(false);
-    if (result.status === "ok") setProposal(result.data);
-    else setError(result.error);
+    if (result.status === "error") setError(result.error);
+    else if (result.data.applied) {
+      setApplied(result.data.proposal);
+      setSaved(true);
+      setReport("");
+    } else setProposal(result.data.proposal);
     onChange?.();
   };
 
@@ -44,6 +55,7 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
     const result = await commands.undoRules();
     if (result.status === "ok") {
       setSaved(false);
+      setApplied(null);
       onChange?.();
     } else setError(result.error);
   };
@@ -95,11 +107,32 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
         </div>
         {error && <p className="text-sm text-error">{error}</p>}
         {saved && (
-          <div className="flex items-center gap-2 text-sm text-text/70">
-            <span>{t("settings.vocabulary.report.saved")}</span>
-            <Button size="sm" variant="ghost" onClick={undo}>
-              {t("settings.vocabulary.report.undo")}
-            </Button>
+          <div className="space-y-2">
+            {applied && (
+              <p className="text-sm leading-relaxed">{applied.explanation}</p>
+            )}
+            <div className="flex items-center gap-2 text-sm text-text/70">
+              <span>
+                {applied
+                  ? t("settings.vocabulary.report.fixed")
+                  : t("settings.vocabulary.report.saved")}
+              </span>
+              <Button size="sm" variant="ghost" onClick={undo}>
+                {t("settings.vocabulary.report.undo")}
+              </Button>
+              {applied && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowChange(!showChange)}
+                >
+                  {showChange
+                    ? t("settings.vocabulary.report.hideChange")
+                    : t("settings.vocabulary.report.showChange")}
+                </Button>
+              )}
+            </div>
+            {applied && showChange && <Change proposal={applied} />}
           </div>
         )}
         {proposal && (
@@ -117,22 +150,7 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
                 })}
               </p>
             )}
-            {changed && (
-              <pre className="max-h-64 overflow-auto rounded-md bg-stone/10 p-2 text-xs leading-snug">
-                {proposal.diff
-                  .filter((l) => l.kind !== "same")
-                  .map((l, i) => (
-                    <div
-                      key={i}
-                      className={
-                        l.kind === "added" ? "text-success" : "text-error"
-                      }
-                    >
-                      {(l.kind === "added" ? "+ " : "- ") + l.text}
-                    </div>
-                  ))}
-              </pre>
-            )}
+            {changed && <Change proposal={proposal} />}
             {proposal.tests.length > 0 && (
               <ul className="space-y-1 text-xs">
                 {proposal.tests.map((r, i) => (
@@ -176,3 +194,19 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
     </div>
   );
 };
+
+/** The lines a fix adds to or removes from the rules file. */
+const Change: React.FC<{ proposal: Proposal }> = ({ proposal }) => (
+  <pre className="max-h-64 overflow-auto rounded-md bg-stone/10 p-2 text-xs leading-snug">
+    {proposal.diff
+      .filter((l) => l.kind !== "same")
+      .map((l, i) => (
+        <div
+          key={i}
+          className={l.kind === "added" ? "text-success" : "text-error"}
+        >
+          {(l.kind === "added" ? "+ " : "- ") + l.text}
+        </div>
+      ))}
+  </pre>
+);

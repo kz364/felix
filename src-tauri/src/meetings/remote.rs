@@ -39,6 +39,11 @@ impl Remote {
     /// model.
     pub fn from_settings(settings: &AppSettings) -> Result<Option<Self>, String> {
         let provider_id = match settings.meeting_transcriber {
+            MeetingTranscriber::Auto => {
+                return Ok(PROVIDERS
+                    .iter()
+                    .find_map(|(id, _, _)| Self::for_provider(settings, id, false).ok()))
+            }
             MeetingTranscriber::Local => return Ok(None),
             MeetingTranscriber::Openai => "openai",
             MeetingTranscriber::Groq => "groq",

@@ -234,7 +234,7 @@ fn apply(
 
 /// The local model to ask, when it's the cleanup provider (so it's loaded or
 /// loading while the user speaks).
-fn local_model(settings: &AppSettings) -> Option<String> {
+pub(crate) fn local_model(settings: &AppSettings) -> Option<String> {
     let model = settings
         .post_process_models
         .get(crate::local_llm::LOCAL_PROVIDER_ID)?;

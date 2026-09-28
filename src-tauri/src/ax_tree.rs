@@ -139,6 +139,23 @@ mod mac {
         };
     }
 
+    pub fn window_titles(pid: i32) -> Vec<String> {
+        let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
+        unsafe { AXUIElementSetMessagingTimeout(app.0, 0.3) };
+        let Some(windows) = copy_attribute(app.0, "AXWindows") else {
+            return Vec::new();
+        };
+        // SAFETY: type-checked; the array is retained by `windows` while we read it.
+        if unsafe { CFGetTypeID(windows.0) } != unsafe { CFArrayGetTypeID() } {
+            return Vec::new();
+        }
+        let array: CFArray<*const c_void> = unsafe { CFArray::wrap_under_get_rule(windows.0 as _) };
+        array
+            .iter()
+            .filter_map(|w| string_attribute(*w, "AXTitle"))
+            .collect()
+    }
+
     pub fn dump(pid: i32, max_depth: usize) -> Vec<Node> {
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
         let mut nodes = Vec::new();
@@ -147,6 +164,35 @@ mod mac {
             false
         });
         nodes
+    }
+
+    pub fn texts(
+        pid: i32,
+        max_depth: usize,
+        max_nodes: usize,
+        budget: std::time::Duration,
+    ) -> Vec<Vec<String>> {
+        let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
+        let started = std::time::Instant::now();
+        let mut out = Vec::new();
+        walk(app.0, 0, max_depth, &mut |element, _| {
+            let texts: Vec<String> = [
+                "AXTitle",
+                "AXDescription",
+                "AXValue",
+                "AXHelp",
+                "AXIdentifier",
+                "AXDOMIdentifier",
+            ]
+            .iter()
+            .filter_map(|a| string_attribute(element, a))
+            .collect();
+            if !texts.is_empty() {
+                out.push(texts);
+            }
+            out.len() >= max_nodes || started.elapsed() > budget
+        });
+        out
     }
 
     pub fn press(pid: i32, role: &str, label: &str, max_depth: usize) -> Result<(), String> {
@@ -189,6 +235,17 @@ pub fn expose_electron_tree(pid: i32) {
     let _ = pid;
 }
 
+/// The titles of an app's windows (a browser's name its front tab).
+pub fn window_titles(pid: i32) -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    return mac::window_titles(pid);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pid;
+        Vec::new()
+    }
+}
+
 /// Every control in the app with this pid.
 pub fn dump(pid: i32, max_depth: usize) -> Vec<Node> {
     #[cfg(target_os = "macos")]
@@ -196,6 +253,23 @@ pub fn dump(pid: i32, max_depth: usize) -> Vec<Node> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (pid, max_depth);
+        Vec::new()
+    }
+}
+
+/// Every text on each control (title, description, value, help and ids),
+/// walking at most `max_nodes` controls or for `budget`, whichever ends first.
+pub fn texts(
+    pid: i32,
+    max_depth: usize,
+    max_nodes: usize,
+    budget: std::time::Duration,
+) -> Vec<Vec<String>> {
+    #[cfg(target_os = "macos")]
+    return mac::texts(pid, max_depth, max_nodes, budget);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (pid, max_depth, max_nodes, budget);
         Vec::new()
     }
 }

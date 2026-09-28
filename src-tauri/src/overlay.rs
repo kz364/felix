@@ -182,7 +182,7 @@ fn force_overlay_topmost(overlay_window: &tauri::webview::WebviewWindow) {
     });
 }
 
-fn get_monitor_with_cursor(app_handle: &AppHandle) -> Option<tauri::Monitor> {
+pub(crate) fn get_monitor_with_cursor(app_handle: &AppHandle) -> Option<tauri::Monitor> {
     if let Some(mouse_location) = input::get_cursor_position(app_handle) {
         if let Ok(monitors) = app_handle.available_monitors() {
             for monitor in monitors {
@@ -650,6 +650,16 @@ pub struct ResultPopup {
     pub title: Option<String>,
     /// Auto-close delay; 0 = stays until closed.
     pub timeout_ms: u32,
+    /// Offer Copy (the text is a dictation to rescue, not a message).
+    pub copy: bool,
+    /// Buttons of a notice (`notices`).
+    pub actions: Vec<NoticeButton>,
+}
+
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct NoticeButton {
+    pub id: String,
+    pub label: String,
 }
 
 /// Logical screen rect (x, y, w, h) of the result popup while it's shown,
@@ -672,7 +682,33 @@ pub fn show_result_overlay_titled(app_handle: &AppHandle, text: String, title: O
         text,
         title,
         timeout_ms: seconds.saturating_mul(1000),
+        copy: true,
+        actions: Vec::new(),
     };
+    show_result_payload(app_handle, payload);
+}
+
+/// A notice: a heading, a line of text and its buttons (see `notices`).
+pub fn show_notice(
+    app_handle: &AppHandle,
+    title: String,
+    text: String,
+    actions: Vec<NoticeButton>,
+    seconds: u32,
+) {
+    show_result_payload(
+        app_handle,
+        ResultPopup {
+            text,
+            title: Some(title),
+            timeout_ms: seconds.saturating_mul(1000),
+            copy: false,
+            actions,
+        },
+    );
+}
+
+fn show_result_payload(app_handle: &AppHandle, payload: ResultPopup) {
     let handle = app_handle.clone();
     let _ = app_handle.run_on_main_thread(move || {
         // Text first, so the overlay has it when it switches state.

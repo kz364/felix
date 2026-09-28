@@ -1,6 +1,7 @@
 mod actions;
 pub mod agent;
 pub mod agent_decide;
+mod agent_files;
 pub mod agent_run;
 pub mod agent_skills;
 mod app_categories;
@@ -23,6 +24,8 @@ mod commands;
 pub mod cua_gate;
 mod dictation_log;
 pub mod draft;
+pub mod draft_bubble;
+mod edit_learning;
 mod helpers;
 mod input;
 mod installed_apps;
@@ -30,11 +33,15 @@ mod llm_client;
 mod local_llm;
 mod local_llm_install;
 mod managers;
+pub mod meeting_panel;
 pub mod meetings;
 mod memory;
+pub mod notices;
+mod nudges;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+mod recovery;
 pub mod rules;
 mod scratchpad;
 mod screen_context;
@@ -44,6 +51,7 @@ mod shortcut;
 mod signal_handle;
 mod soundalikes;
 mod spelling;
+mod stacked;
 mod style;
 pub mod text_field;
 mod transcription_coordinator;
@@ -123,7 +131,7 @@ fn build_console_filter() -> env_filter::Filter {
     builder.build()
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
@@ -261,6 +269,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let meeting_manager = Arc::new(meetings::MeetingManager::new(app_handle));
     app_handle.manage(meeting_manager.clone());
     meeting_manager.resume_transcriptions();
+    meetings::watch::spawn(app_handle);
 
     // Taught words need results for the current model (it may have changed
     // since they were taught, e.g. by the deleted-model fallback).
@@ -418,6 +427,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+    draft_bubble::create(app_handle);
+    meeting_panel::create(app_handle);
 
     // A local cleanup model is started now, not at the first dictation.
     actions::warm_up_at_launch(app_handle);
@@ -766,19 +777,29 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_screen_context_setting,
             shortcut::change_screen_context_online_setting,
             shortcut::change_focus_message_box_setting,
+            shortcut::change_learn_from_edits_setting,
+            notices::notice_action,
+            notices::unmute_notices,
+            shortcut::change_stacked_messages_setting,
+            shortcut::change_tag_agent_files_setting,
             shortcut::change_transcription_provider_setting,
             commands::rules::rules_file_path,
             commands::rules::open_rules_file,
-            commands::rules::propose_rules,
             commands::rules::save_rules,
             commands::rules::undo_rules,
             commands::rules::learned_rules,
             commands::rules::forget_rule,
             commands::rules::add_vocabulary_word,
             commands::rules::export_rules,
+            commands::rules::report_mistake,
             draft::live_draft_status,
             draft::set_live_draft,
             draft::open_input_sources,
+            draft::set_live_draft_style,
+            meeting_panel::get_meeting_panel_state,
+            meeting_panel::set_meeting_panel_expanded,
+            meeting_panel::meeting_level,
+            meeting_panel::open_meetings_page,
             commands::rules::mistake_reports,
             commands::rules::forget_mistake_report,
             shortcut::change_result_popup_enabled_setting,
@@ -808,6 +829,12 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::retranscribe_meeting,
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,
+            meetings::manager::resume_meeting,
+            meetings::manager::delete_meeting,
+            meetings::manager::edit_meeting_paragraph,
+            meetings::ask::ask_live,
+            meetings::ask::ask_meeting,
+            meetings::ask::draft_follow_up_email,
             shortcut::change_agent_auto_send_setting,
             shortcut::change_agent_fast_mode_setting,
             overlay::fit_result_overlay,
@@ -915,6 +942,11 @@ pub fn run(cli_args: CliArgs) {
         ])
         // Sent to the overlay as a plain event (see overlay::show_agent_card).
         .typ::<agent_run::AgentCard>()
+        // Also sent as plain events: the live draft bubble's position, notice
+        // buttons on the overlay, and saved meeting notes.
+        .typ::<draft_bubble::BubblePlace>()
+        .typ::<overlay::NoticeButton>()
+        .typ::<meetings::manager::MeetingNotes>()
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
             managers::transcription::StreamTextEvent,
@@ -1159,7 +1191,8 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
             agent_run::init(&app_handle);
-            if settings::get_settings(&app_handle).live_draft {
+            let startup = settings::get_settings(&app_handle);
+            if startup.live_draft && startup.live_draft_style == settings::LiveDraftStyle::Inline {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Err(e) = draft::install(&app) {

@@ -2,10 +2,17 @@
 //! and system-audio tracks, for transcription afterwards. Separate from
 //! dictation: its own mic stream, no gain or VAD at capture time.
 
+pub mod active_speaker;
+pub mod ask;
+mod awake;
+pub mod call_apps;
 pub mod capture;
+pub mod detect;
 pub mod diarize;
+pub mod echo;
 mod jobs;
 pub mod level;
+pub mod live;
 pub mod llm;
 pub mod manager;
 mod mic;
@@ -16,6 +23,7 @@ pub mod summary;
 mod system_audio;
 pub mod track;
 pub mod transcript;
+pub mod watch;
 
 pub use capture::{MeetingMode, Recording};
 
@@ -32,12 +40,16 @@ pub enum MeetingLlm {
     Cleanup,
 }
 
-/// What transcribes meetings.
+/// What transcribes meetings. Meetings are cloud-first: local models
+/// aren't good enough for long, many-voiced audio, and nobody is waiting.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum MeetingTranscriber {
-    /// The model selected for dictation, on this Mac.
+    /// A cloud provider whose key is set (OpenAI, then Groq), otherwise the
+    /// model on this Mac.
     #[default]
+    Auto,
+    /// The model selected for dictation, on this Mac.
     Local,
     /// OpenAI's transcription API, with the OpenAI key from cleanup providers.
     Openai,

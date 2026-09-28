@@ -27,7 +27,8 @@
     "dictation": "Dictation",
     "writing": "Writing",
     "voiceCommands": "Voice commands",
-    "settings": "Settings"
+    "settings": "Settings",
+    "back": "Back"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -537,6 +538,14 @@
       "focusMessageBox": {
         "label": "Find the message box",
         "description": "In Claude, Codex and WhatsApp, if no text box has the cursor, the dictation goes into the thread's message box (not a terminal or search field)."
+      },
+      "tagAgentFiles": {
+        "label": "Tag files for coding agents",
+        "description": "When you dictate to Claude Code or Codex in a terminal, file names you say (\"actions dot rs\") become file mentions like @src/actions.rs."
+      },
+      "stackedMessages": {
+        "label": "Send sentences as separate messages",
+        "description": "In personal messengers, when the message box is empty, each sentence of a dictation goes out as its own message. The last one stays in the box unless you end with \"press enter\"."
       }
     },
     "postProcessing": {
@@ -629,7 +638,8 @@
           "personal": "e.g. Keep it short and friendly",
           "work": "e.g. Spell product names exactly as in my vocabulary",
           "email": "e.g. Sign off with \"Best, Sam\"",
-          "other": "e.g. Keep technical terms and code exactly as spoken"
+          "other": "e.g. Keep technical terms and code exactly as spoken",
+          "coding": "e.g. Put each request on its own line"
         }
       },
       "shortcut": {
@@ -958,10 +968,10 @@
     "vocabulary": {
       "report": {
         "title": "Report a mistake",
-        "description": "Describe it, like “it wrote cube control instead of kubectl”, or tell Felix while dictating. ChatGPT (your Felix sign-in) writes a fix and tests it, using your last few dictations; you see the change before it’s applied. Felix applies safe fixes right away.",
+        "description": "Describe it, like “it wrote cube control instead of kubectl”, or tell Felix while dictating. ChatGPT (your Felix sign-in) writes a fix and tests it against your last few dictations. A fix that passes its tests is applied straight away, so you can carry on while it works; anything else waits for you to look.",
         "placeholder": "It wrote … but I said …",
-        "fix": "Suggest a fix",
-        "working": "Thinking…",
+        "fix": "Fix it",
+        "working": "Fixing…",
         "openFile": "Open rules file",
         "saved": "Saved. It applies from your next dictation.",
         "needsCode": "Rules alone can't fully fix this; it needs a change to Felix.",
@@ -974,7 +984,10 @@
         "discard": "Discard",
         "undo": "Undo",
         "export": "Export…",
-        "exported": "Rules exported"
+        "exported": "Rules exported",
+        "fixed": "Fixed. It applies from your next dictation.",
+        "showChange": "Show change",
+        "hideChange": "Hide change"
       },
       "biasing": {
         "title": "Biasing",
@@ -1024,8 +1037,13 @@
       },
       "learned": {
         "title": "What Felix has learned",
-        "description": "Words, corrections and sound-alikes from your reports. Words also help the speech model hear them. Remove anything that's wrong.",
+        "description": "Words, corrections and sound-alikes from your reports and your corrections. Words also help the speech model hear them. Remove anything that's wrong.",
         "empty": "Nothing yet. Report a mistake above and the fix appears here.",
+        "autoLearned": "Learned from a correction you made",
+        "learnFromEdits": {
+          "label": "Learn from your corrections",
+          "description": "When you fix a name or term Felix misheard, right after dictating it, Felix adds your spelling here and tells you, with an Undo."
+        },
         "words": "Words",
         "corrections": "Corrections",
         "correction": "{{from}} → {{to}}",
@@ -1058,6 +1076,7 @@
         "personal": "Personal messages",
         "work": "Work messages",
         "email": "Email",
+        "coding": "Coding agents",
         "other": "Everything else"
       },
       "formality": {
@@ -1109,14 +1128,20 @@
       },
       "liveDraft": {
         "label": "Live draft (experimental)",
-        "description": "Experimental, off by default. Shows a rough, underlined draft in the text field while you talk, from a small fast model; when you stop, the real text replaces it. The draft is rough, and some apps (like WhatsApp) show it in a floating bubble instead. Skipped in password fields and when text is selected. Uses a little extra processing power while you dictate.",
+        "description": "Experimental, off by default. Shows a rough draft while you talk, from a small fast model; when you stop, the real text lands in the field. Skipped in password fields and when text is selected. Uses a little extra processing power while you dictate.",
         "needsModel": "Download the small draft model (Moonshine Streaming Tiny, 50 MB).",
         "download": "Download",
         "needsInputSource": "Add Felix Draft as an input source: System Settings → Keyboard → Input Sources → Edit → + → English → Felix Draft.",
         "openKeyboard": "Open Keyboard settings",
         "downloading": "Downloading…",
         "modelReady": "Draft model downloaded",
-        "inputSourceReady": "Felix Draft added as an input source"
+        "inputSourceReady": "Felix Draft added as an input source",
+        "style": {
+          "title": "Show the draft",
+          "description": "A see-through bubble by the text cursor (or above the recording pill) that you can click through, or underlined in the text field itself (needs the Felix Draft input source, and not every app shows it).",
+          "bubble": "In a bubble",
+          "inline": "In the text field"
+        }
       }
     },
     "writing": {
@@ -1232,6 +1257,7 @@
   "overlay": {
     "transcribing": "Transcribing...",
     "processing": "Processing...",
+    "slow": "Taking longer than usual…",
     "result": {
       "title": "Nowhere to paste",
       "close": "Close",
@@ -1292,6 +1318,8 @@
       "inPerson": "In-person meeting"
     },
     "mode": {
+      "auto": "Automatic",
+      "autoHint": "Works out whether it's a call from the call app and what comes through your speakers.",
       "call": "Video call",
       "callHint": "Your mic, plus the other people from your Mac's audio.",
       "inPerson": "In person",
@@ -1299,16 +1327,42 @@
     },
     "settings": {
       "title": "Meeting settings",
+      "description": "How meetings are recorded, transcribed and summed up.",
+      "open": "Settings",
       "transcriber": {
         "title": "Transcribe with",
-        "description": "This Mac uses your dictation model, and nothing leaves the Mac. OpenAI and Groq use the API key from Models → Accounts.",
+        "description": "Meetings are transcribed in the cloud when they can be: it's much more accurate on long calls with several people. Automatic uses OpenAI or Groq with the API key from Models → Accounts, and this Mac if there's no key. This Mac uses your dictation model, and nothing leaves the Mac.",
+        "auto": "Automatic (cloud first)",
         "local": "This Mac",
         "openai": "OpenAI",
         "groq": "Groq"
       },
       "diarize": {
         "label": "Tell speakers apart",
-        "description": "In person, label who's talking (Speaker 1, Speaker 2…). Downloads a 26.5 MB voice model the first time."
+        "description": "Label who's talking: everyone in person, and the other side of a call (with names from Zoom, Teams or Meet when they show them). Downloads a 26.5 MB voice model the first time."
+      },
+      "detectCalls": {
+        "label": "Offer to record calls",
+        "description": "When Zoom, Teams, Slack, FaceTime or a browser starts using the mic, a card asks whether to record."
+      },
+      "autoStop": {
+        "label": "Stop when the call ends",
+        "description": "When the call app lets go of the mic, after 10 minutes of quiet, or after everyone says goodbye, a card counts down before stopping. Never while the other side is still talking."
+      },
+      "maxHours": {
+        "title": "Stop after",
+        "description": "A recording left running stops on its own. You get a warning 10 minutes before, with Keep going.",
+        "none": "No limit",
+        "hours_one": "{{count}} hour",
+        "hours_other": "{{count}} hours"
+      },
+      "hideFromShare": {
+        "label": "Hide Felix from screen sharing",
+        "description": "Felix's pill, cards and windows don't show up when you share your screen or take screenshots."
+      },
+      "panel": {
+        "label": "Show a notes panel while recording",
+        "description": "A small panel on the side of the screen with the timer, Stop and your notes. Make it smaller or close it any time; the timer stays in the menu bar."
       },
       "autoGain": {
         "label": "Raise quiet voices",
@@ -1358,6 +1412,8 @@
       "none": "Not transcribed yet.",
       "empty": "No speech was found in this recording.",
       "afterRecording": "The transcript appears here after you stop recording.",
+      "edit": "Fix this paragraph",
+      "resumed": "Resumed",
       "playFrom": "Play from {{time}}",
       "identifying": "Telling voices apart…",
       "downloadingModel": "Downloading the voice model… {{percent}}%",
@@ -1383,7 +1439,30 @@
       "me": "Me",
       "them": "Them",
       "numbered": "Speaker {{n}}",
+      "themNumbered": "Them {{n}}",
       "rename": "Rename this speaker everywhere"
+    },
+    "actions": {
+      "resume": "Resume recording",
+      "delete": "Move to Trash",
+      "deleteConfirm": "Move this meeting to the Trash?",
+      "deleteYes": "Move to Trash",
+      "cancel": "Cancel"
+    },
+    "ask": {
+      "title": "Ask about this meeting",
+      "placeholder": "What did Sam say about the budget? Or: add the launch date to the action items",
+      "submit": "Ask",
+      "followUp": "Draft follow-up email",
+      "copy": "Copy",
+      "copied": "Copied",
+      "notesUpdated": "Updated the notes"
+    },
+    "live": {
+      "missed": "What did I miss?",
+      "question": "Suggest a question",
+      "nothingYet": "Not much has been said yet.",
+      "dismiss": "Dismiss"
     },
     "player": {
       "play": "Play recording",
@@ -1408,6 +1487,12 @@
       "by": "Written by {{model}}",
       "afterTranscript": "Notes are written once the transcript is done."
     },
-    "wip": "Work in progress: meetings are unfinished and still changing. Keep your own notes for anything important."
+    "wip": "Work in progress: meetings are unfinished and still changing. Keep your own notes for anything important.",
+    "panel": {
+      "expand": "Show notes",
+      "collapse": "Make smaller",
+      "close": "Close until the next meeting",
+      "openInFelix": "Open in Felix"
+    }
   }
 }

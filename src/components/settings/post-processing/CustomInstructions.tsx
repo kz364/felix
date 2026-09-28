@@ -4,11 +4,18 @@ import type { AppCategory, CategoryInstructions } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Textarea } from "../../ui/Textarea";
 
-const CATEGORIES: AppCategory[] = ["personal", "work", "email", "other"];
+const CATEGORIES: AppCategory[] = [
+  "personal",
+  "work",
+  "email",
+  "coding",
+  "other",
+];
 const EMPTY: CategoryInstructions = {
   personal: "",
   work: "",
   email: "",
+  coding: "",
   other: "",
 };
 
@@ -43,7 +50,9 @@ export const CustomInstructions: React.FC<{ disabled?: boolean }> = ({
   const { getSetting, updateSetting } = useSettings();
   const global = getSetting("custom_instructions") ?? "";
   const perCategory = getSetting("category_instructions") ?? EMPTY;
-  const configured = CATEGORIES.filter((c) => perCategory[c].trim()).length;
+  const configured = CATEGORIES.filter((c) =>
+    (perCategory[c] ?? "").trim(),
+  ).length;
 
   return (
     <div className="p-4 space-y-3">
@@ -72,7 +81,7 @@ export const CustomInstructions: React.FC<{ disabled?: boolean }> = ({
                 {t(`settings.style.categories.${category}`)}
               </div>
               <InstructionBox
-                value={perCategory[category]}
+                value={perCategory[category] ?? ""}
                 onSave={(v) =>
                   updateSetting("category_instructions", {
                     ...perCategory,

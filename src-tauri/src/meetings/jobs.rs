@@ -12,7 +12,7 @@ use super::manager::{
 use super::pipeline::{self, Stopped};
 use super::remote::Remote;
 use super::summary::{self, Cleaned, Summary};
-use super::transcript::timestamp;
+use super::transcript::{timestamp, Paragraph};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use std::sync::{mpsc, Arc};
@@ -25,6 +25,12 @@ const MODEL_LOAD_WAIT: Duration = Duration::from_secs(180);
 const TURN_POLL: Duration = Duration::from_millis(250);
 /// Attempts per chunk before the transcription is marked failed.
 const CHUNK_ATTEMPTS: usize = 3;
+/// A chunk whose decode ran away (looping until the token cap) is split in
+/// two and tried again, down to pieces this long (samples, 2 s); a piece
+/// that still runs away is left out rather than failing the meeting.
+const MIN_SPLIT_SAMPLES: usize = 32_000;
+/// A frame for finding the quietest place to split (30 ms).
+const SPLIT_FRAME: usize = 480;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Job {
@@ -180,7 +186,14 @@ impl MeetingManager {
         match self.transcribe_inner(id) {
             Ok(()) => {
                 log::info!("Meeting {id} transcribed");
-                self.update_info(id, |i| i.transcript = Some(TranscriptStatus::Done));
+                let names = self
+                    .dir_of(id)
+                    .map(|dir| super::active_speaker::apply(&dir))
+                    .unwrap_or_default();
+                self.update_info(id, |i| {
+                    i.transcript = Some(TranscriptStatus::Done);
+                    i.app_speakers = names;
+                });
                 true
             }
             Err(Stopped::Cancelled) => false,
@@ -197,6 +210,12 @@ impl MeetingManager {
 
     fn transcribe_inner(&self, id: &str) -> Result<(), Stopped> {
         let dir = self.dir_of(id)?;
+        // Resumed since it was queued: it's queued again when it stops.
+        if super::manager::read_info(&dir)
+            .is_none_or(|i| i.status == super::manager::MeetingStatus::Recording)
+        {
+            return Err(Stopped::Cancelled);
+        }
         let Some(info) =
             self.update_info(id, |i| i.transcript = Some(TranscriptStatus::Transcribing))
         else {
@@ -213,8 +232,7 @@ impl MeetingManager {
                 self.progress_to(id, Stage::Transcribing, done, total)
             }
         };
-        let speaker_model = if info.mode == super::MeetingMode::InPerson && settings.meeting_diarize
-        {
+        let speaker_model = if settings.meeting_diarize {
             match self.speaker_model(id) {
                 Ok(path) => Some(path),
                 Err(e) => {
@@ -285,11 +303,35 @@ impl MeetingManager {
         tm: &TranscriptionManager,
         audio: Vec<f32>,
     ) -> Result<String, Stopped> {
+        match self.transcribe_once(tm, &audio) {
+            Err(Stopped::Failed(e)) if ran_away(&e) => {
+                if audio.len() < 2 * MIN_SPLIT_SAMPLES {
+                    log::warn!(
+                        "Leaving out {:.1} s of a meeting the model keeps looping on",
+                        audio.len() as f32 / 16_000.0
+                    );
+                    return Ok(String::new());
+                }
+                let cut = quietest_split(&audio);
+                log::warn!("Meeting chunk ran away; splitting it at {cut} and trying again");
+                let first = self.transcribe_chunk(tm, audio[..cut].to_vec())?;
+                let second = self.transcribe_chunk(tm, audio[cut..].to_vec())?;
+                Ok(format!("{} {}", first.trim(), second.trim())
+                    .trim()
+                    .to_string())
+            }
+            other => other,
+        }
+    }
+
+    fn transcribe_once(&self, tm: &TranscriptionManager, audio: &[f32]) -> Result<String, Stopped> {
         let mut last_error = String::new();
         for _ in 0..CHUNK_ATTEMPTS {
             self.wait_for_turn(tm)?;
-            match tm.transcribe_for_meeting(audio.clone()) {
+            match tm.transcribe_for_meeting(audio.to_vec()) {
                 Ok(text) => return Ok(text),
+                // The same audio decodes the same way: no point retrying.
+                Err(e) if ran_away(&e.to_string()) => return Err(Stopped::Failed(e.to_string())),
                 Err(e) => {
                     log::warn!("Meeting chunk failed, retrying: {e}");
                     last_error = e.to_string();
@@ -401,10 +443,7 @@ impl MeetingManager {
             return Err("No speech was found in the recording".into());
         }
         let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
-        let about = about_meeting(
-            info,
-            transcript.segments.iter().any(|s| s.speaker.is_some()),
-        );
+        let about = about_meeting(info, &paragraphs_of(&dir, &transcript));
         self.progress_to(id, Stage::Summarizing, 0, 1);
         let summary = summary::summarize(
             &llm,
@@ -420,9 +459,14 @@ impl MeetingManager {
     }
 }
 
-/// What the summariser is told about the meeting itself.
-fn about_meeting(info: &MeetingInfo, has_speakers: bool) -> String {
+/// What the summariser (and the in-meeting questions) are told about the
+/// meeting itself: when, who took part, and how to read "we".
+pub(super) fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph]) -> String {
+    let has_speakers = paragraphs.iter().any(|p| p.speaker.is_some());
     let who = match info.mode {
+        super::MeetingMode::Call if has_speakers => {
+            "A video call. \"Me\" is the user (their mic). The other side (the Mac's audio) was told apart by voice or named by the call app (\"Them 1\", \"Them 2\", or a name); \"Speaker N\" is someone in the room with the user. Labels can be wrong."
+        }
         super::MeetingMode::Call => {
             "A video call. \"Me\" is the user (their mic); \"Them\" is everyone else on the call (the Mac's audio), possibly several people."
         }
@@ -437,5 +481,63 @@ fn about_meeting(info: &MeetingInfo, has_speakers: bool) -> String {
         (Some(t), false) => format!("\nThe user titled it: {t}"),
         _ => String::new(),
     };
-    format!("{}\n{who}{title}", meta_line(info))
+    let participants = info.participants(paragraphs);
+    let block = if participants.is_empty() {
+        String::new()
+    } else {
+        format!("\nParticipants: {}", participants.join(", "))
+    };
+    let we = match info.mode {
+        super::MeetingMode::Call => {
+            "\n\"We\" means the user's side (Me and anyone in the room with them), not the whole call. An action item is the user's only if they committed to it themselves; otherwise it belongs to whoever took it on."
+        }
+        super::MeetingMode::InPerson => {
+            "\nAn action item is the user's only if they committed to it themselves; otherwise it belongs to whoever took it on."
+        }
+    };
+    format!("{}\n{who}{title}{block}{we}", meta_line(info))
+}
+
+/// The model decoded until its token cap (usually looping on a phrase).
+fn ran_away(error: &str) -> bool {
+    error.contains("output truncated")
+}
+
+/// Where to split a chunk: the quietest frame in its middle half, so no
+/// word is cut.
+fn quietest_split(audio: &[f32]) -> usize {
+    let (from, to) = (audio.len() / 4, audio.len() * 3 / 4);
+    let mut best = (audio.len() / 2, f32::MAX);
+    let mut at = from;
+    while at + SPLIT_FRAME <= to {
+        let frame = &audio[at..at + SPLIT_FRAME];
+        let energy = frame.iter().map(|v| v * v).sum::<f32>();
+        if energy < best.1 {
+            best = (at + SPLIT_FRAME / 2, energy);
+        }
+        at += SPLIT_FRAME;
+    }
+    best.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runaway_chunks_split_in_a_pause() {
+        let mut audio = vec![0.3_f32; 16_000 * 10];
+        // A pause at 6 s.
+        for v in &mut audio[16_000 * 6 - 800..16_000 * 6 + 800] {
+            *v = 0.0;
+        }
+        let cut = quietest_split(&audio);
+        assert!(
+            (16_000 * 6 - 800..=16_000 * 6 + 800).contains(&cut),
+            "{cut}"
+        );
+        assert!(ran_away(
+            "run: output truncated: decode hit the context/generation cap"
+        ));
+    }
 }

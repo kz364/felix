@@ -202,6 +202,42 @@ fn lowercase_sentence_starts(text: &str, vocabulary: &[String]) -> String {
         .into_owned()
 }
 
+/// Coding agents: each sentence on its own line, so a prompt can be checked
+/// at a glance. Lines, bullets and numbered items stay as they are; a break
+/// needs sentence-ending punctuation, a space and a capital, and not after a
+/// number ("step 2. Then") or a short abbreviation ("e.g. This").
+pub fn one_sentence_per_line(text: &str) -> String {
+    static END: Lazy<Regex> = Lazy::new(|| Regex::new(r"([.!?])[ \t]+(\p{Lu})").unwrap());
+    const ABBREVIATIONS: &[&str] = &[
+        "e.g", "i.e", "etc", "vs", "mr", "mrs", "ms", "dr", "st", "no",
+    ];
+    text.lines()
+        .map(|line| {
+            let mut out = String::with_capacity(line.len());
+            let mut last = 0;
+            for c in END.captures_iter(line) {
+                let (punct, next) = (c.get(1).unwrap(), c.get(2).unwrap());
+                let word = line[..punct.start()]
+                    .rsplit(char::is_whitespace)
+                    .next()
+                    .unwrap_or("");
+                let is_abbreviation = punct.as_str() == "."
+                    && (word.chars().all(|ch| ch.is_ascii_digit())
+                        || ABBREVIATIONS.contains(&word.to_lowercase().as_str()));
+                if is_abbreviation {
+                    continue;
+                }
+                out.push_str(&line[last..punct.end()]);
+                out.push('\n');
+                last = next.start();
+            }
+            out.push_str(&line[last..]);
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// All deterministic styling for a destination category.
 pub fn apply(
     text: &str,
@@ -213,12 +249,39 @@ pub fn apply(
     if category == AppCategory::Email {
         out = format_email(&out);
     }
+    if category == AppCategory::Coding {
+        out = one_sentence_per_line(&out);
+    }
     apply_formality(&out, formality, vocabulary)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coding_prompts_get_one_sentence_per_line() {
+        assert_eq!(
+            one_sentence_per_line(
+                "The build is failing. I think it's the lint rule. Can you fix it?"
+            ),
+            "The build is failing.\nI think it's the lint rule.\nCan you fix it?"
+        );
+        // Lists, numbers, abbreviations, file names and existing breaks stay.
+        for text in [
+            "So can you:\n- Fix the login bug\n- Update the README",
+            "The plan is:\n1. Book the venue\n2. Send invites",
+            "Use a flag, e.g. This one. ",
+            "Open client.ts and main.rs",
+            "Go to step 2. Then stop",
+        ] {
+            assert_eq!(one_sentence_per_line(text), text);
+        }
+        assert_eq!(
+            one_sentence_per_line("First line.\n\nSecond topic. More here."),
+            "First line.\n\nSecond topic.\nMore here."
+        );
+    }
 
     #[test]
     fn inline_lists_become_lines() {

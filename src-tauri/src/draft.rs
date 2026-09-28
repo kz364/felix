@@ -1,7 +1,11 @@
 //! Live draft: while you dictate, a small streaming model (Moonshine
 //! Streaming Tiny) transcribes alongside the main one, and its rough text
-//! shows as marked text (underlined, not yet final) in the focused field
-//! through the Felix Draft input method (`draft-ime/`).
+//! shows either in a see-through bubble by the cursor that Felix draws
+//! itself (`draft_bubble`, the default), or as marked text (underlined, not
+//! yet final) in the focused field through the Felix Draft input method
+//! (`draft-ime/`).
+//!
+//! The bubble never touches the field. For the inline draft:
 //!
 //! The draft never becomes the final text. It's cleared the moment recording
 //! stops, before anything reads the field, and the input source switched
@@ -63,11 +67,85 @@ pub fn start(app: &AppHandle) {
     *TX.lock().unwrap() = Some(tx);
     OPEN.store(true, Ordering::Relaxed);
     let app = app.clone();
+    let style = settings.live_draft_style;
     std::thread::spawn(move || {
-        if let Err(reason) = run(&app, rx) {
+        let result = match style {
+            crate::settings::LiveDraftStyle::Bubble => run_bubble(&app, rx),
+            crate::settings::LiveDraftStyle::Inline => run(&app, rx),
+        };
+        if let Err(reason) = result {
             debug!("No live draft: {reason}");
         }
     });
+}
+
+/// The draft in Felix's own bubble: no input method, nothing in the field.
+fn run_bubble(app: &AppHandle, rx: mpsc::Receiver<Cmd>) -> Result<(), String> {
+    // Whatever's typed with secure input on (passwords) stays off screen.
+    if crate::secure_input::is_enabled_now() {
+        return Err("secure input is on".into());
+    }
+    let path = model_path(app).ok_or("the draft model isn't downloaded")?;
+    if !OPEN.load(Ordering::Relaxed) {
+        return Err("recording ended first".into());
+    }
+    crate::draft_bubble::begin(app);
+    let mut sent = 0usize;
+    let result = stream_draft(&path, rx, |text| {
+        // Frames still queued when recording stopped mustn't bring it back.
+        if OPEN.load(Ordering::Relaxed) {
+            sent += 1;
+            crate::draft_bubble::set_text(app, text);
+        }
+    });
+    // In case an update slipped in as recording stopped.
+    if !OPEN.load(Ordering::Relaxed) {
+        crate::draft_bubble::end(app);
+    }
+    debug!("Live draft bubble: {sent} updates");
+    result
+}
+
+/// Feed the recording to the draft model and hand each new guess to `show`
+/// until the recording stops.
+fn stream_draft(
+    path: &std::path::Path,
+    rx: mpsc::Receiver<Cmd>,
+    mut show: impl FnMut(&str),
+) -> Result<(), String> {
+    let mut session = SESSION.lock().unwrap();
+    if session.is_none() {
+        let model = Model::load_with(path, &ModelOptions::default())
+            .map_err(|e| format!("draft model: {e}"))?;
+        *session = Some(model.session().map_err(|e| format!("draft session: {e}"))?);
+        info!("Loaded the live draft model");
+    }
+    let session = session.as_mut().unwrap();
+    let mut stream = session
+        .stream(&RunOptions::default(), &StreamOptions::default())
+        .map_err(|e| format!("draft stream: {e}"))?;
+    let mut last = String::new();
+    while let Ok(Cmd::Feed(pcm)) = rx.recv() {
+        match stream.feed(&pcm) {
+            Ok(update) if update.committed_changed || update.tentative_changed => {
+                // The whole current guess: committed + tentative can lose
+                // the space where they meet.
+                let draft = stream
+                    .text()
+                    .full
+                    .replace(['\n', '\r'], " ")
+                    .trim()
+                    .to_string();
+                if draft != last {
+                    show(&draft);
+                    last = draft;
+                }
+            }
+            Ok(_) => {}
+            Err(e) => warn!("Draft stream feed failed: {e}"),
+        }
+    }
+    Ok(())
 }
 
 fn run(app: &AppHandle, rx: mpsc::Receiver<Cmd>) -> Result<(), String> {
@@ -96,39 +174,7 @@ fn run(app: &AppHandle, rx: mpsc::Receiver<Cmd>) -> Result<(), String> {
     let conn = connect().ok_or("the input method isn't answering")?;
     *CONN.lock().unwrap() = Some(conn);
 
-    let mut session = SESSION.lock().unwrap();
-    if session.is_none() {
-        let model = Model::load_with(&path, &ModelOptions::default())
-            .map_err(|e| format!("draft model: {e}"))?;
-        *session = Some(model.session().map_err(|e| format!("draft session: {e}"))?);
-        info!("Loaded the live draft model");
-    }
-    let session = session.as_mut().unwrap();
-    let mut stream = session
-        .stream(&RunOptions::default(), &StreamOptions::default())
-        .map_err(|e| format!("draft stream: {e}"))?;
-    let mut last = String::new();
-    while let Ok(Cmd::Feed(pcm)) = rx.recv() {
-        match stream.feed(&pcm) {
-            Ok(update) if update.committed_changed || update.tentative_changed => {
-                // The whole current guess: committed + tentative can lose
-                // the space where they meet.
-                let draft = stream
-                    .text()
-                    .full
-                    .replace(['\n', '\r'], " ")
-                    .trim()
-                    .to_string();
-                if draft != last {
-                    send_draft(&draft);
-                    last = draft;
-                }
-            }
-            Ok(_) => {}
-            Err(e) => warn!("Draft stream feed failed: {e}"),
-        }
-    }
-    Ok(())
+    stream_draft(&path, rx, send_draft)
 }
 
 fn send_draft(text: &str) {
@@ -143,6 +189,7 @@ fn send_draft(text: &str) {
 /// End the draft: clear it from the field and switch the input source back,
 /// before returning. Safe to call when no draft runs.
 pub fn stop(app: &AppHandle) {
+    crate::draft_bubble::end(app);
     let was_open = OPEN.swap(false, Ordering::Relaxed);
     *TX.lock().unwrap() = None; // the worker's loop ends
     if let Some(mut conn) = CONN.lock().unwrap().take() {
@@ -300,11 +347,31 @@ pub fn live_draft_status(app: AppHandle) -> LiveDraftStatus {
 pub fn set_live_draft(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = crate::settings::get_settings(&app);
     settings.live_draft = enabled;
+    let inline = settings.live_draft_style == crate::settings::LiveDraftStyle::Inline;
     crate::settings::write_settings(&app, settings);
-    if enabled {
+    if enabled && inline {
         install(&app)?;
+    } else if enabled {
+        // Nothing to install for the bubble.
     } else {
         *SESSION.lock().unwrap() = None;
+    }
+    Ok(())
+}
+
+/// Choose where the draft shows; the in-field draft needs Felix Draft.
+#[tauri::command]
+#[specta::specta]
+pub fn set_live_draft_style(
+    app: AppHandle,
+    style: crate::settings::LiveDraftStyle,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.live_draft_style = style;
+    let install_now = settings.live_draft && style == crate::settings::LiveDraftStyle::Inline;
+    crate::settings::write_settings(&app, settings);
+    if install_now {
+        install(&app)?;
     }
     Ok(())
 }

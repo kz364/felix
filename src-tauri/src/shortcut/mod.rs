@@ -1872,6 +1872,33 @@ pub fn change_screen_context_online_setting(app: AppHandle, enabled: bool) -> Re
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_learn_from_edits_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.learn_from_edits = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_stacked_messages_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.stacked_messages = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_tag_agent_files_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tag_agent_files = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_focus_message_box_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.focus_message_box = enabled;

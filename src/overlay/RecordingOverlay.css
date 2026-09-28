@@ -523,11 +523,49 @@
   -webkit-user-select: text;
   cursor: text;
 }
+.rtext.rnote {
+  color: color-mix(in srgb, var(--color-text) 80%, transparent);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
 .rfoot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+.rfoot:empty {
+  display: none;
+}
+/* A notice's buttons: the first is the main action, the rest are quiet. */
+.raction {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--s-muted);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    transform 100ms ease;
+}
+.raction:first-child {
+  order: 1;
+  color: var(--color-text);
+  background: var(--s-accent-soft);
+}
+.raction:hover {
+  background: color-mix(in srgb, var(--s-accent) 30%, transparent);
+}
+.raction:active {
+  transform: scale(0.96);
 }
 .rcopy {
   -webkit-appearance: none;

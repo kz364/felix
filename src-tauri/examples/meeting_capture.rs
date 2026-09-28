@@ -21,7 +21,7 @@ fn main() {
         .unwrap_or_else(|| std::env::temp_dir().join("handy-meeting-capture"));
 
     let started = std::time::Instant::now();
-    let recording = match Recording::start(&dir, mode, None) {
+    let recording = match Recording::start(&dir, mode, None, false) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");

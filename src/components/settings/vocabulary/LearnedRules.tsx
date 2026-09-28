@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { commands, type Learned } from "@/bindings";
 
 /** Everything the rules file holds, each entry deletable. */
@@ -71,6 +71,14 @@ export const LearnedRules: React.FC<{
                 key={`${word}-${i}`}
                 className="inline-flex items-center gap-1 rounded-full border border-stone/30 bg-stone/10 ps-2.5 pe-1 py-0.5 text-sm"
               >
+                {learned.auto_learned.includes(word) && (
+                  <span
+                    title={t("settings.vocabulary.learned.autoLearned")}
+                    aria-label={t("settings.vocabulary.learned.autoLearned")}
+                  >
+                    <Sparkles className="h-3 w-3 text-accent" />
+                  </span>
+                )}
                 {word}
                 {remove("word", i, word)}
               </span>

@@ -809,6 +809,15 @@ static RECENT_AUDIO: Lazy<Mutex<RecentAudio>> =
 const RECENT_AUDIO_KEPT: usize = 3;
 
 /// Hold a dictation's audio for a while, in case it's reported.
+/// The most recent dictation's audio, if still kept.
+pub fn last_audio() -> Option<Vec<f32>> {
+    RECENT_AUDIO
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .front()
+        .map(|(_, samples)| samples.clone())
+}
+
 pub fn keep_recent_audio(file_name: &str, samples: &[f32]) {
     let mut recent = RECENT_AUDIO.lock().unwrap_or_else(|e| e.into_inner());
     recent.push_front((file_name.to_string(), samples.to_vec()));
@@ -862,6 +871,36 @@ fn log_report(entry: &serde_json::Value) {
     if let Err(e) = written {
         log::warn!("Couldn't write {}: {e}", path.display());
     }
+}
+
+/// Note a word Felix added on its own from a correction you made.
+pub fn log_learned(word: &str, heard: &str) {
+    log_report(&serde_json::json!({
+        "event": "learned",
+        "word": word,
+        "heard": heard,
+        "at": chrono::Utc::now().to_rfc3339(),
+    }));
+}
+
+/// Words ever learned from corrections (`log_learned`), lowercased.
+fn learned_from_edits() -> Vec<String> {
+    let Some(text) = path()
+        .map(|p| p.with_file_name(REPORTS_FILE))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+    else {
+        return Vec::new();
+    };
+    learned_in(&text)
+}
+
+fn learned_in(reports: &str) -> Vec<String> {
+    reports
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|entry| entry["event"] == "learned")
+        .filter_map(|entry| entry["word"].as_str().map(str::to_lowercase))
+        .collect()
 }
 
 /// Note that a proposal was applied (or undone), in the reports file.
@@ -940,6 +979,8 @@ pub struct Learned {
     pub words: Vec<String>,
     pub corrections: Vec<TextReplacement>,
     pub soundalikes: Vec<Soundalike>,
+    /// Words Felix added on its own, from corrections you made after a paste.
+    pub auto_learned: Vec<String>,
     /// The file has a mistake (the list is from the last good version).
     pub error: Option<String>,
 }
@@ -949,10 +990,18 @@ pub fn learned() -> Learned {
     let error = path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| parse(&t).err());
+    let learned = learned_from_edits();
+    let auto_learned = rules
+        .vocabulary
+        .iter()
+        .filter(|w| learned.contains(&w.to_lowercase()))
+        .cloned()
+        .collect();
     Learned {
         words: rules.vocabulary,
         corrections: rules.replace,
         soundalikes: rules.soundalike,
+        auto_learned,
         error,
     }
 }
@@ -975,6 +1024,16 @@ pub fn add_word(word: &str) -> Result<(), String> {
     save(&render(&text, &add)?)?;
     log_applied(None, &format!("added word {word}"));
     Ok(())
+}
+
+/// Take a word back out of the vocabulary (no-op if it isn't there).
+pub fn remove_word(word: &str) -> Result<(), String> {
+    let path = path().ok_or("The rules file isn't set up")?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let Some(index) = parse(&text)?.vocabulary.iter().position(|w| w == word) else {
+        return Ok(());
+    };
+    forget("word", index)
 }
 
 /// Remove one entry ("word", "correction" or "soundalike", by position),
@@ -1212,6 +1271,17 @@ pub fn save(text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn learned_words_come_from_learned_entries_only() {
+        let reports = [
+            r#"{"event":"learned","word":"Kaspar","heard":"kasper"}"#,
+            r#"{"id":"x","event":"added word Felix"}"#,
+            "not json",
+        ]
+        .join("\n");
+        assert_eq!(learned_in(&reports), ["kaspar"]);
+    }
 
     #[test]
     fn older_files_get_the_agent_notes_once() {

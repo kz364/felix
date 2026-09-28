@@ -14,6 +14,10 @@ use super::transcript::{self, Chunk, Segment, Source, Transcript};
 use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector};
 use std::path::Path;
 
+/// Speakers told apart on the system track are numbered from here, so they
+/// never share a number with the voices on the mic.
+pub const SYSTEM_SPEAKERS: u32 = 100;
+
 /// Silero's speech threshold for meetings. A little stricter than dictation's
 /// (0.3), since a meeting track has long stretches of room noise.
 const VAD_THRESHOLD: f32 = 0.4;
@@ -107,11 +111,29 @@ const DOUBLE_TALK_RATIO: f32 = 4.0;
 /// back through the speakers), not the user. The echo's level is learnt from
 /// the whole meeting: the typical ratio of mic to system loudness while the
 /// system plays. Mic frames not clearly louder than that are echo.
-pub fn echo_mask(mic: &[f32], system: &[f32], system_speech: &[bool]) -> Vec<bool> {
+///
+/// `echo` is what cross-correlating the tracks found (see [`super::echo`]):
+/// with it, only frames where echo was confirmed can be masked, and the
+/// system audio is looked for at the measured delay.
+pub fn echo_mask(
+    mic: &[f32],
+    system: &[f32],
+    system_speech: &[bool],
+    echo: Option<&super::echo::EchoReport>,
+) -> Vec<bool> {
+    if echo.is_some_and(|e| !e.has_echo()) {
+        return vec![false; mic.len()];
+    }
+    // The delay in frames, and the reach either side of it.
+    let lag = echo
+        .and_then(|e| e.lag_ms)
+        .map_or(0, |ms| (ms / transcript::FRAME_MS as f32).round() as usize);
+    let allowed = |i: usize| echo.is_none_or(|e| e.frames.get(i).copied().unwrap_or(false));
     let loudest_recent = |i: usize| {
-        let from = i.saturating_sub(ECHO_LOOKBACK_FRAMES);
+        let to = i.saturating_sub(lag.saturating_sub(2));
+        let from = i.saturating_sub(lag + ECHO_LOOKBACK_FRAMES);
         system
-            .get(from..=i.min(system.len().saturating_sub(1)))
+            .get(from..=to.min(system.len().saturating_sub(1)))
             .map(|w| w.iter().copied().fold(0.0f32, f32::max))
             .unwrap_or(0.0)
     };
@@ -128,7 +150,7 @@ pub fn echo_mask(mic: &[f32], system: &[f32], system_speech: &[bool]) -> Vec<boo
     (0..mic.len())
         .map(|i| {
             let echo = gain * loudest_recent(i.min(system.len().saturating_sub(1)));
-            echo > 1e-7 && mic[i] < DOUBLE_TALK_RATIO * echo
+            allowed(i) && echo > 1e-7 && mic[i] < DOUBLE_TALK_RATIO * echo
         })
         .collect()
 }
@@ -220,7 +242,6 @@ pub fn run(
     mut transcribe: impl FnMut(Vec<f32>) -> Result<String, Stopped>,
     mut progress: impl FnMut(Step),
 ) -> Result<Transcript, Stopped> {
-    let speaker_model = speaker_model.filter(|_| mode == MeetingMode::InPerson);
     // Resume only work done the same way; otherwise start over.
     let engine = match speaker_model {
         Some(_) => format!("{engine} +speakers"),
@@ -254,50 +275,73 @@ pub fn run(
         None
     };
     let echo = match (&mic, &system) {
-        (Some(m), Some(s)) => Some(echo_mask(&m.energy, &s.energy, &s.speech)),
-        _ => None,
-    };
-
-    // Who speaks when, in person. If it fails, the transcript goes ahead
-    // without speakers.
-    let speakers = match (speaker_model, &mic) {
-        (Some(model), Some(m)) => {
-            progress(Step::Identifying);
-            match super::diarize::speakers(&mic_wav, &m.speech, model) {
-                Ok(labels) => Some(labels),
-                Err(e) => {
-                    log::warn!("Couldn't tell the speakers apart: {e}");
-                    None
-                }
-            }
+        (Some(m), Some(s)) => {
+            // Headphones keep the call out of the mic: nothing to mask.
+            let headphones = super::manager::read_info(dir)
+                .and_then(|i| i.output_device)
+                .is_some_and(|d| super::echo::is_headphones(&d));
+            let report = if headphones {
+                super::echo::EchoReport::none(m.energy.len())
+            } else {
+                super::echo::analyze(&mic_wav, &system_wav, m.energy.len()).unwrap_or_else(|e| {
+                    log::warn!("Couldn't correlate the tracks: {e}");
+                    super::echo::EchoReport::none(m.energy.len())
+                })
+            };
+            Some(echo_mask(&m.energy, &s.energy, &s.speech, Some(&report)))
         }
         _ => None,
+    };
+    let mic_speech: Option<Vec<bool>> = mic.as_ref().map(|m| match &echo {
+        Some(echo) => m.speech.iter().zip(echo).map(|(s, e)| *s && !*e).collect(),
+        None => m.speech.clone(),
+    });
+
+    // Who speaks when. In person: every voice on the mic. On a call: the
+    // voices on the system track, and anyone in the room with the user on
+    // the mic. If it fails, the transcript goes ahead without speakers.
+    let diarize = |wav: &Path, speech: &[bool]| {
+        super::diarize::speakers(wav, speech, speaker_model?)
+            .inspect_err(|e| log::warn!("Couldn't tell the speakers apart: {e}"))
+            .ok()
+    };
+    let (mic_speakers, system_speakers) = if speaker_model.is_some() {
+        progress(Step::Identifying);
+        let mic_speakers = match (&mic_speech, mode) {
+            (Some(speech), MeetingMode::InPerson) => diarize(&mic_wav, speech),
+            (Some(speech), MeetingMode::Call) => {
+                diarize(&mic_wav, speech).map(|labels| super::diarize::others_in_room(&labels))
+            }
+            _ => None,
+        };
+        let system_speakers = system.as_ref().and_then(|s| {
+            diarize(&system_wav, &s.speech)
+                .map(|labels| super::diarize::offset(&labels, SYSTEM_SPEAKERS))
+        });
+        (mic_speakers, system_speakers)
+    } else {
+        (None, None)
     };
 
     // Every chunk of every track, in time order, cut where the speaker changes.
     let mut plan: Vec<(Source, Chunk, Option<u32>)> = Vec::new();
-    if let Some(m) = &mic {
-        let speech: Vec<bool> = match &echo {
-            Some(echo) => m.speech.iter().zip(echo).map(|(s, e)| *s && !*e).collect(),
-            None => m.speech.clone(),
-        };
-        for c in transcript::plan_chunks(&speech) {
-            match &speakers {
+    let mut add = |source: Source, speech: &[bool], labels: &Option<Vec<Option<u32>>>| {
+        for c in transcript::plan_chunks(speech) {
+            match labels {
                 Some(labels) => plan.extend(
                     super::diarize::split_by_speaker(c, labels)
                         .into_iter()
-                        .map(|(c, s)| (Source::Mic, c, s)),
+                        .map(|(c, s)| (source, c, s.filter(|&s| s != super::diarize::ME))),
                 ),
-                None => plan.push((Source::Mic, c, None)),
+                None => plan.push((source, c, None)),
             }
         }
+    };
+    if let Some(speech) = &mic_speech {
+        add(Source::Mic, speech, &mic_speakers);
     }
     if let Some(s) = &system {
-        plan.extend(
-            transcript::plan_chunks(&s.speech)
-                .into_iter()
-                .map(|c| (Source::System, c, None)),
-        );
+        add(Source::System, &s.speech, &system_speakers);
     }
     plan.sort_by_key(|(source, c, _)| (c.start_ms, *source == Source::System));
 
@@ -420,7 +464,7 @@ mod tests {
         for i in (90..110).chain(150..170) {
             mic[i] += 0.005;
         }
-        let mask = echo_mask(&mic, &system, &system_speech);
+        let mask = echo_mask(&mic, &system, &system_speech, None);
         assert!(
             mask[30..85].iter().all(|&m| m),
             "echo-only frames are masked"
@@ -428,8 +472,22 @@ mod tests {
         assert!(mask[90..110].iter().all(|&m| !m), "double-talk is kept");
         assert!(mask[150..170].iter().all(|&m| !m), "the user alone is kept");
         // No system audio at all (headphones, in person): nothing is masked.
-        assert!(echo_mask(&mic, &[0.0; 200], &[false; 200])
+        assert!(echo_mask(&mic, &[0.0; 200], &[false; 200], None)
             .iter()
             .all(|&m| !m));
+        // Correlation found no echo (headphones): nothing is masked.
+        let none = super::super::echo::EchoReport::none(200);
+        assert!(echo_mask(&mic, &system, &system_speech, Some(&none))
+            .iter()
+            .all(|&m| !m));
+        // Only frames where echo was confirmed can be masked.
+        let mut some = super::super::echo::EchoReport::none(200);
+        some.lag_ms = Some(60.0);
+        for f in some.frames.iter_mut().take(60) {
+            *f = true;
+        }
+        let mask = echo_mask(&mic, &system, &system_speech, Some(&some));
+        assert!(mask[30..58].iter().all(|&m| m));
+        assert!(mask[62..85].iter().all(|&m| !m));
     }
 }

@@ -7,32 +7,21 @@
 //!   model), the raw transcript, what was pasted and, as a candidate ground
 //!   truth, the pasted text after any edits you made in the field.
 //!
-//! Edits are found by watching the field the dictation went into for a few
-//! minutes (Accessibility, every 2 s): the text between what was before and
-//! after the dictation is read back until focus moves, the field is cleared
-//! (a message was sent), or the next dictation starts. Only that span is
-//! stored, never the rest of the field. Nothing here runs unless the setting
-//! is on, and all of it runs off the dictation's path.
+//! Edits come from `edit_learning`, which follows the field the dictation
+//! went into; only the dictation's span is stored, never the rest of the
+//! field. Nothing here runs unless the setting is on, and all of it runs off
+//! the dictation's path.
 
 use crate::audio_toolkit::GainState;
-use crate::text_field::{self, FieldSnapshot};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 pub const DIR: &str = "benchmark";
-const SETTLE: Duration = Duration::from_millis(250);
-const POLL: Duration = Duration::from_secs(2);
-const WATCH_FOR: Duration = Duration::from_secs(180);
-/// Characters of field text either side of the dictation used to find it
-/// again after edits.
-const ANCHOR: usize = 40;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, Type)]
 #[serde(default, rename = "BenchmarkRecord")]
@@ -157,8 +146,6 @@ fn change_now(
     })
     .unwrap_or_else(|| Err("Couldn't save".into()))
 }
-/// Bumped per dictation so an older edit watcher stops when a newer one starts.
-static WATCH_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAST_ID: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 
 pub fn dir(app: &AppHandle) -> Option<PathBuf> {
@@ -221,7 +208,6 @@ pub fn begin(
     );
     let dir = dir(app)?;
     let id = new_id();
-    WATCH_GENERATION.fetch_add(1, Ordering::SeqCst);
     let rate = crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE as f32;
     let context = crate::app_context::current();
     let record = Record {
@@ -256,146 +242,6 @@ pub fn begin(
         write(&dir, &record);
     });
     Some(id)
-}
-
-/// Where the dictation sits in `after` (the field just after pasting), as
-/// the text before and after it.
-fn anchors(
-    before: &FieldSnapshot,
-    after: &FieldSnapshot,
-    pasted: &str,
-) -> Option<(Vec<u16>, Vec<u16>)> {
-    if before.pid != after.pid {
-        return None;
-    }
-    let (start, len) = text_field::inserted_span(&before.value, &after.value)?;
-    let inserted = String::from_utf16_lossy(&after.value[start..start + len]);
-    if inserted.trim() != pasted.trim() {
-        return None;
-    }
-    let prefix = &after.value[..start];
-    let suffix = &after.value[start + len..];
-    Some((
-        prefix[prefix.len().saturating_sub(ANCHOR)..].to_vec(),
-        suffix[..suffix.len().min(ANCHOR)].to_vec(),
-    ))
-}
-
-fn find(haystack: &[u16], needle: &[u16], from: usize) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(from);
-    }
-    (from..=haystack.len().checked_sub(needle.len())?)
-        .find(|&i| haystack[i..i + needle.len()] == *needle)
-}
-
-/// The dictation's text in `value`, found between its anchors.
-pub fn span_between(value: &[u16], prefix: &[u16], suffix: &[u16]) -> Option<String> {
-    let start = find(value, prefix, 0)? + prefix.len();
-    let end = if suffix.is_empty() {
-        value.len()
-    } else {
-        find(value, suffix, start)?
-    };
-    Some(
-        String::from_utf16_lossy(&value[start..end])
-            .trim()
-            .to_string(),
-    )
-}
-
-fn words(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .map(|w| {
-            w.chars()
-                .filter(|c| c.is_alphanumeric() || *c == '\'')
-                .flat_map(char::to_lowercase)
-                .collect::<String>()
-        })
-        .filter(|w| !w.is_empty())
-        .collect()
-}
-
-/// Word edits between two texts, over the longer one's length.
-fn word_change(a: &str, b: &str) -> f32 {
-    let (a, b) = (words(a), words(b));
-    let longest = a.len().max(b.len());
-    if longest == 0 {
-        return 0.0;
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    for (i, wa) in a.iter().enumerate() {
-        let mut cur = vec![i + 1; b.len() + 1];
-        for (j, wb) in b.iter().enumerate() {
-            cur[j + 1] = (prev[j] + usize::from(wa != wb))
-                .min(prev[j + 1] + 1)
-                .min(cur[j] + 1);
-        }
-        prev = cur;
-    }
-    prev[b.len()] as f32 / longest as f32
-}
-
-/// How the text changed: small corrections are ground truth; a rewrite
-/// (more than half the words) is a change of mind, not a correction.
-pub fn edit_kind(pasted: &str, edited: &str) -> &'static str {
-    if pasted.trim() == edited.trim() {
-        "unchanged"
-    } else if word_change(pasted, edited) <= 0.5 {
-        "edited"
-    } else {
-        "rewritten"
-    }
-}
-
-/// After a paste: follow the field for a while and store the dictation's
-/// text as you left it.
-pub fn watch_edits(app: &AppHandle, id: String, pasted: String, before: Option<FieldSnapshot>) {
-    let app = app.clone();
-    let generation = WATCH_GENERATION.load(Ordering::SeqCst);
-    std::thread::spawn(move || {
-        std::thread::sleep(SETTLE);
-        let after = text_field::focused_field();
-        let Some((prefix, suffix, pid)) = before
-            .as_ref()
-            .zip(after.as_ref())
-            .and_then(|(b, a)| anchors(b, a, &pasted).map(|(p, s)| (p, s, a.pid)))
-        else {
-            update(&app, &id, |r| r.edit = Some("field not readable".into()));
-            return;
-        };
-        let mut last = pasted.trim().to_string();
-        let mut why = "watched";
-        let started = Instant::now();
-        while started.elapsed() < WATCH_FOR {
-            std::thread::sleep(POLL);
-            if WATCH_GENERATION.load(Ordering::SeqCst) != generation {
-                why = "next dictation";
-                break;
-            }
-            let Some(field) = text_field::focused_field().filter(|f| f.pid == pid) else {
-                why = "focus moved";
-                break;
-            };
-            if field
-                .value
-                .iter()
-                .all(|c| char::from_u32(*c as u32).is_some_and(char::is_whitespace))
-            {
-                why = "field cleared";
-                break;
-            }
-            if let Some(text) = span_between(&field.value, &prefix, &suffix) {
-                last = text;
-            }
-        }
-        let kind = edit_kind(&pasted, &last);
-        log::debug!("Benchmark {id}: {kind} ({why})");
-        update(&app, &id, move |r| {
-            r.edited = Some(last);
-            r.edit = Some(kind.to_string());
-        });
-    });
 }
 
 #[derive(Serialize, Type, Debug, Clone, Default)]
@@ -618,64 +464,6 @@ pub async fn guess_benchmark_ground_truth(app: AppHandle, id: String) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn u(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
-    #[test]
-    fn finds_the_dictation_after_edits() {
-        let value = u("Hi Sam, let's meet at eight tomorrow. Thanks");
-        assert_eq!(
-            span_between(&value, &u("Hi Sam, "), &u(" Thanks")).as_deref(),
-            Some("let's meet at eight tomorrow.")
-        );
-        // Dictated at the end of the field.
-        assert_eq!(
-            span_between(&u("Note: push the fix"), &u("Note: "), &[]).as_deref(),
-            Some("push the fix")
-        );
-        // Text before it was changed: can't place it any more.
-        assert_eq!(span_between(&value, &u("Hello Sam, "), &u(" Thanks")), None);
-    }
-
-    #[test]
-    fn classifies_edits() {
-        assert_eq!(
-            edit_kind("Push it to github.", "Push it to github."),
-            "unchanged"
-        );
-        assert_eq!(
-            edit_kind("Push it to git hub.", "Push it to GitHub."),
-            "edited"
-        );
-        assert_eq!(
-            edit_kind(
-                "Push it to github.",
-                "Actually, never mind, I'll do it myself tomorrow."
-            ),
-            "rewritten"
-        );
-    }
-
-    #[test]
-    fn anchors_need_the_pasted_text() {
-        let snap = |t: &str| FieldSnapshot {
-            pid: 1,
-            role: "AXTextArea".into(),
-            value: u(t),
-            selection: None,
-        };
-        let (prefix, suffix) = anchors(
-            &snap("Hi  Thanks"),
-            &snap("Hi hello there Thanks"),
-            "hello there",
-        )
-        .unwrap();
-        assert_eq!(String::from_utf16_lossy(&prefix), "Hi ");
-        assert_eq!(String::from_utf16_lossy(&suffix), " Thanks");
-        assert!(anchors(&snap("Hi  Thanks"), &snap("Hi hello there Thanks"), "other").is_none());
-    }
 
     #[test]
     fn older_records_still_load() {

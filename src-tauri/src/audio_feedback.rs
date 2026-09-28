@@ -72,6 +72,16 @@ pub fn play_test_sound(app: &AppHandle, sound_type: SoundType) {
     }
 }
 
+/// Play a recording (a dictation's audio) at full volume, in the background.
+pub fn play_recording(app: &AppHandle, path: PathBuf) {
+    let device = settings::get_settings(app).selected_output_device;
+    thread::spawn(move || {
+        if let Err(e) = play_audio_file(&path, device, 1.0) {
+            error!("Failed to play recording '{}': {}", path.display(), e);
+        }
+    });
+}
+
 fn play_sound_async(app: &AppHandle, path: PathBuf) {
     let app_handle = app.clone();
     thread::spawn(move || {

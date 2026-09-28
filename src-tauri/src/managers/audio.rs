@@ -453,6 +453,9 @@ impl RecordingReadiness {
     }
 }
 
+/// Samples of a cancelled recording, with the cancel generation it ended at.
+type CancelledSamples = (u64, Vec<f32>);
+
 #[derive(Clone)]
 pub struct AudioRecordingManager {
     /// Never assign through this directly — route every write through
@@ -467,6 +470,9 @@ pub struct AudioRecordingManager {
     mute_state: Arc<Mutex<MuteState>>,
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
+    /// What a cancelled recording had captured, with the cancel generation
+    /// it was cancelled at, so the cancel can be undone.
+    cancelled_samples: Arc<Mutex<Option<CancelledSamples>>>,
     stream_router: Arc<StreamRouter>,
     /// Shared with every recorder this manager builds; updated live from settings.
     gain_config: Arc<GainConfig>,
@@ -521,6 +527,7 @@ impl AudioRecordingManager {
             mute_state: Arc::new(Mutex::new(MuteState::default())),
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
+            cancelled_samples: Arc::new(Mutex::new(None)),
             stream_router,
             gain_config: GainConfig::new(settings.input_gain_db, settings.auto_gain_enabled),
             // Always kept: the quiet-speech safety net replays it after each
@@ -1272,7 +1279,8 @@ impl AudioRecordingManager {
                 }
 
                 if self.was_cancelled_since(cancel_generation) {
-                    debug!("Recording stop cancelled; discarding captured samples");
+                    debug!("Recording stop cancelled; keeping captured samples for undo");
+                    self.keep_cancelled(samples);
                     return None;
                 }
 
@@ -1290,6 +1298,34 @@ impl AudioRecordingManager {
             _ => None,
         }
     }
+    fn keep_cancelled(&self, samples: Vec<f32>) {
+        let generation = self.cancel_generation.load(Ordering::Acquire);
+        *self.cancelled_samples.lock().unwrap() =
+            (!samples.is_empty()).then_some((generation, samples));
+    }
+
+    /// The audio of the recording cancelled at `generation`, if any.
+    pub fn take_cancelled_samples(&self, generation: u64) -> Option<Vec<f32>> {
+        let mut kept = self.cancelled_samples.lock().unwrap();
+        match kept.take() {
+            Some((g, samples)) if g == generation => Some(samples),
+            other => {
+                *kept = other;
+                None
+            }
+        }
+    }
+
+    /// Whether the microphone stream died under the current recording
+    /// (device unplugged, Bluetooth dropped).
+    pub fn microphone_lost(&self) -> bool {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|rec| rec.needs_reopen())
+    }
+
     pub fn is_recording(&self) -> bool {
         // Lock-free: mirrors the `state` {Recording, Stopping} membership via
         // an atomic maintained by `set_state()`. Polled from the webview/main
@@ -1311,7 +1347,10 @@ impl AudioRecordingManager {
                 drop(state);
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    let _ = rec.stop(); // Discard the result
+                    // Kept briefly so the cancel can be undone.
+                    if let Ok(samples) = rec.stop() {
+                        self.keep_cancelled(samples);
+                    }
                 }
 
                 *self.is_recording.lock().unwrap() = false;

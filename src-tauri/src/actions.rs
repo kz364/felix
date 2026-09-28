@@ -61,11 +61,43 @@ struct RecordingErrorEvent {
     detail: Option<String>,
 }
 
+/// Dictations started, and the newest one finished (transcribed, polished
+/// and pasted or given up on).
+static PIPELINES_STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PIPELINES_FINISHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// After this long, the overlay says the dictation is taking longer than usual.
+const SLOW_AFTER: Duration = Duration::from_secs(10);
+
+/// Whether a dictation is still being transcribed, polished or pasted.
+pub fn dictation_busy() -> bool {
+    PIPELINES_FINISHED.load(std::sync::atomic::Ordering::Acquire)
+        < PIPELINES_STARTED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Start counting a dictation's processing; tells the overlay when it runs
+/// long. Returns its number for the [`FinishGuard`].
+fn begin_pipeline(app: &AppHandle) -> u64 {
+    let id = PIPELINES_STARTED.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SLOW_AFTER);
+        // The assistant takes as long as it takes.
+        if PIPELINES_FINISHED.load(std::sync::atomic::Ordering::Acquire) < id
+            && !assistant_working()
+        {
+            info!("Dictation still processing after {SLOW_AFTER:?}");
+            let _ = app.emit_to("recording_overlay", "processing-slow", ());
+        }
+    });
+    id
+}
+
 /// Drop guard that finishes the transcription pipeline, including immediate
 /// model unloading on early exits.
-struct FinishGuard(AppHandle, Arc<TranscriptionManager>);
+struct FinishGuard(AppHandle, Arc<TranscriptionManager>, u64);
 impl Drop for FinishGuard {
     fn drop(&mut self) {
+        PIPELINES_FINISHED.fetch_max(self.2, std::sync::atomic::Ordering::AcqRel);
         self.1.maybe_unload_immediately("transcription session");
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
@@ -163,6 +195,7 @@ fn level_prompt_with_instructions(settings: &AppSettings, level: CleanupLevel) -
     let prompt = crate::cleanup::level_prompt_for(settings, level)?;
     let context = crate::app_context::current();
     let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
+    let prompt = crate::cleanup::with_layout(prompt, category);
     Some(
         match crate::cleanup::instructions_block(
             &settings.custom_instructions,
@@ -1167,7 +1200,11 @@ pub(crate) async fn process_transcription_output(
     let request = if post_process {
         Some(CleanupRequest::SelectedPrompt)
     } else if uses_level_cleanup(&settings) {
-        let has_instructions = has_custom_instructions(&settings);
+        // Coding agents always get the pass, for their layout.
+        let for_coding =
+            crate::app_context::resolve(&crate::app_context::current(), &settings.app_rules).0
+                == crate::settings::AppCategory::Coding;
+        let has_instructions = has_custom_instructions(&settings) || for_coding;
         if crate::cleanup::needs_ai_cleanup(&final_text, settings.cleanup_level, has_instructions) {
             Some(CleanupRequest::Level(settings.cleanup_level))
         } else {
@@ -1255,6 +1292,12 @@ impl ShortcutAction for TranscribeAction {
         let kickoff_elapsed = kickoff_started.elapsed();
 
         crate::app_context::capture();
+        if get_settings(app).tag_agent_files {
+            crate::agent_files::capture(
+                crate::app_context::current().bundle_id.as_deref(),
+                crate::app_context::frontmost_pid(),
+            );
+        }
         crate::dictation_log::capture_at_start();
         let screen_generation = crate::screen_context::begin();
         prewarm_cleanup(
@@ -1376,6 +1419,7 @@ impl ShortcutAction for TranscribeAction {
 
         if recording_error.is_none() {
             crate::draft::start(app);
+            crate::recovery::watch_microphone(app, binding_id.clone());
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -1453,8 +1497,9 @@ impl ShortcutAction for TranscribeAction {
         let post_process = self.post_process;
         let cancel_generation = rm.cancel_generation();
 
+        let pipeline = begin_pipeline(app);
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
+            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm), pipeline);
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
@@ -1470,6 +1515,7 @@ impl ShortcutAction for TranscribeAction {
 
                 if rm.was_cancelled_since(cancel_generation) {
                     debug!("Transcription operation cancelled after recording stop");
+                    crate::recovery::offer_undo(&ah, samples, post_process);
                     tm.cancel_stream();
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
@@ -1488,6 +1534,10 @@ impl ShortcutAction for TranscribeAction {
                 };
                 let rescue = rescue_audio(&ah, &rm, samples.len(), &raw);
                 let bench_id = crate::benchmark::begin(&ah, &rm, samples.len(), &raw);
+                // Kept only when the mic gave almost nothing, to offer it
+                // back if nothing comes of this dictation.
+                let quiet_raw =
+                    crate::nudges::sounds_like_quiet_mic(&raw.samples).then(|| raw.samples.clone());
                 drop(raw);
                 // Silence detection kept nothing but a more sensitive pass
                 // found speech: transcribe that instead of giving up.
@@ -1502,6 +1552,9 @@ impl ShortcutAction for TranscribeAction {
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
+                    if let Some(raw) = &quiet_raw {
+                        crate::nudges::quiet_mic(&ah, raw);
+                    }
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
                     tm.cancel_stream();
@@ -1592,6 +1645,9 @@ impl ShortcutAction for TranscribeAction {
                         (result, _) => result,
                     };
                     if rescue_only && transcription_result.as_ref().is_ok_and(|t| t.is_empty()) {
+                        if let Some(raw) = &quiet_raw {
+                            crate::nudges::quiet_mic(&ah, raw);
+                        }
                         if let Some(id) = &bench_id {
                             let record = rescue_record.clone();
                             crate::benchmark::update(&ah, id, move |r| r.rescue = record);
@@ -1628,6 +1684,7 @@ impl ShortcutAction for TranscribeAction {
 
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");
+                        crate::recovery::processing_cancelled(&ah, post_process);
                         utils::hide_recording_overlay(&ah);
                         set_tray_state(&ah, TrayIconState::Idle);
                         return;
@@ -1655,6 +1712,7 @@ impl ShortcutAction for TranscribeAction {
                                 transcription_time.elapsed(),
                                 utils::redact_text(&transcription)
                             );
+                            crate::nudges::wrong_language(&ah, &transcription, &get_settings(&ah));
 
                             if post_process || uses_level_cleanup(&get_settings(&ah)) {
                                 if use_streaming_overlay {
@@ -1670,6 +1728,7 @@ impl ShortcutAction for TranscribeAction {
                             .await
                             else {
                                 debug!("Transcription operation cancelled during output handling");
+                                crate::recovery::processing_cancelled(&ah, post_process);
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
@@ -1677,6 +1736,7 @@ impl ShortcutAction for TranscribeAction {
 
                             if rm.was_cancelled_since(cancel_generation) {
                                 debug!("Transcription operation cancelled before paste");
+                                crate::recovery::processing_cancelled(&ah, post_process);
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
@@ -1699,6 +1759,9 @@ impl ShortcutAction for TranscribeAction {
                                 && processed.submit_key.is_none()
                                 && processed.assistant_error.is_none()
                             {
+                                if let Some(raw) = &quiet_raw {
+                                    crate::nudges::quiet_mic(&ah, raw);
+                                }
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else {
@@ -1809,6 +1872,40 @@ impl ShortcutAction for TranscribeAction {
                                         }
                                         _ => final_text,
                                     };
+                                    // Talking to Claude Code or Codex: file names
+                                    // become mentions.
+                                    let final_text = if settings.tag_agent_files && inserting {
+                                        crate::agent_files::tag(
+                                            &final_text,
+                                            crate::app_context::frontmost_pid(),
+                                        )
+                                    } else {
+                                        final_text
+                                    };
+                                    // In a personal messenger with an empty
+                                    // box, a few sentences go out as a few
+                                    // messages.
+                                    if settings.stacked_messages
+                                        && inserting
+                                        && before.as_ref().is_some_and(|f| {
+                                            crate::text_field::trimmed_len(&f.value) == 0
+                                        })
+                                        && crate::app_context::resolve(
+                                            &crate::app_context::current(),
+                                            &settings.app_rules,
+                                        )
+                                        .0 == crate::settings::AppCategory::Personal
+                                    {
+                                        if let Some(messages) =
+                                            crate::stacked::split(&final_text, period_dropped)
+                                        {
+                                            info!("Sending the dictation as {} messages", messages.len());
+                                            crate::stacked::paste(&ah_clone, messages, submit_key);
+                                            utils::hide_recording_overlay(&ah_clone);
+                                            set_tray_state(&ah_clone, TrayIconState::Idle);
+                                            return;
+                                        }
+                                    }
                                     let pasted_text = final_text.clone();
                                     match utils::paste(final_text, ah_clone.clone(), submit_key) {
                                         Ok(()) => {
@@ -1816,21 +1913,32 @@ impl ShortcutAction for TranscribeAction {
                                                 "Text pasted successfully in {:?}",
                                                 paste_time.elapsed()
                                             );
-                                            if let Some(id) = bench_id {
+                                            if let Some(id) = &bench_id {
                                                 let text = pasted_text.clone();
                                                 crate::benchmark::update(
                                                     &ah_clone,
-                                                    &id,
+                                                    id,
                                                     move |r| r.pasted = Some(text),
                                                 );
-                                                if !pasted_text.is_empty() {
-                                                    crate::benchmark::watch_edits(
-                                                        &ah_clone,
-                                                        id,
-                                                        pasted_text.clone(),
-                                                        before.clone(),
-                                                    );
-                                                }
+                                            }
+                                            if let (Some(field), Some(audio)) =
+                                                (&before, crate::rules::last_audio())
+                                            {
+                                                crate::nudges::check_sense(
+                                                    &ah_clone,
+                                                    pasted_text.clone(),
+                                                    field.text_before_cursor(300),
+                                                    field.text_after_cursor(150),
+                                                    audio,
+                                                );
+                                            }
+                                            if !pasted_text.is_empty() {
+                                                crate::edit_learning::watch(
+                                                    &ah_clone,
+                                                    pasted_text.clone(),
+                                                    before.clone(),
+                                                    bench_id,
+                                                );
                                             }
                                             crate::text_field::remember_paste(
                                                 before.as_ref().map(|f| f.pid),

@@ -23,6 +23,8 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         overlay: resolve(__dirname, "src/overlay/index.html"),
+        draft: resolve(__dirname, "src/draft/index.html"),
+        "meeting-panel": resolve(__dirname, "src/meeting-panel/index.html"),
       },
     },
   },

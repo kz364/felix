@@ -7,6 +7,7 @@ use super::track::{TrackSummary, TrackWriter, SAMPLE_RATE};
 use crate::audio_toolkit::audio::FrameResampler;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -21,6 +22,45 @@ pub enum MeetingMode {
     Call,
     /// Mic only.
     InPerson,
+}
+
+/// RMS of a 20 ms frame above which a track counts as having sound (about
+/// -40 dBFS): speech on the call, or someone talking in the room.
+const VOICE_RMS: f32 = 0.01;
+
+/// When each track last had sound, in ms on the recording's clock. Read by
+/// the watcher that offers to stop once a call has gone quiet.
+#[derive(Default)]
+pub struct Activity {
+    mic: AtomicU64,
+    system: AtomicU64,
+    /// The loudest frame each track just had (RMS, as f32 bits), for the
+    /// level shown while recording.
+    mic_level: AtomicU32,
+    system_level: AtomicU32,
+}
+
+impl Activity {
+    fn slot(&self, name: &str) -> &AtomicU64 {
+        if name == "system" {
+            &self.system
+        } else {
+            &self.mic
+        }
+    }
+
+    fn level_slot(&self, name: &str) -> &AtomicU32 {
+        if name == "system" {
+            &self.system_level
+        } else {
+            &self.mic_level
+        }
+    }
+
+    /// Ms on the recording's clock when this track last had sound.
+    pub fn last_sound_ms(&self, name: &str) -> u64 {
+        self.slot(name).load(Ordering::Relaxed)
+    }
 }
 
 /// Mono audio at `rate`, filled by a device's audio thread.
@@ -49,19 +89,37 @@ pub struct Recording {
     pub mic_label: String,
     /// Why the system audio isn't being recorded on a call, if it isn't.
     pub system_error: Option<String>,
+    pub activity: Arc<Activity>,
     t0: Instant,
     stop_at: StopAt,
     tracks: Vec<Track>,
 }
 
-fn spawn_writer(
-    mut source: Source,
-    path: PathBuf,
+struct WriterSetup {
     name: &'static str,
     t0: Instant,
     stop_at: StopAt,
+    activity: Arc<Activity>,
+    resume: bool,
+}
+
+fn spawn_writer(
+    mut source: Source,
+    path: PathBuf,
+    setup: WriterSetup,
 ) -> Result<JoinHandle<Result<TrackSummary, String>>, String> {
-    let mut writer = TrackWriter::create(&path, name, t0)?;
+    let WriterSetup {
+        name,
+        t0,
+        stop_at,
+        activity,
+        resume,
+    } = setup;
+    let mut writer = if resume {
+        TrackWriter::append(&path, name, t0)?
+    } else {
+        TrackWriter::create(&path, name, t0)?
+    };
     std::thread::Builder::new()
         .name(format!("meeting-{name}"))
         .spawn(move || {
@@ -87,11 +145,24 @@ fn spawn_writer(
                     writer.align(incoming, now)?;
                 }
                 let mut result = Ok(());
+                let mut loud = false;
+                let mut peak = 0.0f32;
                 resampler.push(&buf, |frame| {
+                    let level = rms(frame);
+                    peak = peak.max(level);
+                    loud |= level > VOICE_RMS;
                     if result.is_ok() {
                         result = writer.write(frame, now);
                     }
                 });
+                activity
+                    .level_slot(name)
+                    .store(peak.to_bits(), Ordering::Relaxed);
+                if loud {
+                    activity
+                        .slot(name)
+                        .store(now.duration_since(t0).as_millis() as u64, Ordering::Relaxed);
+                }
                 if stopping.is_some() {
                     resampler.finish(|frame| {
                         if result.is_ok() {
@@ -110,22 +181,51 @@ fn spawn_writer(
         .map_err(|e| e.to_string())
 }
 
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32).sqrt()
+}
+
 impl Recording {
     /// Start recording into `dir` (created if needed). `mic` is the input
     /// device, `None` for the system default. On a call, failing to capture
     /// system audio doesn't stop the recording: it goes on with the mic, and
-    /// `system_error` says why.
-    pub fn start(dir: &Path, mode: MeetingMode, mic: Option<cpal::Device>) -> Result<Self, String> {
+    /// `system_error` says why. With `resume`, the tracks already in `dir`
+    /// are carried on rather than replaced, and the clock starts where they
+    /// end.
+    pub fn start(
+        dir: &Path,
+        mode: MeetingMode,
+        mic: Option<cpal::Device>,
+        resume: bool,
+    ) -> Result<Self, String> {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
-        let t0 = Instant::now();
+        let now = Instant::now();
+        let already = if resume {
+            super::track::duration_of(&dir.join("mic.wav")).unwrap_or_default()
+        } else {
+            Duration::ZERO
+        };
+        let t0 = now.checked_sub(already).unwrap_or(now);
         let stop_at = StopAt::default();
+        let activity = Arc::new(Activity::default());
+        // Nothing heard yet counts from the (re)start, not the meeting's start.
+        let start_ms = already.as_millis() as u64;
+        activity.mic.store(start_ms, Ordering::Relaxed);
+        activity.system.store(start_ms, Ordering::Relaxed);
+        let setup = |name| WriterSetup {
+            name,
+            t0,
+            stop_at: stop_at.clone(),
+            activity: activity.clone(),
+            resume,
+        };
         let mut tracks = Vec::new();
 
         let (source, stream) = super::mic::start(mic)?;
         let mic_label = source.label.clone();
         tracks.push(Track {
-            writer: spawn_writer(source, dir.join("mic.wav"), "mic", t0, stop_at.clone())?,
+            writer: spawn_writer(source, dir.join("mic.wav"), setup("mic"))?,
             keepalive: Box::new(stream),
         });
 
@@ -134,13 +234,7 @@ impl Recording {
             match start_system() {
                 Ok((source, keepalive)) => {
                     tracks.push(Track {
-                        writer: spawn_writer(
-                            source,
-                            dir.join("system.wav"),
-                            "system",
-                            t0,
-                            stop_at.clone(),
-                        )?,
+                        writer: spawn_writer(source, dir.join("system.wav"), setup("system"))?,
                         keepalive,
                     });
                 }
@@ -155,14 +249,37 @@ impl Recording {
             mode,
             mic_label,
             system_error,
+            activity,
             t0,
             stop_at,
             tracks,
         })
     }
 
+    /// Length of the recording so far (including what came before a resume).
     pub fn elapsed(&self) -> Duration {
         self.t0.elapsed()
+    }
+
+    /// How long this track has had no sound.
+    pub fn quiet_for(&self, track: &str) -> Duration {
+        let now = self.elapsed().as_millis() as u64;
+        Duration::from_millis(now.saturating_sub(self.activity.last_sound_ms(track)))
+    }
+
+    /// How loud it is right now, 0 to 1 (the louder track, on a dB scale
+    /// from -50 dBFS), for the waves while recording.
+    pub fn level(&self) -> f32 {
+        let rms = ["mic", "system"]
+            .iter()
+            .map(|t| f32::from_bits(self.activity.level_slot(t).load(Ordering::Relaxed)))
+            .fold(0.0f32, f32::max);
+        let db = 20.0 * rms.max(1e-6).log10();
+        ((db + 50.0) / 40.0).clamp(0.0, 1.0)
+    }
+
+    pub fn has_system_track(&self) -> bool {
+        self.tracks.len() > 1
     }
 
     /// Stop the devices, write out what's buffered and close the files.

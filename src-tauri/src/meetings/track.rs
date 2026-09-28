@@ -42,6 +42,14 @@ pub struct TrackWriter {
     last_flush: Instant,
 }
 
+/// How long a finished (or flushed) track is.
+pub fn duration_of(path: &Path) -> Option<Duration> {
+    let reader = hound::WavReader::open(path).ok()?;
+    Some(Duration::from_secs_f64(
+        reader.duration() as f64 / reader.spec().sample_rate as f64,
+    ))
+}
+
 fn samples_for(d: Duration) -> u64 {
     (d.as_secs_f64() * SAMPLE_RATE as f64) as u64
 }
@@ -56,16 +64,39 @@ impl TrackWriter {
         };
         let writer = hound::WavWriter::create(path, spec)
             .map_err(|e| format!("Couldn't create {}: {e}", path.display()))?;
-        Ok(Self {
+        Ok(Self::around(writer, path, source, t0, 0))
+    }
+
+    /// Carry on writing a track from an earlier recording of the meeting
+    /// (or start it, if it isn't there). `t0` is where the resumed recording's
+    /// clock starts, so it's placed after what's already there.
+    pub fn append(path: &Path, source: &str, t0: Instant) -> Result<Self, String> {
+        if !path.is_file() {
+            return Self::create(path, source, t0);
+        }
+        let writer = hound::WavWriter::append(path)
+            .map_err(|e| format!("Couldn't reopen {}: {e}", path.display()))?;
+        let written = writer.len() as u64;
+        Ok(Self::around(writer, path, source, t0, written))
+    }
+
+    fn around(
+        writer: hound::WavWriter<BufWriter<File>>,
+        path: &Path,
+        source: &str,
+        t0: Instant,
+        written: u64,
+    ) -> Self {
+        Self {
             writer,
             path: path.to_path_buf(),
             source: source.to_string(),
             t0,
-            written: 0,
+            written,
             padded: 0,
             peak: 0.0,
             last_flush: Instant::now(),
-        })
+        }
     }
 
     fn pad(&mut self, samples: u64) -> Result<(), String> {
@@ -219,6 +250,26 @@ mod tests {
         w.write(&[0.1; 1600], t0).unwrap();
         w.align(800, t0 + Duration::from_millis(200)).unwrap();
         assert_eq!(w.finish().unwrap().padded_seconds, 0.0);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_resumed_track_carries_on_after_what_was_there() {
+        let path = temp("append");
+        let t0 = Instant::now();
+        let mut w = TrackWriter::create(&path, "mic", t0).unwrap();
+        w.write(&[0.1; 16_000], t0).unwrap();
+        w.finish().unwrap();
+        // Resumed later: its clock starts 1 s back, where the track ended.
+        let now = Instant::now();
+        let t0 = now - Duration::from_secs(1);
+        let mut w = TrackWriter::append(&path, "mic", t0).unwrap();
+        w.align(8_000, now + Duration::from_millis(500)).unwrap();
+        w.write(&[0.2; 8_000], now + Duration::from_millis(500))
+            .unwrap();
+        let s = w.finish().unwrap();
+        assert!((s.seconds - 1.5).abs() < 0.001, "{}", s.seconds);
+        assert_eq!(duration_of(&path).unwrap().as_millis(), 1500);
         std::fs::remove_file(&path).unwrap();
     }
 }

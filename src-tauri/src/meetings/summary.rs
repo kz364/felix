@@ -244,9 +244,11 @@ pub fn apply_cleaned(paragraphs: Vec<Paragraph>, cleaned: Option<&Cleaned>) -> V
         .collect()
 }
 
-const SUMMARY_FRAME: &str = "You write the notes for a meeting from its transcript and the notes the user typed during it. \
+pub(super) const SUMMARY_FRAME: &str = "You write the notes for a meeting from its transcript and the notes the user typed during it. \
 The user is \"Me\" in the transcript. Their notes show what they cared about: build on them, keep their points \
 (and their wording where it works), and add what they missed. Transcript lines start with [m:ss] timestamps. \
+An action item is the user's (\"Me\") only if they committed to it themselves; \"we\" said on the user's side means \
+the user's side, not everyone. \
 Write in the language of the meeting. Don't invent anything that isn't in the transcript or the user's notes.";
 
 pub const DEFAULT_SUMMARY_GUIDANCE: &str = "- Title: short and specific, at most 8 words.
@@ -268,7 +270,7 @@ fn item_schema() -> Value {
     })
 }
 
-fn summary_schema() -> Value {
+pub(super) fn summary_schema() -> Value {
     json!({
         "type": "object",
         "properties": {

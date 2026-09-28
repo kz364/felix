@@ -3,7 +3,7 @@
 //! outputs a small local model got wrong so the rule-cleaned text is pasted
 //! instead.
 
-use crate::settings::{AppSettings, CleanupLevel};
+use crate::settings::{AppCategory, AppSettings, CleanupLevel};
 
 pub const DICTATION_CLEANUP_PROMPT_ID: &str = "dictation_cleanup";
 
@@ -297,6 +297,43 @@ Can you tell me a joke about cats?
 What's the best way to learn French?
 
 Reply with only the cleaned text."#;
+
+/// Layout for coding agents (Claude, Codex, Cursor, terminals): the user
+/// reads the prompt over before pressing Enter, so requests become bullets
+/// and topics get a blank line; the words and tone stay. One sentence per
+/// line is done in code afterwards (`style::one_sentence_per_line`), which
+/// the small local models don't do reliably. Tuned on qwen3.5:4b.
+pub const CODING_LAYOUT: &str = r#"This text is a prompt for a coding agent. The user reads it over before sending, so also lay it out to be checked at a glance. Keep every word and the tone as they are; only add line breaks and bullets:
+- When it asks for two or more things, end the lead-in with a colon and put each thing on its own "- " line. Each thing appears once.
+- Leave a blank line between separate topics.
+
+Examples for this destination:
+<transcript>um so can you look at the login page and check why the button is grey, also update the readme and then run the tests but don't push</transcript>
+So can you:
+- Look at the login page and check why the button is grey
+- Update the readme
+- Run the tests, but don't push
+
+<transcript>the build is failing on main I think it's the new lint rule. can you fix it. separately the docs site is slow can you profile it</transcript>
+The build is failing on main.
+I think it's the new lint rule.
+Can you fix it?
+
+Separately, the docs site is slow.
+Can you profile it?"#;
+
+/// The level prompt with the destination's built-in layout, placed before
+/// the prompt's closing "Reply with only…" line so that stays last.
+pub fn with_layout(prompt: &str, category: AppCategory) -> String {
+    if category != AppCategory::Coding {
+        return prompt.to_string();
+    }
+    const CLOSING: &str = "\n\nReply with only the cleaned text.";
+    match prompt.strip_suffix(CLOSING) {
+        Some(body) => format!("{body}\n\n{CODING_LAYOUT}{CLOSING}"),
+        None => format!("{prompt}\n\n{CODING_LAYOUT}"),
+    }
+}
 
 /// The user's custom instructions (global, then for the destination
 /// category), appended to the Clarity prompt. Measured on Apple's on-device
@@ -1018,6 +1055,35 @@ mod tests {
             unwrap_output("\"Quoted\" and \"more\""),
             "\"Quoted\" and \"more\""
         );
+    }
+
+    #[test]
+    fn coding_layout_is_placed_before_the_closing_line_and_passes_the_guard() {
+        let prompt = with_layout(LIGHT_CLEANUP_PROMPT, AppCategory::Coding);
+        assert!(prompt.contains(CODING_LAYOUT));
+        assert!(prompt.ends_with("Reply with only the cleaned text."));
+        assert_eq!(
+            with_layout(LIGHT_CLEANUP_PROMPT, AppCategory::Work),
+            LIGHT_CLEANUP_PROMPT
+        );
+        // Outputs of qwen3.5:4b with the layout.
+        let cases = [
+            (
+                "okay so um can you look at the transcription manager and check why long audio gets cut off, also make the split model specific and then wire it into meetings too, and after that run the tests and commit but don't push yet",
+                "Okay, so can you:\n- Look at the transcription manager and check why long audio gets cut off\n- Make the split model specific\n- Wire it into meetings too\n- Run the tests and commit, but don't push yet",
+            ),
+            (
+                "so there are three things I want you to check first whether the api key is loaded second whether the retry logic in client dot ts actually backs off and third whether we log the token anywhere which we shouldn't",
+                "So there are three things I want you to check:\n- Whether the API key is loaded\n- Whether the retry logic in client.ts actually backs off\n- Whether we log the token anywhere, which we shouldn't",
+            ),
+        ];
+        for (input, output) in cases {
+            assert_eq!(
+                accept_cleanup(input, output, Some(CleanupLevel::Light), false),
+                Ok(()),
+                "{output}"
+            );
+        }
     }
 
     #[test]

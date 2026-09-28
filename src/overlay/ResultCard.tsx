@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
+import { commands, type NoticeButton } from "@/bindings";
 
 interface ResultCardProps {
   text: string;
@@ -9,19 +9,26 @@ interface ResultCardProps {
   title?: string | null;
   /** Auto-close delay; 0 keeps the card until it's closed. */
   timeoutMs: number;
+  /** Offer Copy (a dictation nobody received). */
+  showCopy: boolean;
+  /** A notice's buttons (Undo, Choose microphone…). */
+  actions: NoticeButton[];
   /** Bumped for each new result so the countdown restarts. */
   session: number;
 }
 
 /**
  * The pill grown into a card: shown when a dictation had nowhere to go (no
- * text field focused). Shows the text with Copy and close buttons and an
- * auto-close countdown bar that pauses while the pointer is over the card.
+ * text field focused), with Copy, or for a notice with its own buttons.
+ * Has a close button and an auto-close countdown bar that pauses while the
+ * pointer is over the card.
  */
 export const ResultCard: React.FC<ResultCardProps> = ({
   text,
   title,
   timeoutMs,
+  showCopy,
+  actions,
   session,
 }) => {
   const { t } = useTranslation();
@@ -104,31 +111,42 @@ export const ResultCard: React.FC<ResultCardProps> = ({
           </svg>
         </button>
       </div>
-      <div className="rtext">{text}</div>
+      {text && <div className={`rtext ${showCopy ? "" : "rnote"}`}>{text}</div>}
       <div className="rfoot">
-        <button
-          className={`rcopy ${copied ? "done" : ""}`}
-          onClick={copy}
-          disabled={copied}
-          aria-label={
-            copied ? t("overlay.result.copied") : t("overlay.result.copy")
-          }
-        >
-          {copied ? (
-            <svg className="rtick" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          ) : (
-            t("overlay.result.copy")
-          )}
-        </button>
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            className="raction"
+            onClick={() => commands.noticeAction(action.id)}
+          >
+            {action.label}
+          </button>
+        ))}
+        {showCopy && (
+          <button
+            className={`rcopy ${copied ? "done" : ""}`}
+            onClick={copy}
+            disabled={copied}
+            aria-label={
+              copied ? t("overlay.result.copied") : t("overlay.result.copy")
+            }
+          >
+            {copied ? (
+              <svg className="rtick" viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              t("overlay.result.copy")
+            )}
+          </button>
+        )}
       </div>
       {timeoutMs > 0 && (
         <div className="rbar" aria-hidden="true">

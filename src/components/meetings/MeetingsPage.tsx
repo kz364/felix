@@ -18,18 +18,24 @@ import {
   Copy,
   FolderOpen,
   Loader2,
+  MessageCircleQuestion,
   Mic,
   Monitor,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
+  Send,
+  Settings2,
   Sparkles,
   Square,
+  Trash2,
   Users,
   Video,
 } from "lucide-react";
 import {
   commands,
+  type LiveQuestion,
   type MeetingInfo,
   type MeetingMode,
   type MeetingState,
@@ -40,18 +46,15 @@ import {
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { PageHeader } from "../ui/PageHeader";
-import { SettingsGroup } from "../ui/SettingsGroup";
-import { ShortcutInput } from "../settings/ShortcutInput";
-import { MeetingSettings } from "./MeetingSettings";
-
-/** `m:ss`, or `h:mm:ss` from an hour. */
-const clock = (ms: number) => {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-};
+import { openSection } from "@/lib/navigation";
+import {
+  clock,
+  LiveBars,
+  LiveHelp,
+  NotesEditor,
+  TitleEditor,
+  useMeetingTitle,
+} from "./live";
 
 /** A small rounded detail, like Granola's "Today · 4" chips. */
 const Chip: React.FC<{
@@ -73,141 +76,8 @@ const Chip: React.FC<{
   </span>
 );
 
-/** Animated level bars for the recording pill. */
-const LiveBars: React.FC = () => (
-  <span className="flex items-end gap-[3px] h-4" aria-hidden>
-    {[0, 1, 2, 3].map((i) => (
-      <span
-        key={i}
-        className="meeting-bar w-[3px] rounded-full bg-current"
-        style={{ animationDelay: `${i * 0.15}s` }}
-      />
-    ))}
-  </span>
-);
-
 const modeIcon = (mode: MeetingMode, size = "w-3.5 h-3.5") =>
   mode === "call" ? <Video className={size} /> : <Users className={size} />;
-
-const useMeetingTitle = () => {
-  const { t } = useTranslation();
-  return (m: MeetingInfo) =>
-    m.title ??
-    (m.mode === "call"
-      ? t("meetings.title.call")
-      : t("meetings.title.inPerson"));
-};
-
-/** The meeting's title, edited in place like a document heading. Keyed by
- * id and title, so it resets when either changes. */
-const TitleEditor: React.FC<{
-  meeting: MeetingInfo;
-  className?: string;
-}> = ({ meeting, className = "" }) => {
-  const { t } = useTranslation();
-  const titleOf = useMeetingTitle();
-  const [value, setValue] = useState(titleOf(meeting));
-
-  const save = async () => {
-    if (value.trim() === titleOf(meeting)) return;
-    const result = await commands.renameMeeting(meeting.id, value);
-    if (result.status === "error") toast.error(result.error);
-  };
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-      placeholder={t("meetings.titlePlaceholder")}
-      className={`w-full bg-transparent font-serif outline-none placeholder:text-text/30 ${className}`}
-    />
-  );
-};
-
-type SaveState = "idle" | "saving" | "saved";
-
-/** The user's own notes, saved as they type. They go into the summary. */
-const NotesEditor: React.FC<{ id: string; minRows?: number }> = ({
-  id,
-  minRows = 5,
-}) => {
-  const { t } = useTranslation();
-  const [notes, setNotes] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<SaveState>("idle");
-  const pending = useRef<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
-  const area = useRef<HTMLTextAreaElement>(null);
-
-  const flush = useCallback(async () => {
-    clearTimeout(timer.current);
-    const text = pending.current;
-    if (text === null) return;
-    pending.current = null;
-    setSaveState("saving");
-    const result = await commands.saveMeetingNotes(id, text);
-    if (result.status === "error") {
-      toast.error(t("meetings.notes.saveFailed", { error: result.error }));
-      setSaveState("idle");
-    } else {
-      setSaveState("saved");
-    }
-  }, [id, t]);
-
-  useEffect(() => {
-    let cancelled = false;
-    commands.getMeetingNotes(id).then((result) => {
-      if (!cancelled) setNotes(result.status === "ok" ? result.data : "");
-    });
-    return () => {
-      cancelled = true;
-      flush();
-    };
-  }, [id, flush]);
-
-  // Grow with the text.
-  useEffect(() => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [notes]);
-
-  if (notes === null) return null;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-medium text-text/70">
-          {t("meetings.notes.title")}
-        </span>
-        <span className="text-xs text-text/40">
-          {saveState === "saving"
-            ? t("meetings.notes.saving")
-            : saveState === "saved"
-              ? t("meetings.notes.saved")
-              : ""}
-        </span>
-      </div>
-      <textarea
-        ref={area}
-        value={notes}
-        rows={minRows}
-        onChange={(e) => {
-          setNotes(e.target.value);
-          pending.current = e.target.value;
-          setSaveState("idle");
-          clearTimeout(timer.current);
-          timer.current = setTimeout(flush, 600);
-        }}
-        onBlur={flush}
-        placeholder={t("meetings.notes.placeholder")}
-        className="w-full resize-none rounded-xl border border-stone/20 bg-background px-4 py-3 text-sm leading-relaxed outline-none focus:border-accent/60 placeholder:text-text/35"
-      />
-    </div>
-  );
-};
 
 /** Plays both tracks together, from any point. */
 const useMeetingPlayer = (meeting: MeetingInfo) => {
@@ -314,11 +184,32 @@ const PlayerBar: React.FC<{ player: Player }> = ({ player }) => {
   );
 };
 
-/** "Speaker 2", or the name the user gave that voice. */
+/** Voices on the other side of a call are numbered from here. */
+const SYSTEM_SPEAKERS = 100;
+
+/** "Speaker 2" or "Them 1", or the name the user (or the call app) gave. */
 const useSpeakerName = () => {
   const { t } = useTranslation();
   return (meeting: MeetingInfo, n: number) =>
-    meeting.speakers?.[n] ?? t("meetings.speaker.numbered", { n: n + 1 });
+    meeting.speakers?.[n] ??
+    meeting.app_speakers?.[n] ??
+    (n >= SYSTEM_SPEAKERS
+      ? t("meetings.speaker.themNumbered", { n: n - SYSTEM_SPEAKERS + 1 })
+      : t("meetings.speaker.numbered", { n: n + 1 }));
+};
+
+/** Who said a paragraph, as the transcript labels it. */
+const useWho = () => {
+  const { t } = useTranslation();
+  const nameOf = useSpeakerName();
+  return (meeting: MeetingInfo, p: Paragraph) =>
+    p.speaker !== null
+      ? nameOf(meeting, p.speaker)
+      : meeting.mode === "call"
+        ? p.source === "mic"
+          ? t("meetings.speaker.me")
+          : t("meetings.speaker.them")
+        : null;
 };
 
 /** A told-apart voice's name; click to rename it everywhere. */
@@ -377,17 +268,32 @@ const TranscriptParagraph: React.FC<{
   meeting: MeetingInfo;
   showOriginal: boolean;
   active: boolean;
+  editable: boolean;
   onPlay: () => void;
-}> = ({ p, meeting, showOriginal, active, onPlay }) => {
+}> = ({ p, meeting, showOriginal, active, editable, onPlay }) => {
   const { t } = useTranslation();
-  const mode = meeting.mode;
+  const [editing, setEditing] = useState<string | null>(null);
   const speaker =
-    mode === "call"
+    p.speaker === null && meeting.mode === "call"
       ? p.source === "mic"
         ? t("meetings.speaker.me")
         : t("meetings.speaker.them")
       : null;
   const text = showOriginal && p.raw ? p.raw : p.text;
+
+  const save = async () => {
+    const edited = editing?.trim();
+    setEditing(null);
+    if (edited === undefined || edited === p.text) return;
+    const result = await commands.editMeetingParagraph(
+      meeting.id,
+      p.source,
+      p.start_ms,
+      edited,
+    );
+    if (result.status === "error") toast.error(result.error);
+  };
+
   return (
     <div
       className={`group grid grid-cols-[3.5rem_1fr] gap-3 rounded-lg px-2 py-2 transition-colors ${
@@ -411,10 +317,34 @@ const TranscriptParagraph: React.FC<{
             {speaker}
           </span>
         )}
-        {mode === "in_person" && p.speaker !== null && (
-          <SpeakerName meeting={meeting} n={p.speaker} />
+        {p.speaker !== null && <SpeakerName meeting={meeting} n={p.speaker} />}
+        {editing !== null ? (
+          <textarea
+            autoFocus
+            value={editing}
+            rows={Math.max(2, Math.ceil(editing.length / 80))}
+            onChange={(e) => setEditing(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setEditing(null);
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.currentTarget.blur();
+              }
+            }}
+            className="mt-1 block w-full resize-y rounded-md border border-accent/50 bg-background px-2 py-1 text-sm leading-relaxed outline-none"
+          />
+        ) : (
+          <span className="text-text/85">{text}</span>
         )}
-        <span className="text-text/85">{text}</span>
+        {editable && editing === null && (
+          <button
+            onClick={() => setEditing(p.text)}
+            title={t("meetings.transcript.edit")}
+            className="ms-1.5 inline-flex align-middle text-text/35 opacity-0 group-hover:opacity-100 hover:text-accent cursor-pointer"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+        )}
       </p>
     </div>
   );
@@ -429,6 +359,7 @@ const TranscriptSection: React.FC<{
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [confirmAgain, setConfirmAgain] = useState(false);
+  const who = useWho();
   const done = progress?.done;
   const stage = progress?.stage;
 
@@ -455,17 +386,9 @@ const TranscriptSection: React.FC<{
 
   const copy = async () => {
     const lines = (transcript?.paragraphs ?? []).map((p) => {
-      const who =
-        meeting.mode === "call"
-          ? p.source === "mic"
-            ? t("meetings.speaker.me")
-            : t("meetings.speaker.them")
-          : p.speaker !== null
-            ? (meeting.speakers?.[p.speaker] ??
-              t("meetings.speaker.numbered", { n: p.speaker + 1 }))
-            : null;
+      const label = who(meeting, p);
       const text = showOriginal && p.raw ? p.raw : p.text;
-      return `[${clock(p.start_ms)}] ${who ? `${who}: ` : ""}${text}`;
+      return `[${clock(p.start_ms)}] ${label ? `${label}: ` : ""}${text}`;
     });
     await navigator.clipboard.writeText(lines.join("\n\n"));
     toast.success(t("meetings.transcript.copied"));
@@ -602,16 +525,31 @@ const TranscriptSection: React.FC<{
       )}
       {paragraphs.length > 0 ? (
         <div className="rounded-xl border border-stone/20 bg-surface p-2">
-          {paragraphs.map((p, i) => (
-            <TranscriptParagraph
-              key={`${p.source}-${p.start_ms}`}
-              p={p}
-              meeting={meeting}
-              showOriginal={showOriginal}
-              active={i === activeIndex}
-              onPlay={() => player.playFrom(p.start_ms / 1000)}
-            />
-          ))}
+          {paragraphs.map((p, i) => {
+            const prevStart = i > 0 ? paragraphs[i - 1].start_ms : -1;
+            const resumed = (meeting.resumed_at_ms ?? []).some(
+              (r) => r > prevStart && r <= p.start_ms,
+            );
+            return (
+              <React.Fragment key={`${p.source}-${p.start_ms}`}>
+                {resumed && (
+                  <div className="flex items-center gap-2 px-2 py-1 text-xs text-text/45">
+                    <span className="h-px flex-1 bg-stone/20" />
+                    {t("meetings.transcript.resumed")}
+                    <span className="h-px flex-1 bg-stone/20" />
+                  </div>
+                )}
+                <TranscriptParagraph
+                  p={p}
+                  meeting={meeting}
+                  showOriginal={showOriginal}
+                  active={i === activeIndex}
+                  editable={status === "done" && !showOriginal}
+                  onPlay={() => player.playFrom(p.start_ms / 1000)}
+                />
+              </React.Fragment>
+            );
+          })}
         </div>
       ) : (
         status === "done" && (
@@ -804,12 +742,171 @@ const SummarySection: React.FC<{
   );
 };
 
+/** Questions about a finished meeting, and a follow-up email. */
+const AskSection: React.FC<{ meeting: MeetingInfo }> = ({ meeting }) => {
+  const { t } = useTranslation();
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const ask = async () => {
+    const q = question.trim();
+    if (!q || asking) return;
+    setAsking(true);
+    const result = await commands.askMeeting(meeting.id, q);
+    setAsking(false);
+    if (result.status === "error") {
+      toast.error(result.error);
+      return;
+    }
+    setQuestion("");
+    if (result.data.summary_updated) {
+      setAnswer(null);
+      toast.success(t("meetings.ask.notesUpdated"));
+    } else {
+      setAnswer(result.data.answer);
+    }
+  };
+
+  const followUp = async () => {
+    setAsking(true);
+    const result = await commands.draftFollowUpEmail(meeting.id);
+    setAsking(false);
+    if (result.status === "error") toast.error(result.error);
+    else setAnswer(result.data);
+  };
+
+  const copy = async () => {
+    if (!answer) return;
+    await navigator.clipboard.writeText(answer);
+    toast.success(t("meetings.ask.copied"));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3 px-1 text-sm font-medium text-text/70">
+        <span className="flex-1">{t("meetings.ask.title")}</span>
+        <button
+          onClick={followUp}
+          disabled={asking}
+          className="inline-flex items-center gap-1 font-normal text-text/55 hover:text-accent cursor-pointer disabled:opacity-50"
+        >
+          <Send className="w-3 h-3" />
+          {t("meetings.ask.followUp")}
+        </button>
+      </div>
+      <div className="flex items-center gap-2 rounded-xl border border-stone/20 bg-surface px-3 py-2">
+        <MessageCircleQuestion className="w-4 h-4 text-text/40 shrink-0" />
+        <input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") ask();
+          }}
+          placeholder={t("meetings.ask.placeholder")}
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-text/35"
+        />
+        {asking ? (
+          <Loader2 className="w-4 h-4 animate-spin text-text/50" />
+        ) : (
+          <button
+            onClick={ask}
+            disabled={!question.trim()}
+            className="rounded-full bg-text text-background px-3 py-0.5 text-sm hover:opacity-90 cursor-pointer disabled:opacity-40"
+          >
+            {t("meetings.ask.submit")}
+          </button>
+        )}
+      </div>
+      {answer && (
+        <div className="rounded-xl border border-stone/20 bg-accent/5 p-4 space-y-2">
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+            {answer}
+          </p>
+          <button
+            onClick={copy}
+            className="inline-flex items-center gap-1 text-xs text-text/55 hover:text-accent cursor-pointer"
+          >
+            <Copy className="w-3 h-3" />
+            {t("meetings.ask.copy")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Resume, show in Finder, move to the Trash. */
+const MeetingActions: React.FC<{
+  meeting: MeetingInfo;
+  canResume: boolean;
+  onGone: () => void;
+}> = ({ meeting, canResume, onGone }) => {
+  const { t } = useTranslation();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const link =
+    "inline-flex items-center gap-1.5 text-xs text-text/60 hover:text-accent cursor-pointer";
+
+  const resume = async () => {
+    const result = await commands.resumeMeeting(meeting.id);
+    if (result.status === "error") toast.error(result.error);
+  };
+
+  const remove = async () => {
+    setConfirmDelete(false);
+    const result = await commands.deleteMeeting(meeting.id);
+    if (result.status === "error") toast.error(result.error);
+    else onGone();
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-4 px-1">
+      <button
+        onClick={() => commands.openMeetingFolder(meeting.id)}
+        className={link}
+      >
+        <FolderOpen className="w-3.5 h-3.5" />
+        {t("meetings.showInFinder")}
+      </button>
+      {canResume && meeting.tracks.length > 0 && (
+        <button onClick={resume} className={link}>
+          <Mic className="w-3.5 h-3.5" />
+          {t("meetings.actions.resume")}
+        </button>
+      )}
+      {confirmDelete ? (
+        <span className="inline-flex items-center gap-2 text-xs">
+          {t("meetings.actions.deleteConfirm")}
+          <button
+            onClick={remove}
+            className="rounded-full bg-error text-white px-2 py-0.5 cursor-pointer"
+          >
+            {t("meetings.actions.deleteYes")}
+          </button>
+          <button
+            onClick={() => setConfirmDelete(false)}
+            className="text-text/55 hover:text-text cursor-pointer"
+          >
+            {t("meetings.actions.cancel")}
+          </button>
+        </span>
+      ) : (
+        <button onClick={() => setConfirmDelete(true)} className={link}>
+          <Trash2 className="w-3.5 h-3.5" />
+          {t("meetings.actions.delete")}
+        </button>
+      )}
+    </div>
+  );
+};
+
 /** One meeting, like a Granola note: title, your notes, the transcript. */
 const MeetingDetail: React.FC<{
   meeting: MeetingInfo;
   progress: TranscribeProgress | null;
+  canResume: boolean;
   onBack: () => void;
-}> = ({ meeting, progress, onBack }) => {
+}> = ({ meeting, progress, canResume, onBack }) => {
   const { t, i18n } = useTranslation();
   const player = useMeetingPlayer(meeting);
   const started = new Date(meeting.started_at);
@@ -822,9 +919,13 @@ const MeetingDetail: React.FC<{
     hour: "numeric",
     minute: "2-digit",
   });
-  const duration = meeting.ended_at
-    ? meeting.ended_at - meeting.started_at
-    : null;
+  const recorded = Math.max(0, ...meeting.tracks.map((tr) => tr.seconds));
+  const duration =
+    recorded > 0
+      ? recorded * 1000
+      : meeting.ended_at
+        ? meeting.ended_at - meeting.started_at
+        : null;
 
   return (
     <div className="max-w-2xl w-full mx-auto space-y-6">
@@ -870,6 +971,8 @@ const MeetingDetail: React.FC<{
         player={player}
       />
 
+      {meeting.transcript === "done" && <AskSection meeting={meeting} />}
+
       <NotesEditor id={meeting.id} />
 
       {meeting.tracks.length > 0 && (
@@ -884,13 +987,7 @@ const MeetingDetail: React.FC<{
         player={player}
       />
 
-      <button
-        onClick={() => commands.openMeetingFolder(meeting.id)}
-        className="inline-flex items-center gap-1.5 px-1 text-xs text-text/60 hover:text-accent cursor-pointer"
-      >
-        <FolderOpen className="w-3.5 h-3.5" />
-        {t("meetings.showInFinder")}
-      </button>
+      <MeetingActions meeting={meeting} canResume={canResume} onGone={onBack} />
     </div>
   );
 };
@@ -901,12 +998,23 @@ const RecorderCard: React.FC<{
 }> = ({ live, onChanged }) => {
   const { t, i18n } = useTranslation();
   const { getSetting } = useSettings();
-  const [mode, setMode] = useState<MeetingMode>(
-    getSetting("meeting_mode") ?? "call",
+  // "auto" works out whether it's a call (from the call app, its windows
+  // and what comes through the speakers).
+  const [mode, setMode] = useState<MeetingMode | "auto">(
+    (getSetting("meeting_detect_mode") ?? true)
+      ? "auto"
+      : (getSetting("meeting_mode") ?? "call"),
   );
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [receivedAt, setReceivedAt] = useState(Date.now());
+  const [seen, setSeen] = useState(live);
   const recording = live.recording;
+  // The recording's length is known when the state arrives; count on from there.
+  if (seen !== live) {
+    setSeen(live);
+    setReceivedAt(Date.now());
+  }
 
   useEffect(() => {
     if (!recording) return;
@@ -916,7 +1024,7 @@ const RecorderCard: React.FC<{
 
   const start = async () => {
     setBusy(true);
-    const result = await commands.startMeeting(mode);
+    const result = await commands.startMeeting(mode === "auto" ? null : mode);
     setBusy(false);
     if (result.status === "error") {
       toast.error(t("meetings.errors.start", { error: result.error }));
@@ -971,6 +1079,7 @@ const RecorderCard: React.FC<{
           <p className="text-sm text-text/60">{recording.system_error}</p>
         )}
         <NotesEditor id={recording.id} minRows={4} />
+        {live.live && <LiveHelp />}
         <p className="px-1 text-sm text-text/45">
           {t("meetings.transcript.afterRecording")}
         </p>
@@ -981,7 +1090,7 @@ const RecorderCard: React.FC<{
             </span>
             <span className="text-sm tabular-nums">
               {t("meetings.recordingFor", {
-                time: clock(now - recording.started_at),
+                time: clock(live.elapsed_ms + (now - receivedAt)),
               })}
             </span>
             <button
@@ -998,7 +1107,16 @@ const RecorderCard: React.FC<{
     );
   }
 
-  const modes: { id: MeetingMode; label: string; hint: string }[] = [
+  const modes: {
+    id: MeetingMode | "auto";
+    label: string;
+    hint: string;
+  }[] = [
+    {
+      id: "auto",
+      label: t("meetings.mode.auto"),
+      hint: t("meetings.mode.autoHint"),
+    },
     {
       id: "call",
       label: t("meetings.mode.call"),
@@ -1012,7 +1130,7 @@ const RecorderCard: React.FC<{
   ];
   return (
     <div className="rounded-xl border border-stone/20 bg-surface p-5 space-y-4">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {modes.map((m) => (
           <button
             key={m.id}
@@ -1024,7 +1142,11 @@ const RecorderCard: React.FC<{
             }`}
           >
             <div className="flex items-center gap-2 text-sm font-medium">
-              {modeIcon(m.id, "w-4 h-4")}
+              {m.id === "auto" ? (
+                <Sparkles className="w-4 h-4" />
+              ) : (
+                modeIcon(m.id, "w-4 h-4")
+              )}
               {m.label}
             </div>
             <p className="mt-1 text-sm text-text/60">{m.hint}</p>
@@ -1149,6 +1271,7 @@ export const MeetingsPage: React.FC = () => {
     recording: null,
     elapsed_ms: 0,
     transcribing: null,
+    live: false,
   });
   const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -1206,6 +1329,7 @@ export const MeetingsPage: React.FC = () => {
         key={opened.id}
         meeting={opened}
         progress={live.transcribing}
+        canResume={live.recording === null}
         onBack={() => setOpenId(null)}
       />
     );
@@ -1216,6 +1340,15 @@ export const MeetingsPage: React.FC = () => {
       <PageHeader
         title={t("meetings.heading")}
         description={t("meetings.subheading")}
+        actions={
+          <button
+            onClick={() => openSection("meetingSettings")}
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone/25 px-3 py-1 text-sm text-text/70 hover:text-text hover:border-stone/40 cursor-pointer"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            {t("meetings.settings.open")}
+          </button>
+        }
       />
       <p className="rounded-xl bg-highlight/15 px-4 py-3 text-sm leading-snug text-text/80">
         {t("meetings.wip")}
@@ -1247,11 +1380,6 @@ export const MeetingsPage: React.FC = () => {
           </div>
         ))
       )}
-
-      <SettingsGroup title={t("meetings.settings.title")}>
-        <ShortcutInput shortcutId="meeting" grouped={true} />
-        <MeetingSettings />
-      </SettingsGroup>
     </div>
   );
 };

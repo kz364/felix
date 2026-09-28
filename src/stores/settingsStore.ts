@@ -96,6 +96,11 @@ const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
     input_boost_db: null,
     transcriber: null,
     diarize: null,
+    detect_calls: null,
+    auto_stop: null,
+    max_hours: null,
+    hide_from_screen_share: null,
+    panel: null,
     ...patch,
   });
 
@@ -196,6 +201,12 @@ const settingUpdaters: {
     commands.changeScreenContextOnlineSetting(value as boolean),
   focus_message_box: (value) =>
     commands.changeFocusMessageBoxSetting(value as boolean),
+  learn_from_edits: (value) =>
+    commands.changeLearnFromEditsSetting(value as boolean),
+  stacked_messages: (value) =>
+    commands.changeStackedMessagesSetting(value as boolean),
+  tag_agent_files: (value) =>
+    commands.changeTagAgentFilesSetting(value as boolean),
   context_aware_paste: (value) =>
     commands.changeContextAwarePasteSetting(value as boolean),
   local_model_keep_loaded: (value) =>
@@ -285,6 +296,13 @@ const settingUpdaters: {
     meetingUpdate({ input_boost_db: value ?? null }),
   meeting_transcriber: (value) => meetingUpdate({ transcriber: value ?? null }),
   meeting_diarize: (value) => meetingUpdate({ diarize: value ?? null }),
+  meeting_detect_calls: (value) =>
+    meetingUpdate({ detect_calls: value ?? null }),
+  meeting_auto_stop: (value) => meetingUpdate({ auto_stop: value ?? null }),
+  meeting_max_hours: (value) => meetingUpdate({ max_hours: value ?? null }),
+  hide_from_screen_share: (value) =>
+    meetingUpdate({ hide_from_screen_share: value ?? null }),
+  meeting_panel: (value) => meetingUpdate({ panel: value ?? null }),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

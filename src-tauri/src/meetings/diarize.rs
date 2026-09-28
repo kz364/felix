@@ -439,6 +439,58 @@ pub fn split_by_speaker(chunk: Chunk, labels: &[Option<u32>]) -> Vec<(Chunk, Opt
         .collect()
 }
 
+/// The user's own voice on the mic during a call; turned back into "Me"
+/// once chunks are cut.
+pub const ME: u32 = u32::MAX;
+/// On a call, other voices on the mic must make up this share of it to count
+/// as people in the room with the user (not the user's voice split in two).
+const ROOM_SHARE: f32 = 0.15;
+/// And each of them at least this share.
+const ROOM_SPEAKER_SHARE: f32 = 0.05;
+
+/// On a call, the mic is the user plus, in a meeting room, others with them.
+/// The voice heard most is the user ([`ME`]); other clear voices are kept as
+/// people in the room, numbered from 0; stray bits are the user's.
+pub fn others_in_room(labels: &[Option<u32>]) -> Vec<Option<u32>> {
+    let mut counts = std::collections::BTreeMap::<u32, usize>::new();
+    for s in labels.iter().flatten() {
+        *counts.entry(*s).or_default() += 1;
+    }
+    let total: usize = counts.values().sum();
+    let Some((&me, &mine)) = counts.iter().max_by_key(|&(_, n)| *n) else {
+        return labels.to_vec();
+    };
+    let share = |n: usize| n as f32 / total.max(1) as f32;
+    let room: Vec<u32> = counts
+        .iter()
+        .filter(|&(&s, &n)| s != me && share(n) >= ROOM_SPEAKER_SHARE)
+        .map(|(&s, _)| s)
+        .collect();
+    let others: usize = room.iter().map(|s| counts[s]).sum();
+    let in_room = share(others) >= ROOM_SHARE && share(mine) < 1.0;
+    // Room voices renumbered by first appearance.
+    let mut order: Vec<u32> = Vec::new();
+    for s in labels.iter().flatten() {
+        if in_room && room.contains(s) && !order.contains(s) {
+            order.push(*s);
+        }
+    }
+    labels
+        .iter()
+        .map(|l| {
+            l.map(|s| match order.iter().position(|&o| o == s) {
+                Some(i) => i as u32,
+                None => ME,
+            })
+        })
+        .collect()
+}
+
+/// Speaker numbers moved up by `base`.
+pub fn offset(labels: &[Option<u32>], base: u32) -> Vec<Option<u32>> {
+    labels.iter().map(|l| l.map(|s| s + base)).collect()
+}
+
 /// Label every speech frame of a mic track with a speaker.
 pub fn speakers(wav: &Path, speech: &[bool], model: &Path) -> Result<Vec<Option<u32>>, String> {
     let wins = windows(speech);
@@ -613,5 +665,27 @@ mod tests {
             .unwrap();
         assert!(peak < 20, "peak in band {peak}");
         assert!(row[peak] > row[70] + 10.0);
+    }
+
+    #[test]
+    fn on_a_call_the_main_voice_is_me_and_clear_others_are_the_room() {
+        let l = |v: &[i64]| -> Vec<Option<u32>> {
+            v.iter().map(|&x| (x >= 0).then_some(x as u32)).collect()
+        };
+        // Mostly voice 1 (me), voice 0 a fair share, voice 2 a stray bit.
+        let mut labels = l(&[0; 30]);
+        labels.extend(l(&[1; 100]));
+        labels.extend(l(&[2; 3]));
+        labels.extend(l(&[-1; 5]));
+        let got = others_in_room(&labels);
+        assert_eq!(got[0], Some(0));
+        assert_eq!(got[40], Some(ME));
+        assert_eq!(got[131], Some(ME));
+        assert_eq!(got[134], None);
+        // Just me, split in two by accident: all mine.
+        let mut labels = l(&[0; 95]);
+        labels.extend(l(&[1; 8]));
+        assert!(others_in_room(&labels).iter().all(|s| *s == Some(ME)));
+        assert_eq!(offset(&l(&[0, -1, 2]), 100), l(&[100, -1, 102]));
     }
 }

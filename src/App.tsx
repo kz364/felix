@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useState,
@@ -28,7 +29,13 @@ import {
   type OnboardingPreviewStep,
 } from "./components/settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import {
+  isSettingsSection,
+  Sidebar,
+  SidebarSection,
+  SECTIONS_CONFIG,
+} from "./components/Sidebar";
+import { OPEN_SECTION_EVENT } from "./lib/navigation";
 import { WhatsNewGate } from "./components/whats-new";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -36,6 +43,23 @@ import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "model" | "guide" | "done";
+
+/** The page the window was last on, so it reopens there. */
+const LAST_SECTION_KEY = "felix.section";
+/** Where the window opens the first time: past dictations. */
+const HOME: SidebarSection = "history";
+
+const isSection = (value: unknown): value is SidebarSection =>
+  typeof value === "string" && value in SECTIONS_CONFIG;
+
+const storedSection = (): SidebarSection => {
+  try {
+    const value = localStorage.getItem(LAST_SECTION_KEY);
+    return isSection(value) ? value : HOME;
+  } catch {
+    return HOME;
+  }
+};
 
 // Stable identity so preview effects do not re-run due to callback changes.
 const NOOP = () => {};
@@ -64,7 +88,26 @@ function App() {
   // (vs a new user who needs full onboarding including model selection)
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
-    useState<SidebarSection>("dictation");
+    useState<SidebarSection>(storedSection);
+  // The last page on each side, for Settings and Back.
+  const lastPage = useRef<Record<"app" | "settings", SidebarSection>>({
+    app: isSettingsSection(currentSection) ? HOME : currentSection,
+    settings: isSettingsSection(currentSection) ? currentSection : "dictation",
+  });
+  const goTo = useCallback((section: SidebarSection) => {
+    lastPage.current[isSettingsSection(section) ? "settings" : "app"] = section;
+    setCurrentSection(section);
+    try {
+      localStorage.setItem(LAST_SECTION_KEY, section);
+    } catch {
+      // Only a convenience.
+    }
+  }, []);
+  const openSettings = useCallback(
+    () => goTo(lastPage.current.settings),
+    [goTo],
+  );
+  const closeSettings = useCallback(() => goTo(lastPage.current.app), [goTo]);
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -179,6 +222,35 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, [t]);
+
+  // A notice's button can open a settings page ("Choose microphone"), and
+  // so can a link on a page (Meetings → its settings).
+  useEffect(() => {
+    const unlisten = listen<string>("open-section", (event) => {
+      if (isSection(event.payload)) goTo(event.payload);
+    });
+    const onOpen = (e: Event) => {
+      const section = (e as CustomEvent<unknown>).detail;
+      if (isSection(section)) goTo(section);
+    };
+    window.addEventListener(OPEN_SECTION_EVENT, onOpen);
+    return () => {
+      unlisten.then((fn) => fn());
+      window.removeEventListener(OPEN_SECTION_EVENT, onOpen);
+    };
+  }, [goTo]);
+
+  // ⌘, opens settings, as in any Mac app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        openSettings();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openSettings]);
 
   // Listen for paste failures and show a toast.
   // The technical error detail is logged to handy.log on the Rust side
@@ -377,7 +449,9 @@ function App() {
         <div className="flex-1 flex overflow-hidden">
           <Sidebar
             activeSection={currentSection}
-            onSectionChange={setCurrentSection}
+            onSectionChange={goTo}
+            onOpenSettings={openSettings}
+            onCloseSettings={closeSettings}
           />
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Scrollable page */}

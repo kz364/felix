@@ -86,23 +86,65 @@ pub struct MeetingInfo {
     /// Names the user gave to told-apart voices (in person), by number.
     #[serde(default)]
     pub speakers: BTreeMap<u32, String>,
+    /// Where the Mac played sound when recording started; headphones mean
+    /// the call can't echo into the mic.
+    #[serde(default)]
+    pub output_device: Option<String>,
+    /// The call app that held the mic (bundle id), for speaker names.
+    #[serde(default)]
+    pub call_app: Option<String>,
+    /// Offsets into the recording (ms) where it was resumed after a stop.
+    #[serde(default)]
+    pub resumed_at_ms: Vec<u64>,
+    /// Names the call app showed for the other side's voices, by number;
+    /// the user's own names in `speakers` win.
+    #[serde(default)]
+    pub app_speakers: BTreeMap<u32, String>,
+    /// Whether it's a call was worked out rather than chosen (`detect`):
+    /// it records like a call, and `mode` is settled when it stops.
+    #[serde(default)]
+    pub mode_auto: bool,
+}
+
+/// The name of a told-apart voice nobody named: the other side of a call
+/// is numbered from [`super::pipeline::SYSTEM_SPEAKERS`].
+pub fn default_speaker_name(n: u32) -> String {
+    if n >= super::pipeline::SYSTEM_SPEAKERS {
+        format!("Them {}", n - super::pipeline::SYSTEM_SPEAKERS + 1)
+    } else {
+        format!("Speaker {}", n + 1)
+    }
 }
 
 impl MeetingInfo {
-    /// Who a paragraph is, for the summary and the Markdown: "Me"/"Them" on
-    /// a call, the speaker's name or number in person, or nobody.
+    /// Who a paragraph is, for the summary and the Markdown: a name the user
+    /// (or the call app) gave, otherwise "Me"/"Them 2"/"Speaker 3".
     pub fn speaker_label(&self, p: &Paragraph) -> Option<String> {
+        if let Some(name) = p
+            .speaker
+            .and_then(|n| self.speakers.get(&n).or_else(|| self.app_speakers.get(&n)))
+        {
+            return Some(name.clone());
+        }
         match (self.mode, p.source, p.speaker) {
-            (MeetingMode::Call, Source::Mic, _) => Some("Me".into()),
-            (MeetingMode::Call, Source::System, _) => Some("Them".into()),
-            (_, _, Some(n)) => Some(
-                self.speakers
-                    .get(&n)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Speaker {}", n + 1)),
-            ),
+            (MeetingMode::Call, Source::Mic, None) => Some("Me".into()),
+            (MeetingMode::Call, Source::System, None) => Some("Them".into()),
+            (_, _, Some(n)) => Some(default_speaker_name(n)),
             _ => None,
         }
+    }
+
+    /// Everyone heard, as labelled in the transcript, in order of first word.
+    pub fn participants(&self, paragraphs: &[Paragraph]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for p in paragraphs {
+            if let Some(label) = self.speaker_label(p) {
+                if !out.contains(&label) {
+                    out.push(label);
+                }
+            }
+        }
+        out
     }
 
     pub fn display_title(&self) -> String {
@@ -141,6 +183,9 @@ pub struct MeetingState {
     pub recording: Option<MeetingInfo>,
     pub elapsed_ms: u64,
     pub transcribing: Option<TranscribeProgress>,
+    /// "What did I miss?" and "Suggest a question" work (a cloud
+    /// transcriber keeps a live transcript).
+    pub live: bool,
 }
 
 /// A meeting's transcript as the page shows it.
@@ -154,7 +199,10 @@ pub struct MeetingTranscript {
 struct Active {
     info: MeetingInfo,
     recording: Recording,
-    ticker: Arc<AtomicBool>,
+    /// Stops the menu bar timer, the speaker-name reader and the live
+    /// transcript.
+    helpers: Arc<AtomicBool>,
+    _awake: super::awake::KeepAwake,
 }
 
 pub struct MeetingManager {
@@ -316,6 +364,9 @@ impl MeetingManager {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
+            live: active.is_some()
+                && super::remote::Remote::from_settings(&crate::settings::get_settings(&self.app))
+                    .is_ok_and(|r| r.is_some()),
         }
     }
 
@@ -324,7 +375,21 @@ impl MeetingManager {
         crate::tray::sync_tray(&self.app);
     }
 
-    pub fn start(&self, mode: MeetingMode) -> Result<MeetingInfo, String> {
+    /// Start recording; `None` works out whether it's a call.
+    pub fn start(&self, mode: Option<MeetingMode>) -> Result<MeetingInfo, String> {
+        self.begin(mode, None)
+    }
+
+    /// Record a call the watcher noticed, reading names from its app.
+    pub fn start_call(&self, bundle_id: &str) -> Result<MeetingInfo, String> {
+        self.begin(Some(MeetingMode::Call), Some(bundle_id.to_string()))
+    }
+
+    fn begin(
+        &self,
+        chosen: Option<MeetingMode>,
+        call_app: Option<String>,
+    ) -> Result<MeetingInfo, String> {
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = active.as_ref() {
             return Ok(a.info.clone());
@@ -332,11 +397,17 @@ impl MeetingManager {
         let started_at = now_ms();
         let id = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let dir = self.meetings_dir()?.join(&id);
+        // Not chosen: record like a call (both sides) and decide on stopping.
+        let mode = chosen.unwrap_or(MeetingMode::Call);
+        let call_app = match chosen {
+            Some(_) => call_app,
+            None => super::detect::start(&id).map(|a| a.bundle_id.to_string()),
+        };
         let mic = self
             .app
             .try_state::<Arc<AudioRecordingManager>>()
             .and_then(|m| m.meeting_microphone());
-        let recording = Recording::start(&dir, mode, mic)?;
+        let recording = Recording::start(&dir, mode, mic, false)?;
         let info = MeetingInfo {
             id,
             mode,
@@ -353,33 +424,133 @@ impl MeetingManager {
             summary: None,
             summary_error: None,
             speakers: BTreeMap::new(),
+            output_device: output_device_name(),
+            call_app,
+            resumed_at_ms: vec![],
+            app_speakers: BTreeMap::new(),
+            mode_auto: chosen.is_none(),
         };
         write_info(&dir, &info);
         log::info!("Meeting {} started ({:?})", info.id, mode);
 
         let mut settings = crate::settings::get_settings(&self.app);
-        if settings.meeting_mode != mode {
-            settings.meeting_mode = mode;
-            crate::settings::write_settings(&self.app, settings);
+        // Remember the choice for the shortcut and the tray, except the
+        // watcher's "Record this call?", which isn't one.
+        if info.call_app.is_none() || chosen.is_none() {
+            let detect = chosen.is_none();
+            let mode = chosen.unwrap_or(settings.meeting_mode);
+            if settings.meeting_detect_mode != detect || settings.meeting_mode != mode {
+                settings.meeting_detect_mode = detect;
+                settings.meeting_mode = mode;
+                crate::settings::write_settings(&self.app, settings);
+            }
         }
-
-        let ticker = Arc::new(AtomicBool::new(false));
-        spawn_menu_bar_timer(&self.app, ticker.clone());
-        *active = Some(Active {
-            info: info.clone(),
-            recording,
-            ticker,
-        });
+        self.activate(&mut active, info.clone(), recording);
         drop(active);
         self.changed();
+        crate::meeting_panel::show(&self.app);
+        super::watch::started(&self.app, &info);
         Ok(info)
+    }
+
+    /// Carry on recording into a meeting that stopped (the Mac slept, the
+    /// length limit, or the user stopped too soon). Its transcript is made
+    /// again from the whole recording afterwards.
+    pub fn resume(&self, id: &str) -> Result<MeetingInfo, String> {
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        if active.is_some() {
+            return Err("Stop the current recording first".into());
+        }
+        if self.is_processing(id) {
+            return Err("This meeting is being processed; try again when it's done".into());
+        }
+        let dir = self.dir_of(id)?;
+        let mut info = read_info(&dir).ok_or("The meeting isn't there any more")?;
+        let mic = self
+            .app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .and_then(|m| m.meeting_microphone());
+        // Still to be worked out: record both sides again.
+        if info.mode_auto {
+            info.mode = MeetingMode::Call;
+            super::detect::start(id);
+        }
+        let recording = Recording::start(&dir, info.mode, mic, true)?;
+        for file in [transcript::FILE, summary::CLEANED_FILE, super::live::FILE] {
+            let _ = std::fs::remove_file(dir.join(file));
+        }
+        info.resumed_at_ms
+            .push(recording.elapsed().as_millis() as u64);
+        info.status = MeetingStatus::Recording;
+        info.ended_at = None;
+        info.transcript = None;
+        info.transcript_error = None;
+        info.system_error = recording.system_error.clone();
+        {
+            let _lock = self.meta_lock.lock().unwrap_or_else(|e| e.into_inner());
+            write_info(&dir, &info);
+        }
+        log::info!("Meeting {id} resumed");
+        self.activate(&mut active, info.clone(), recording);
+        drop(active);
+        self.changed();
+        crate::meeting_panel::show(&self.app);
+        Ok(info)
+    }
+
+    /// Start the helpers that run while recording and make it the active one.
+    fn activate(&self, active: &mut Option<Active>, info: MeetingInfo, recording: Recording) {
+        let helpers = Arc::new(AtomicBool::new(false));
+        spawn_menu_bar_timer(&self.app, helpers.clone(), recording.elapsed());
+        if info.mode == MeetingMode::Call {
+            super::active_speaker::spawn_watcher(
+                &self.app,
+                &recording.dir,
+                info.call_app.clone(),
+                helpers.clone(),
+            );
+        }
+        super::live::spawn(&self.app, &recording.dir, info.mode, helpers.clone());
+        *active = Some(Active {
+            info,
+            recording,
+            helpers,
+            _awake: super::awake::KeepAwake::new("Recording a meeting"),
+        });
+    }
+
+    fn is_processing(&self, id: &str) -> bool {
+        self.progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|p| p.id == id)
+    }
+
+    /// How loud the recording is right now (0 to 1), while one is going.
+    pub fn level(&self) -> Option<f32> {
+        self.with_recording(|r, _| r.level())
+    }
+
+    /// How far into the recording it is, while one is in progress.
+    pub fn elapsed_ms(&self) -> Option<u64> {
+        self.with_recording(|r, _| r.elapsed().as_millis() as u64)
+    }
+
+    /// Look at the recording in progress.
+    pub(super) fn with_recording<R>(
+        &self,
+        f: impl FnOnce(&Recording, &MeetingInfo) -> R,
+    ) -> Option<R> {
+        let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        active.as_ref().map(|a| f(&a.recording, &a.info))
     }
 
     pub fn stop(&self) -> Result<Option<MeetingInfo>, String> {
         let Some(active) = self.active.lock().unwrap_or_else(|e| e.into_inner()).take() else {
             return Ok(None);
         };
-        active.ticker.store(true, Ordering::Release);
+        active.helpers.store(true, Ordering::Release);
         let dir = active.recording.dir.clone();
         // Picks up a title set while recording.
         let mut info = read_info(&dir).unwrap_or(active.info);
@@ -388,6 +559,10 @@ impl MeetingManager {
         info.status = MeetingStatus::Recorded;
         let outcome = match result {
             Ok(tracks) => {
+                if info.mode_auto {
+                    let seconds = tracks.iter().map(|t| t.seconds).fold(0.0, f64::max);
+                    info.mode = super::detect::finish(&info.id, &dir, seconds);
+                }
                 info.tracks = tracks;
                 Ok(Some(info.clone()))
             }
@@ -402,9 +577,11 @@ impl MeetingManager {
         }
         log::info!("Meeting {} stopped: {:?}", info.id, info.tracks);
         self.changed();
+        crate::meeting_panel::hide(&self.app);
         if !info.tracks.is_empty() {
             self.queue(Job::Transcribe(info.id.clone()));
         }
+        super::watch::stopped(&self.app, &info);
         outcome
     }
 
@@ -413,16 +590,19 @@ impl MeetingManager {
         if self.is_recording() {
             self.stop().map(|_| ())
         } else {
-            let mode = crate::settings::get_settings(&self.app).meeting_mode;
+            let settings = crate::settings::get_settings(&self.app);
+            let mode = (!settings.meeting_detect_mode).then_some(settings.meeting_mode);
             self.start(mode).map(|_| ())
         }
     }
 }
 
 /// Show "● 12:34" next to the tray icon until `stop` is set.
-fn spawn_menu_bar_timer(app: &AppHandle, stop: Arc<AtomicBool>) {
+fn spawn_menu_bar_timer(app: &AppHandle, stop: Arc<AtomicBool>, already: Duration) {
     let app = app.clone();
-    let started = std::time::Instant::now();
+    let started = std::time::Instant::now()
+        .checked_sub(already)
+        .unwrap_or_else(std::time::Instant::now);
     std::thread::spawn(move || {
         let set_title = |title: Option<String>| {
             let app2 = app.clone();
@@ -464,7 +644,10 @@ pub fn toggle_in_background(app: &AppHandle) {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_meeting(app: AppHandle, mode: MeetingMode) -> Result<MeetingInfo, String> {
+pub async fn start_meeting(
+    app: AppHandle,
+    mode: Option<MeetingMode>,
+) -> Result<MeetingInfo, String> {
     // Async so opening the devices doesn't block the main thread.
     app.state::<Arc<MeetingManager>>().start(mode)
 }
@@ -528,10 +711,69 @@ pub fn get_meeting_transcript(
     }))
 }
 
-/// A transcript's paragraphs, with the cleaned-up text where there is one.
+/// The user's own fixes to a transcript, by [`summary::paragraph_key`].
+/// Kept apart from the transcript so they survive cleanup and transcribing
+/// again.
+pub(super) const EDITS_FILE: &str = "edits.json";
+
+/// A transcript's paragraphs, with the cleaned-up text where there is one
+/// and the user's edits over that.
 pub(super) fn paragraphs_of(dir: &Path, t: &transcript::Transcript) -> Vec<Paragraph> {
     let cleaned: Option<summary::Cleaned> = summary::load_json(dir, summary::CLEANED_FILE);
-    summary::apply_cleaned(transcript::paragraphs(&t.segments), cleaned.as_ref())
+    let edits: BTreeMap<String, String> = summary::load_json(dir, EDITS_FILE).unwrap_or_default();
+    apply_edits(
+        summary::apply_cleaned(transcript::paragraphs(&t.segments), cleaned.as_ref()),
+        &edits,
+    )
+}
+
+fn apply_edits(mut paragraphs: Vec<Paragraph>, edits: &BTreeMap<String, String>) -> Vec<Paragraph> {
+    for p in &mut paragraphs {
+        if let Some(text) = edits.get(&summary::paragraph_key(p)) {
+            if *text != p.text {
+                let before = std::mem::replace(&mut p.text, text.clone());
+                p.raw.get_or_insert(before);
+            }
+        }
+    }
+    paragraphs
+}
+
+/// Fix a paragraph of the transcript. The fix is kept when the transcript
+/// is cleaned up or made again, and names in it are learned like dictation
+/// fixes.
+#[tauri::command]
+#[specta::specta]
+pub async fn edit_meeting_paragraph(
+    app: AppHandle,
+    id: String,
+    source: Source,
+    start_ms: u64,
+    text: String,
+) -> Result<(), String> {
+    let dir = meeting_dir(&app, &id)?;
+    let t = pipeline::load(&dir).ok_or("The meeting isn't transcribed yet")?;
+    let paragraphs = paragraphs_of(&dir, &t);
+    let p = paragraphs
+        .iter()
+        .find(|p| p.source == source && p.start_ms == start_ms)
+        .ok_or("That part of the transcript isn't there any more")?;
+    let key = summary::paragraph_key(p);
+    let before = p.text.clone();
+    let text = text.trim().to_string();
+    let mut edits: BTreeMap<String, String> =
+        summary::load_json(&dir, EDITS_FILE).unwrap_or_default();
+    if text.is_empty() || Some(&text) == p.raw.as_ref() {
+        edits.remove(&key);
+    } else {
+        edits.insert(key, text.clone());
+    }
+    summary::save_json(&dir, EDITS_FILE, &edits)?;
+    let _ = app.emit("meetings-changed", ());
+    if !text.is_empty() && text != before && crate::settings::get_settings(&app).learn_from_edits {
+        crate::edit_learning::learn_from(&app, &before, &text).await;
+    }
+    Ok(())
 }
 
 /// The summary, if one has been written.
@@ -585,6 +827,31 @@ pub fn meeting_markdown(app: AppHandle, id: String) -> Result<String, String> {
     ))
 }
 
+fn output_device_name() -> Option<String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    cpal::default_host()
+        .default_output_device()
+        .and_then(|d| d.name().ok())
+}
+
+/// Every name given to a voice, the user's first.
+fn named_speakers(info: &MeetingInfo) -> Vec<String> {
+    let mut ids: Vec<&u32> = info.speakers.keys().collect();
+    ids.extend(
+        info.app_speakers
+            .keys()
+            .filter(|k| !info.speakers.contains_key(k)),
+    );
+    let mut out: Vec<String> = Vec::new();
+    for id in ids {
+        let name = info.speakers.get(id).or_else(|| info.app_speakers.get(id));
+        if let Some(name) = name.filter(|n| !out.contains(n)) {
+            out.push(name.clone());
+        }
+    }
+    out
+}
+
 /// "Thu 24 Sep 2026, 14:32 · 42:10 · Me, Them".
 pub(super) fn meta_line(info: &MeetingInfo) -> String {
     let started = chrono::DateTime::from_timestamp_millis(info.started_at)
@@ -595,13 +862,26 @@ pub(super) fn meta_line(info: &MeetingInfo) -> String {
         })
         .unwrap_or_default();
     let mut parts = vec![started];
-    if let Some(end) = info.ended_at {
+    let recorded = info
+        .tracks
+        .iter()
+        .map(|t| t.seconds)
+        .fold(0.0_f64, f64::max);
+    if recorded > 0.0 {
+        parts.push(format_elapsed(Duration::from_secs_f64(recorded)));
+    } else if let Some(end) = info.ended_at {
         parts.push(format_elapsed(Duration::from_millis(
             (end - info.started_at).max(0) as u64,
         )));
     }
     match info.mode {
-        MeetingMode::Call => parts.push("Me, Them".into()),
+        MeetingMode::Call if named_speakers(info).is_empty() => parts.push("Me, Them".into()),
+        MeetingMode::Call => parts.push(
+            std::iter::once("Me".to_string())
+                .chain(named_speakers(info))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
         MeetingMode::InPerson if !info.speakers.is_empty() => parts.push(
             info.speakers
                 .values()
@@ -665,6 +945,48 @@ pub fn retranscribe_meeting(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Carry on recording into a stopped meeting.
+#[tauri::command]
+#[specta::specta]
+pub async fn resume_meeting(app: AppHandle, id: String) -> Result<MeetingInfo, String> {
+    app.state::<Arc<MeetingManager>>().resume(&id)
+}
+
+/// Move a meeting's folder to the Trash.
+#[tauri::command]
+#[specta::specta]
+pub fn delete_meeting(app: AppHandle, id: String) -> Result<(), String> {
+    let dir = meeting_dir(&app, &id)?;
+    let manager = app.state::<Arc<MeetingManager>>();
+    if manager
+        .with_recording(|_, info| info.id == id)
+        .unwrap_or(false)
+    {
+        return Err("Stop the recording first".into());
+    }
+    if manager.is_processing(&id) {
+        return Err("This meeting is being processed; try again when it's done".into());
+    }
+    trash(&dir)?;
+    log::info!("Meeting {id} moved to the Trash");
+    let _ = app.emit("meetings-changed", ());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn trash(path: &Path) -> Result<(), String> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| format!("Couldn't move the meeting to the Trash: {e}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash(path: &Path) -> Result<(), String> {
+    std::fs::remove_dir_all(path).map_err(|e| format!("Couldn't delete the meeting: {e}"))
+}
+
 /// Transcribe a meeting that failed or was recorded before transcription.
 #[tauri::command]
 #[specta::specta]
@@ -699,9 +1021,19 @@ pub fn save_meeting_notes(app: AppHandle, id: String, notes: String) -> Result<(
         return Err("The meeting isn't there any more".into());
     }
     let tmp = dir.join(format!("{NOTES_FILE}.tmp"));
-    std::fs::write(&tmp, notes)
+    std::fs::write(&tmp, &notes)
         .and_then(|_| std::fs::rename(&tmp, dir.join(NOTES_FILE)))
-        .map_err(|e| format!("Couldn't save the notes: {e}"))
+        .map_err(|e| format!("Couldn't save the notes: {e}"))?;
+    // The notes may be open in the side panel and the Meetings page at once.
+    let _ = app.emit("meeting-notes-changed", MeetingNotes { id, notes });
+    Ok(())
+}
+
+/// The notes of a meeting, when they're saved.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct MeetingNotes {
+    pub id: String,
+    pub notes: String,
 }
 
 #[tauri::command]
@@ -768,6 +1100,11 @@ pub struct MeetingSettingsUpdate {
     pub input_boost_db: Option<f32>,
     pub transcriber: Option<super::MeetingTranscriber>,
     pub diarize: Option<bool>,
+    pub detect_calls: Option<bool>,
+    pub auto_stop: Option<bool>,
+    pub max_hours: Option<u32>,
+    pub hide_from_screen_share: Option<bool>,
+    pub panel: Option<bool>,
 }
 
 #[tauri::command]
@@ -798,7 +1135,26 @@ pub fn change_meeting_settings(
     if let Some(v) = update.diarize {
         settings.meeting_diarize = v;
     }
+    if let Some(v) = update.detect_calls {
+        settings.meeting_detect_calls = v;
+    }
+    if let Some(v) = update.auto_stop {
+        settings.meeting_auto_stop = v;
+    }
+    if let Some(v) = update.max_hours {
+        settings.meeting_max_hours = v.min(24);
+    }
+    if let Some(v) = update.panel {
+        settings.meeting_panel = v;
+    }
+    let hide = update.hide_from_screen_share;
+    if let Some(v) = hide {
+        settings.hide_from_screen_share = v;
+    }
     crate::settings::write_settings(&app, settings);
+    if let Some(v) = hide {
+        super::watch::hide_from_screen_share(&app, v);
+    }
     Ok(())
 }
 

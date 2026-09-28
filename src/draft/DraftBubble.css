@@ -1,0 +1,102 @@
+@import "../styles/theme.css";
+
+/* Styled as a piece of the recording pill (RecordingOverlay.css): the same
+   near-opaque surface, hairline and live-text type, with the pill's accent
+   caret as the one mark that it's still listening (docs/DESIGN.md: the
+   accent marks state, never decoration). Colours come from theme.css, so it
+   follows light/dark and the app's theme setting. */
+:root {
+  --b-surface: color-mix(in srgb, var(--color-background) 98%, transparent);
+  --b-border: color-mix(in srgb, var(--color-stone) 22%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --b-border: color-mix(in srgb, var(--color-text) 12%, transparent);
+  }
+}
+:root[data-theme="dark"] {
+  --b-border: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+
+/* Nothing here takes the mouse: the window is click-through too. */
+* {
+  pointer-events: none;
+  user-select: none;
+}
+
+.draft-mover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* The pill's glide: quick, settling, no overshoot. */
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.draft-anchor {
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.draft-instant {
+  transition: none;
+}
+
+.draft-bubble {
+  max-width: 420px;
+  width: max-content;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  border-radius: 18px;
+  background: var(--b-surface);
+  border: 1px solid var(--b-border);
+  /* The pill sits on the screen edge and needs no shadow; this floats over
+     any app, so it gets the popover shadow to lift it off a matching
+     background. */
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  color: color-mix(in srgb, var(--color-text) 90%, transparent);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.35;
+  letter-spacing: -0.003em;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transform: scale(0.96);
+  transform-origin: center;
+  transition:
+    opacity 150ms ease-out,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The pill's blinking caret at the end of the text. */
+.draft-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.02em;
+  translate: 0 3px;
+  margin-left: 1px;
+  background: var(--color-accent);
+  border-radius: 2px;
+  animation: draft-caret-blink 1.05s steps(1) infinite;
+}
+@keyframes draft-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.draft-bubble.draft-shown {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-mover,
+  .draft-anchor,
+  .draft-bubble {
+    transition: none;
+  }
+  .draft-caret {
+    animation: none;
+  }
+}

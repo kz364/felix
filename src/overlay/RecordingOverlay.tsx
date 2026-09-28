@@ -13,7 +13,7 @@ import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 import { ResultCard } from "./ResultCard";
 import { AgentCard } from "./AgentCard";
-import type { AgentCard as AgentCardData } from "@/bindings";
+import type { AgentCard as AgentCardData, NoticeButton } from "@/bindings";
 
 /** `result-text` event payload (overlay.rs `ResultPopup`). */
 interface ResultPopup {
@@ -21,6 +21,10 @@ interface ResultPopup {
   /** Heading instead of "Nowhere to paste" (e.g. why the assistant failed). */
   title: string | null;
   timeout_ms: number;
+  /** Offer Copy (a dictation to rescue, not a notice). */
+  copy: boolean;
+  /** A notice's buttons (notices.rs). */
+  actions: NoticeButton[];
 }
 
 type OverlayState =
@@ -66,10 +70,14 @@ const RecordingOverlay: React.FC = () => {
     text: "",
     title: null,
     timeout_ms: 0,
+    copy: true,
+    actions: [],
   });
   const [resultSession, setResultSession] = useState(0);
   // Felix's computer task, shown while it works.
   const [agentCard, setAgentCard] = useState<AgentCardData | null>(null);
+  // The dictation is taking much longer than usual to transcribe or clean up.
+  const [slow, setSlow] = useState(false);
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -83,6 +91,9 @@ const RecordingOverlay: React.FC = () => {
     const setupEventListeners = async () => {
       const unlistenShow = await listen("show-overlay", async (event) => {
         const overlayState = event.payload as OverlayState;
+        if (overlayState === "recording" || overlayState === "streaming") {
+          setSlow(false);
+        }
         // Reset synchronously before settings I/O. A fast microphone can emit
         // recording-ready while the awaits below are in flight; resetting after
         // them would overwrite that event and leave the overlay stuck arming.
@@ -133,6 +144,8 @@ const RecordingOverlay: React.FC = () => {
         setAgentCard(event.payload),
       );
 
+      const unlistenSlow = await listen("processing-slow", () => setSlow(true));
+
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
         setCaptureReady(true);
@@ -166,6 +179,7 @@ const RecordingOverlay: React.FC = () => {
         unlistenResult();
         unlistenAgent();
         unlistenReady();
+        unlistenSlow();
         unlistenLevel();
         unlistenStream();
         unlistenPhase();
@@ -277,6 +291,8 @@ const RecordingOverlay: React.FC = () => {
           text={result.text}
           title={result.title}
           timeoutMs={result.timeout_ms}
+          showCopy={result.copy}
+          actions={result.actions}
           session={resultSession}
         />
       </div>
@@ -333,9 +349,11 @@ const RecordingOverlay: React.FC = () => {
           </div>
           {working
             ? workingRow(
-                workKind === "polishing"
-                  ? t("overlay.processing")
-                  : t("overlay.transcribing"),
+                slow
+                  ? t("overlay.slow")
+                  : workKind === "polishing"
+                    ? t("overlay.processing")
+                    : t("overlay.transcribing"),
                 true,
               )
             : listeningRow(open, true)}
@@ -352,9 +370,11 @@ const RecordingOverlay: React.FC = () => {
   const workLabel =
     state === "assistant"
       ? t("overlay.assistant")
-      : state === "processing"
-        ? t("overlay.processing")
-        : t("overlay.transcribing");
+      : slow
+        ? t("overlay.slow")
+        : state === "processing"
+          ? t("overlay.processing")
+          : t("overlay.transcribing");
 
   return (
     <div

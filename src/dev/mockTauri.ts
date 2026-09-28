@@ -149,6 +149,7 @@ const RESPONSES: Record<string, unknown> = {
   get_history_entries: { entries: HISTORY, has_more: false },
   learned_rules: {
     words: ["kubectl", "GitHub", "Supabase", "LLM"],
+    auto_learned: [],
     corrections: [
       { from: "cube cuddle", to: "kubectl" },
       { from: "super base", to: "Supabase" },
@@ -165,6 +166,24 @@ const RESPONSES: Record<string, unknown> = {
       },
     ],
     error: null,
+  },
+  report_mistake: {
+    applied: true,
+    proposal: {
+      id: "mock",
+      explanation:
+        "It heard “cube cuddle” for kubectl. Added a replacement and kubectl to the vocabulary.",
+      needs_code_change: false,
+      rules: "",
+      diff: [
+        { kind: "added", text: 'vocabulary = ["kubectl"]' },
+        { kind: "added", text: "[[replace]]" },
+        { kind: "added", text: 'from = "cube cuddle"' },
+        { kind: "added", text: 'to = "kubectl"' },
+      ],
+      tests: [],
+      error: null,
+    },
   },
   mistake_reports: [
     {

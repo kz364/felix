@@ -12,7 +12,13 @@ import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { CategoryCard } from "./CategoryCard";
 
-export const CATEGORIES: AppCategory[] = ["personal", "work", "email", "other"];
+export const CATEGORIES: AppCategory[] = [
+  "personal",
+  "work",
+  "email",
+  "coding",
+  "other",
+];
 
 /** Tone by app: which apps and sites count as personal, work or email. */
 export const StyleSettings: React.FC = () => {

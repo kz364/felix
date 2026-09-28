@@ -293,6 +293,36 @@ pub fn classify_target(bundle_id: &str, lazy_ax: bool, probe: &FocusProbe) -> Pa
 pub(crate) const TEXT_ROLES: &[&str] =
     &["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"];
 
+/// A rectangle on screen in points, top-left origin (as Accessibility and
+/// Tauri's logical positions both use on macOS).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScreenRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// Where typing goes in the focused field.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TypingSpot {
+    /// The text cursor itself.
+    Caret(ScreenRect),
+    /// Only the field is known (apps that don't report the cursor).
+    Field(ScreenRect),
+}
+
+/// Caret rectangles apps report that don't make sense: nothing, or the
+/// placeholder (0, 0) some Electron apps give.
+fn plausible_caret(r: ScreenRect) -> bool {
+    r.h > 2.0 && r.h < 200.0 && r.w < 400.0 && !(r.x == 0.0 && r.y == 0.0)
+}
+
+/// A field frame worth pointing at: not the whole window of a web view.
+fn plausible_field(r: ScreenRect) -> bool {
+    r.w > 10.0 && r.h > 8.0 && r.h < 400.0 && !(r.x == 0.0 && r.y == 0.0)
+}
+
 #[cfg(target_os = "macos")]
 mod ax {
     use super::FieldSnapshot;
@@ -304,6 +334,25 @@ mod ax {
     type AXError = i32;
     const AX_SUCCESS: AXError = 0;
     const AX_VALUE_CF_RANGE: u32 = 4;
+    const AX_VALUE_CG_POINT: u32 = 1;
+    const AX_VALUE_CG_SIZE: u32 = 2;
+    const AX_VALUE_CG_RECT: u32 = 3;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CGRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CGPair {
+        a: f64,
+        b: f64,
+    }
 
     #[repr(C)]
     #[derive(Default)]
@@ -323,6 +372,12 @@ mod ax {
         fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, seconds: f32) -> AXError;
         fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
         fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *mut c_void) -> bool;
+        fn AXUIElementCopyParameterizedAttributeValue(
+            element: AXUIElementRef,
+            attribute: CFStringRef,
+            parameter: CFTypeRef,
+            value: *mut CFTypeRef,
+        ) -> AXError;
         fn AXUIElementSetAttributeValue(
             element: AXUIElementRef,
             attribute: CFStringRef,
@@ -365,7 +420,7 @@ mod ax {
         }
     }
 
-    use super::{FocusProbe, TEXT_ROLES};
+    use super::{plausible_caret, plausible_field, FocusProbe, ScreenRect, TypingSpot, TEXT_ROLES};
 
     /// Snapshot the system-wide focused element if it is an editable text
     /// field. `None` for secure fields, non-text focus, or apps that don't
@@ -409,6 +464,111 @@ mod ax {
             value: value.encode_utf16().collect(),
             selection,
         })
+    }
+
+    fn bounds_for(element: AXUIElementRef, location: isize, length: isize) -> Option<ScreenRect> {
+        let range = CFRange { location, length };
+        // SAFETY: AXValueCreate copies the CFRange; the +1 result is released by Owned.
+        let param = Owned(unsafe {
+            AXValueCreate(AX_VALUE_CF_RANGE, &range as *const CFRange as *const c_void)
+        });
+        if param.0.is_null() {
+            return None;
+        }
+        let attribute = CFString::new("AXBoundsForRange");
+        let mut value: CFTypeRef = std::ptr::null();
+        // SAFETY: element and param are live; value receives a +1 reference.
+        let err = unsafe {
+            AXUIElementCopyParameterizedAttributeValue(
+                element,
+                attribute.as_concrete_TypeRef(),
+                param.0,
+                &mut value,
+            )
+        };
+        if err != AX_SUCCESS || value.is_null() {
+            return None;
+        }
+        let value = Owned(value);
+        let mut r = CGRect::default();
+        // SAFETY: AXValueGetValue writes a CGRect for the CGRect type.
+        let ok = unsafe {
+            AXValueGetValue(
+                value.0,
+                AX_VALUE_CG_RECT,
+                &mut r as *mut CGRect as *mut c_void,
+            )
+        };
+        ok.then_some(ScreenRect {
+            x: r.x,
+            y: r.y,
+            w: r.w,
+            h: r.h,
+        })
+    }
+
+    fn pair_attribute(element: AXUIElementRef, name: &str, kind: u32) -> Option<(f64, f64)> {
+        let value = copy_attribute(element, name)?;
+        let mut p = CGPair::default();
+        // SAFETY: CGPoint and CGSize are both two f64s.
+        let ok = unsafe { AXValueGetValue(value.0, kind, &mut p as *mut CGPair as *mut c_void) };
+        ok.then_some((p.a, p.b))
+    }
+
+    /// Where the text cursor of the focused field is, or at least the field.
+    pub fn typing_spot() -> Option<TypingSpot> {
+        // SAFETY: creates a +1 system-wide element, released by Owned.
+        let system = Owned(unsafe { AXUIElementCreateSystemWide() });
+        unsafe { AXUIElementSetMessagingTimeout(system.0, 0.1) };
+        let focused = copy_attribute(system.0, "AXFocusedUIElement")?;
+        unsafe { AXUIElementSetMessagingTimeout(focused.0, 0.1) };
+        let role = string_attribute(focused.0, "AXRole").unwrap_or_default();
+        let subrole = string_attribute(focused.0, "AXSubrole").unwrap_or_default();
+        if subrole == "AXSecureTextField" || role == "AXSecureTextField" {
+            return None;
+        }
+        let editable = TEXT_ROLES.contains(&role.as_str())
+            || bool_attribute(focused.0, "AXEditable").unwrap_or(false);
+        if !editable {
+            return None;
+        }
+        let selection = copy_attribute(focused.0, "AXSelectedTextRange").and_then(|range| {
+            let mut r = CFRange::default();
+            // SAFETY: AXValueGetValue writes a CFRange for the CFRange type.
+            let ok = unsafe {
+                AXValueGetValue(
+                    range.0,
+                    AX_VALUE_CF_RANGE,
+                    &mut r as *mut CFRange as *mut c_void,
+                )
+            };
+            (ok && r.location >= 0).then_some(r)
+        });
+        if let Some(sel) = selection {
+            let at = sel.location + sel.length;
+            // An empty range often has no bounds; the character before the
+            // cursor does, and the cursor sits at its right edge.
+            let caret = bounds_for(focused.0, at, 0)
+                .filter(|r| plausible_caret(*r))
+                .or_else(|| {
+                    (at > 0)
+                        .then(|| bounds_for(focused.0, at - 1, 1))
+                        .flatten()
+                        .filter(|r| plausible_caret(*r))
+                        .map(|r| ScreenRect {
+                            x: r.x + r.w,
+                            w: 1.0,
+                            ..r
+                        })
+                });
+            if let Some(caret) = caret {
+                return Some(TypingSpot::Caret(caret));
+            }
+        }
+        let (x, y) = pair_attribute(focused.0, "AXPosition", AX_VALUE_CG_POINT)?;
+        let (w, h) = pair_attribute(focused.0, "AXSize", AX_VALUE_CG_SIZE)?;
+        let field = ScreenRect { x, y, w, h };
+        plausible_field(field).then_some(TypingSpot::Field(field))
     }
 
     /// Select `(location, length)` (UTF-16 units) in the focused field.
@@ -495,6 +655,18 @@ pub fn focused_field() -> Option<FieldSnapshot> {
     #[cfg(target_os = "macos")]
     {
         ax::focused_field()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Where the user is typing, for drawing next to it.
+pub fn typing_spot() -> Option<TypingSpot> {
+    #[cfg(target_os = "macos")]
+    {
+        ax::typing_spot()
     }
     #[cfg(not(target_os = "macos"))]
     {

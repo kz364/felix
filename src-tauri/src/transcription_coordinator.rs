@@ -691,6 +691,12 @@ fn start(app: &AppHandle, binding_id: &str, hotkey_string: &str) -> bool {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return false;
     };
+    // A meeting is recording: dictating would put the user's dictation in
+    // its transcript and share the mic, so dictation waits until it stops.
+    if meeting_recording(app) {
+        tell_dictation_is_off(app);
+        return false;
+    }
     action.start(app, binding_id, hotkey_string);
     let recording = app
         .try_state::<Arc<AudioRecordingManager>>()
@@ -699,6 +705,27 @@ fn start(app: &AppHandle, binding_id: &str, hotkey_string: &str) -> bool {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
     recording
+}
+
+fn meeting_recording(app: &AppHandle) -> bool {
+    app.try_state::<Arc<crate::meetings::manager::MeetingManager>>()
+        .is_some_and(|m| m.is_recording())
+}
+
+fn tell_dictation_is_off(app: &AppHandle) {
+    use crate::notices::{self, Action, Notice};
+    notices::show(
+        app,
+        Notice::new(
+            "dictation_in_meeting",
+            "Dictation is off during meetings",
+            "So your dictation doesn't end up in the meeting's transcript. Stop the meeting to dictate again.",
+        )
+        .action(Action::new("Stop meeting", |app| {
+            crate::meetings::manager::toggle_in_background(app)
+        }))
+        .seconds(6),
+    );
 }
 
 fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {

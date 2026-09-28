@@ -235,11 +235,19 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
         } else {
             info!("[reliable-paste] settling: no read within timeout, restoring anyway");
         }
+        // Nothing read it: the text went nowhere, so show it rather than
+        // lose it once the old clipboard is back.
+        let not_taken = (!receipt_seen && !ownership_lost)
+            .then(|| pending.lock().ok().map(|p| p.transcript.clone()))
+            .flatten();
 
         let pending_for_finish = pending.clone();
         let app_for_finish = app_handle.clone();
         let _ = app_handle.run_on_main_thread(move || {
             settle(&pending_for_finish, &app_for_finish, None);
+            if let Some(text) = not_taken {
+                crate::nudges::paste_not_taken(&app_for_finish, text);
+            }
             if let Ok(mut slot) = PENDING.lock() {
                 let is_us = slot
                     .as_ref()

@@ -516,6 +516,42 @@ async changeFocusMessageBoxSetting(enabled: boolean) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+async changeLearnFromEditsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_learn_from_edits_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A button on the notice card was clicked.
+ */
+async noticeAction(id: string) : Promise<void> {
+    await TAURI_INVOKE("notice_action", { id });
+},
+/**
+ * Show the tips and warnings the user turned off again.
+ */
+async unmuteNotices() : Promise<void> {
+    await TAURI_INVOKE("unmute_notices");
+},
+async changeStackedMessagesSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_stacked_messages_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTagAgentFilesSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tag_agent_files_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Where dictation is transcribed: "local" or a cloud provider ("openai",
  * "groq"). Switching to the cloud frees the local model's memory.
@@ -534,18 +570,6 @@ async rulesFilePath() : Promise<string | null> {
 async openRulesFile() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_rules_file") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Ask a remote model for the rules change that fixes `report`, given the
- * last few dictations. Nothing is saved until `save_rules`.
- */
-async proposeRules(report: string) : Promise<Result<Proposal, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("propose_rules", { report }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -613,6 +637,21 @@ async exportRules(path: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Fix a typed report the way a spoken one is fixed: propose rules and, if
+ * they're safe (they parse, change something and pass every test), apply
+ * them straight away so the user can move on; Undo takes them back.
+ * Anything else comes back unapplied for the user to look at. Runs to the
+ * end even if the page that asked is closed.
+ */
+async reportMistake(report: string) : Promise<Result<ReportOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("report_mistake", { report }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async liveDraftStatus() : Promise<LiveDraftStatus> {
     return await TAURI_INVOKE("live_draft_status");
 },
@@ -637,6 +676,38 @@ async openInputSources() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Choose where the draft shows; the in-field draft needs Felix Draft.
+ */
+async setLiveDraftStyle(style: LiveDraftStyle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_live_draft_style", { style }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getMeetingPanelState() : Promise<MeetingPanelState> {
+    return await TAURI_INVOKE("get_meeting_panel_state");
+},
+/**
+ * Fold the panel into the tab on the edge, or open it again.
+ */
+async setMeetingPanelExpanded(expanded: boolean) : Promise<void> {
+    await TAURI_INVOKE("set_meeting_panel_expanded", { expanded });
+},
+/**
+ * How loud the meeting is right now, 0 to 1, for the tab's waves.
+ */
+async meetingLevel() : Promise<number> {
+    return await TAURI_INVOKE("meeting_level");
+},
+/**
+ * Open the Meetings page in the settings window.
+ */
+async openMeetingsPage() : Promise<void> {
+    await TAURI_INVOKE("open_meetings_page");
 },
 /**
  * Past mistake reports, newest first.
@@ -727,7 +798,7 @@ async changeAgentActionsSetting(enabled: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
-async startMeeting(mode: MeetingMode) : Promise<Result<MeetingInfo, string>> {
+async startMeeting(mode: MeetingMode | null) : Promise<Result<MeetingInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("start_meeting", { mode }) };
 } catch (e) {
@@ -891,6 +962,77 @@ async changeMeetingSettings(update: MeetingSettingsUpdate) : Promise<Result<null
  */
 async defaultMeetingSummaryPrompt() : Promise<string> {
     return await TAURI_INVOKE("default_meeting_summary_prompt");
+},
+/**
+ * Carry on recording into a stopped meeting.
+ */
+async resumeMeeting(id: string) : Promise<Result<MeetingInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Move a meeting's folder to the Trash.
+ */
+async deleteMeeting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fix a paragraph of the transcript. The fix is kept when the transcript
+ * is cleaned up or made again, and names in it are learned like dictation
+ * fixes.
+ */
+async editMeetingParagraph(id: string, source: Source, startMs: number, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("edit_meeting_paragraph", { id, source, startMs, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A quick answer from the live transcript of the meeting being recorded.
+ * Empty when too little has been said yet.
+ */
+async askLive(question: LiveQuestion) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ask_live", { question }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ask about a finished meeting. Asking for a change to the notes ("add
+ * the budget to the action items") rewrites the summary; anything else
+ * leaves it alone.
+ */
+async askMeeting(id: string, question: string) : Promise<Result<MeetingAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ask_meeting", { id, question }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A follow-up email to the others, from the user.
+ */
+async draftFollowUpEmail(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("draft_follow_up_email", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async changeAgentAutoSendSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -1774,7 +1916,12 @@ export type AgentStatus = "working" | "done" |
 /**
  * Destination category of the app or website being dictated into.
  */
-export type AppCategory = "personal" | "work" | "email" | "other"
+export type AppCategory = "personal" | "work" | "email" | 
+/**
+ * Coding agents and terminals (Claude, Codex, Cursor…), where a prompt
+ * is read over before it's sent.
+ */
+"coding" | "other"
 /**
  * Assigns an app or website to a category.
  */
@@ -1913,6 +2060,11 @@ assistant_enabled?: boolean; assistant_name?: string;
  */
 meeting_mode?: MeetingMode; 
 /**
+ * Work out whether a meeting is a call instead of using `meeting_mode`
+ * (`meetings::detect`).
+ */
+meeting_detect_mode?: boolean; 
+/**
  * Which model cleans up and summarises meeting transcripts.
  */
 meeting_llm?: MeetingLlm; 
@@ -1939,9 +2091,33 @@ meeting_input_boost_db?: number;
  */
 meeting_transcriber?: MeetingTranscriber; 
 /**
- * Tell speakers apart in in-person meetings.
+ * Tell voices apart: everyone in an in-person meeting, the other side
+ * (and anyone in the room) on a call.
  */
 meeting_diarize?: boolean; 
+/**
+ * Offer to record when a call app starts using the mic.
+ */
+meeting_detect_calls?: boolean; 
+/**
+ * Offer to stop (and stop after a countdown) when a call seems over.
+ */
+meeting_auto_stop?: boolean; 
+/**
+ * Longest a recording runs before it stops on its own, in hours; 0 for
+ * no limit. A warning comes 10 minutes before.
+ */
+meeting_max_hours?: number; 
+/**
+ * Hide Felix's windows (the pill, cards, settings) from screen sharing
+ * and screenshots.
+ */
+hide_from_screen_share?: boolean; 
+/**
+ * Open a panel with the timer, Stop and the notes scratchpad on the
+ * side of the screen while a meeting records (`meeting_panel`).
+ */
+meeting_panel?: boolean; 
 /**
  * Let the assistant act on the computer (start Claude Code sessions, run
  * tasks in other apps), not just write into the field. Off by default.
@@ -1960,10 +2136,34 @@ agent_auto_send?: boolean;
  */
 agent_fast_mode?: boolean; 
 /**
- * Show a rough live draft in the focused field while dictating
- * (`draft.rs`).
+ * Show a rough live draft while dictating (`draft.rs`). Experimental,
+ * off by default.
  */
 live_draft?: boolean; 
+/**
+ * Where the live draft shows: a bubble by the cursor, or in the field
+ * itself through the Felix Draft input method.
+ */
+live_draft_style?: LiveDraftStyle; 
+/**
+ * After a paste, follow the field; when you correct a word Felix
+ * misheard, add the right spelling to the vocabulary (`edit_learning`).
+ */
+learn_from_edits?: boolean; 
+/**
+ * In personal messengers, send each sentence of a dictation as its own
+ * message (Enter between them) when the message box was empty.
+ */
+stacked_messages?: boolean; 
+/**
+ * When dictating to Claude Code or Codex in a terminal, turn file names
+ * from the project into `@path` mentions (`agent_files`).
+ */
+tag_agent_files?: boolean; 
+/**
+ * Tips and warnings the user asked not to see again (`notices`).
+ */
+muted_notices?: string[]; 
 /**
  * Apps Felix may always use for computer tasks, or never; others are
  * asked for each task.
@@ -2115,6 +2315,38 @@ export type BenchmarkSummary = { dictations: number; edited: number;
  */
 confirmed: number; guessed: number; megabytes: number }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type BubbleAlign = 
+/**
+ * Starts at the cursor.
+ */
+"start" | 
+/**
+ * Centred over the pill.
+ */
+"center"
+/**
+ * Which side of the window the bubble hugs, for the page.
+ */
+export type BubbleAnchor = 
+/**
+ * Bubble at the bottom of the window, above the cursor or pill.
+ */
+"above" | 
+/**
+ * Bubble at the top of the window, below them.
+ */
+"below"
+/**
+ * Where the bubble goes, in points from the top-left of its screen (the
+ * bubble window covers the screen). `x`/`y` is the bubble's corner or edge
+ * middle nearest the cursor, as `anchor` and `align` say; the page glides
+ * it there.
+ */
+export type BubblePlace = { x: number; y: number; anchor: BubbleAnchor; align: BubbleAlign; 
+/**
+ * Jump rather than glide (first showing, or another screen).
+ */
+instant: boolean }
 /**
  * An app or website with its automatic and effective category.
  */
@@ -2126,8 +2358,8 @@ recent: boolean }
 /**
  * Custom instructions per destination category (one per line).
  */
-export type CategoryInstructions = { personal: string; work: string; email: string; other: string }
-export type CategoryStyles = { personal: Formality; work: Formality; email: Formality; other: Formality }
+export type CategoryInstructions = { personal: string; work: string; email: string; coding?: string; other: string }
+export type CategoryStyles = { personal: Formality; work: Formality; email: Formality; coding?: Formality; other: Formality }
 /**
  * How much the AI cleanup rewrites a dictation.
  */
@@ -2238,6 +2470,10 @@ export type LLMPrompt = { id: string; name: string; prompt: string }
  */
 export type Learned = { words: string[]; corrections: TextReplacement[]; soundalikes: Soundalike[]; 
 /**
+ * Words Felix added on its own, from corrections you made after a paste.
+ */
+auto_learned: string[]; 
+/**
  * The file has a mistake (the list is from the last good version).
  */
 error: string | null }
@@ -2254,6 +2490,25 @@ installed: boolean;
  * can do this).
  */
 enabled: boolean }
+export type LiveDraftStyle = 
+/**
+ * A see-through bubble by the text cursor (or above the recording
+ * pill), drawn by Felix; nothing touches the field.
+ */
+"bubble" | 
+/**
+ * Underlined text in the field, through the Felix Draft input method.
+ */
+"inline"
+export type LiveQuestion = 
+/**
+ * What was said lately, for someone who drifted off.
+ */
+"missed" | 
+/**
+ * A good question the user could ask now.
+ */
+"question"
 export type LocalModelEntry = { 
 /**
  * Ollama tag, e.g. `qwen3.5:4b`.
@@ -2273,6 +2528,14 @@ export type LocalModelStatus = {
  */
 runtime_installed: boolean; model: string; model_installed: boolean; installing: boolean }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * An answer about a finished meeting.
+ */
+export type MeetingAnswer = { answer: string; 
+/**
+ * The summary was rewritten as asked.
+ */
+summary_updated: boolean }
 /**
  * A meeting's `meeting.json`.
  */
@@ -2304,7 +2567,30 @@ summary?: JobStatus | null; summary_error?: string | null;
 /**
  * Names the user gave to told-apart voices (in person), by number.
  */
-speakers?: Partial<{ [key in number]: string }> }
+speakers?: Partial<{ [key in number]: string }>; 
+/**
+ * Where the Mac played sound when recording started; headphones mean
+ * the call can't echo into the mic.
+ */
+output_device?: string | null; 
+/**
+ * The call app that held the mic (bundle id), for speaker names.
+ */
+call_app?: string | null; 
+/**
+ * Offsets into the recording (ms) where it was resumed after a stop.
+ */
+resumed_at_ms?: number[]; 
+/**
+ * Names the call app showed for the other side's voices, by number;
+ * the user's own names in `speakers` win.
+ */
+app_speakers?: Partial<{ [key in number]: string }>; 
+/**
+ * Whether it's a call was worked out rather than chosen (`detect`):
+ * it records like a call, and `mode` is settled when it stops.
+ */
+mode_auto?: boolean }
 /**
  * The model that tidies and summarises meeting transcripts.
  */
@@ -2327,13 +2613,23 @@ export type MeetingMode =
  */
 "in_person"
 /**
+ * The notes of a meeting, when they're saved.
+ */
+export type MeetingNotes = { id: string; notes: string }
+export type MeetingPanelState = { expanded: boolean }
+/**
  * Meeting settings to change; fields left out stay as they are.
  */
-export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null }
+export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */
-export type MeetingState = { recording: MeetingInfo | null; elapsed_ms: number; transcribing: TranscribeProgress | null }
+export type MeetingState = { recording: MeetingInfo | null; elapsed_ms: number; transcribing: TranscribeProgress | null; 
+/**
+ * "What did I miss?" and "Suggest a question" work (a cloud
+ * transcriber keeps a live transcript).
+ */
+live: boolean }
 export type MeetingStatus = "recording" | "recorded" | 
 /**
  * Handy quit or crashed while recording; the audio up to a few seconds
@@ -2341,9 +2637,15 @@ export type MeetingStatus = "recording" | "recorded" |
  */
 "interrupted"
 /**
- * What transcribes meetings.
+ * What transcribes meetings. Meetings are cloud-first: local models
+ * aren't good enough for long, many-voiced audio, and nobody is waiting.
  */
 export type MeetingTranscriber = 
+/**
+ * A cloud provider whose key is set (OpenAI, then Groq), otherwise the
+ * model on this Mac.
+ */
+"auto" | 
 /**
  * The model selected for dictation, on this Mac.
  */
@@ -2407,6 +2709,7 @@ variants: string[];
  * Mishearings the user chose not to rewrite (e.g. common words).
  */
 excluded: string[] }
+export type NoticeButton = { id: string; label: string }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -2481,6 +2784,10 @@ change: string[];
  * "applied", "proposed" (not applied), "no change" or "failed".
  */
 status: string; error: string | null }
+/**
+ * What came of a typed report: the proposal, and whether it was applied.
+ */
+export type ReportOutcome = { proposal: Proposal; applied: boolean }
 /**
  * A second transcription of audio a more sensitive silence threshold kept.
  */

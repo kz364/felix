@@ -41,6 +41,18 @@ const KNOWN_APPS: &[(&str, AppCategory)] = &[
     ("it.bloop.airmail2", AppCategory::Email),
     ("com.freron.MailMate", AppCategory::Email),
     ("ch.protonmail.desktop", AppCategory::Email),
+    // Coding agents, editors and terminals
+    ("com.anthropic.claudefordesktop", AppCategory::Coding),
+    ("com.openai.codex", AppCategory::Coding),
+    ("com.todesktop.230313mzl4w4u92", AppCategory::Coding), // Cursor
+    ("com.exafunction.windsurf", AppCategory::Coding),
+    ("com.microsoft.VSCode", AppCategory::Coding),
+    ("dev.zed.Zed", AppCategory::Coding),
+    ("com.apple.dt.Xcode", AppCategory::Coding),
+    ("com.apple.Terminal", AppCategory::Coding),
+    ("com.googlecode.iterm2", AppCategory::Coding),
+    ("com.mitchellh.ghostty", AppCategory::Coding),
+    ("dev.warp.Warp-Stable", AppCategory::Coding),
 ];
 
 /// Built-in website assignments (domain, display name, category).
@@ -61,6 +73,8 @@ pub const KNOWN_WEBSITES: &[(&str, &str, AppCategory)] = &[
     ("instagram.com", "Instagram", AppCategory::Personal),
     ("discord.com", "Discord", AppCategory::Personal),
     ("web.telegram.org", "Telegram", AppCategory::Personal),
+    ("claude.ai", "Claude", AppCategory::Coding),
+    ("chatgpt.com", "ChatGPT", AppCategory::Coding),
 ];
 
 /// Automatic category for an app.

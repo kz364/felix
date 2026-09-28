@@ -1340,6 +1340,8 @@ impl TranscriptionManager {
         // Whether the model supports decode-time keyword boosting (Cohere,
         // Canary-Qwen via the vendored transcribe.cpp patch).
         let mut model_takes_boost = false;
+        // Whether long audio goes in pieces (see `SPLIT_LONG_AUDIO_ARCHS`).
+        let mut model_splits_long_audio = false;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1383,6 +1385,7 @@ impl TranscriptionManager {
                 model_is_whisper = model.arch() == "whisper";
                 model_takes_context = model.supports(Feature::Context);
                 model_takes_boost = model.supports(Feature::KeywordBoost);
+                model_splits_long_audio = SPLIT_LONG_AUDIO_ARCHS.contains(&model.arch().as_str());
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
@@ -1445,17 +1448,36 @@ impl TranscriptionManager {
                             run_options.bias_phrases.len()
                         );
 
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                t.text
-                            })
-                            .map_err(|e| {
+                        // Models that drop sentences from long audio get it in
+                        // pieces cut at pauses; every other model as before.
+                        let pieces = if model_splits_long_audio {
+                            split_at_pauses(&audio, PIECE_SAMPLES)
+                        } else {
+                            vec![&audio[..]]
+                        };
+                        if pieces.len() > 1 {
+                            debug!(
+                                "Transcribing {:.1}s in {} pieces",
+                                audio.len() as f32 / 16000.0,
+                                pieces.len()
+                            );
+                        }
+                        let mut texts = Vec::with_capacity(pieces.len());
+                        for piece in pieces {
+                            let t = session.run(piece, &run_options).map_err(|e| {
                                 anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                            })?;
+                            // Whisper's audio-based LID (auto mode only;
+                            // `None` when a language hint was passed).
+                            if model_detected_language.is_none() {
+                                model_detected_language = t.language;
+                            }
+                            let text = t.text.trim().to_string();
+                            if !text.is_empty() {
+                                texts.push(text);
+                            }
+                        }
+                        Ok(texts.join(" "))
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -1871,6 +1893,41 @@ fn boost_phrases(custom_words: &[String], model_takes_boost: bool) -> Vec<String
         .map(|w| w.trim().to_string())
         .filter(|w| !w.is_empty())
         .collect()
+}
+
+/// Models (by transcribe.cpp arch) that take long audio in one pass but
+/// quietly drop sentences from it, so they get it in pieces. Checked
+/// 2026-09-28 on four 42–114 s dictations, words whole vs in pieces:
+/// Cohere lost up to half (114 s: 96 vs 193), Canary-Qwen 2.5B half of the
+/// 114 s one (107 vs 199). Qwen3-ASR 0.6B/1.7B and Whisper turbo were within
+/// a few words either way, so they stay whole. Add another model only after
+/// checking it the same way.
+const SPLIT_LONG_AUDIO_ARCHS: &[&str] = &["cohere_asr", "canary_qwen"];
+
+/// Longest piece for those models: ~30 s, what they are trained on.
+const PIECE_SAMPLES: usize = 30 * 16000;
+
+/// Cut 16 kHz audio into pieces of at most `max` samples, each cut at the
+/// quietest 100 ms in the last quarter of the piece so no word is split.
+fn split_at_pauses(audio: &[f32], max: usize) -> Vec<&[f32]> {
+    const FRAME: usize = 1600;
+    let mut pieces = Vec::new();
+    let mut rest = audio;
+    while rest.len() > max {
+        let search_from = max - max / 4;
+        let cut = (search_from..max - FRAME)
+            .step_by(FRAME / 2)
+            .min_by(|&a, &b| {
+                let energy = |at: usize| rest[at..at + FRAME].iter().map(|x| x * x).sum::<f32>();
+                energy(a).total_cmp(&energy(b))
+            })
+            .map_or(max, |at| at + FRAME / 2);
+        let (piece, tail) = rest.split_at(cut);
+        pieces.push(piece);
+        rest = tail;
+    }
+    pieces.push(rest);
+    pieces
 }
 
 /// Recognition context for models that take free-text background (Qwen3-ASR),
@@ -2574,6 +2631,25 @@ mod tests {
         );
 
         assert_eq!(evidence, OutputLanguageEvidence::TranslatedToEnglish);
+    }
+
+    #[test]
+    fn long_audio_is_cut_at_the_pause() {
+        let sr = 16000;
+        // 50 s of "speech" with a silent stretch from 26 to 27 s.
+        let mut audio = vec![0.3f32; 50 * sr];
+        audio[26 * sr..27 * sr].iter_mut().for_each(|x| *x = 0.0);
+        let pieces = split_at_pauses(&audio, 30 * sr);
+        assert_eq!(pieces.len(), 2);
+        let cut = pieces[0].len();
+        assert!(cut > 26 * sr && cut < 27 * sr, "cut at {cut}");
+        assert_eq!(pieces.iter().map(|p| p.len()).sum::<usize>(), audio.len());
+        // Short audio stays whole; long audio never makes a piece too long.
+        assert_eq!(split_at_pauses(&audio[..20 * sr], 30 * sr).len(), 1);
+        let long = vec![0.3f32; 200 * sr];
+        assert!(split_at_pauses(&long, 30 * sr)
+            .iter()
+            .all(|p| p.len() <= 30 * sr));
     }
 
     #[test]

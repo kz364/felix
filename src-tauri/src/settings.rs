@@ -251,6 +251,9 @@ pub enum AppCategory {
     Personal,
     Work,
     Email,
+    /// Coding agents and terminals (Claude, Codex, Cursor…), where a prompt
+    /// is read over before it's sent.
+    Coding,
     #[default]
     Other,
 }
@@ -271,6 +274,8 @@ pub struct CategoryInstructions {
     pub personal: String,
     pub work: String,
     pub email: String,
+    #[serde(default)]
+    pub coding: String,
     pub other: String,
 }
 
@@ -280,6 +285,7 @@ impl CategoryInstructions {
             AppCategory::Personal => &self.personal,
             AppCategory::Work => &self.work,
             AppCategory::Email => &self.email,
+            AppCategory::Coding => &self.coding,
             AppCategory::Other => &self.other,
         }
     }
@@ -290,6 +296,8 @@ pub struct CategoryStyles {
     pub personal: Formality,
     pub work: Formality,
     pub email: Formality,
+    #[serde(default)]
+    pub coding: Formality,
     pub other: Formality,
 }
 
@@ -299,6 +307,7 @@ impl Default for CategoryStyles {
             personal: Formality::Casual,
             work: Formality::Formal,
             email: Formality::Formal,
+            coding: Formality::Formal,
             other: Formality::Formal,
         }
     }
@@ -310,6 +319,7 @@ impl CategoryStyles {
             AppCategory::Personal => self.personal,
             AppCategory::Work => self.work,
             AppCategory::Email => self.email,
+            AppCategory::Coding => self.coding,
             AppCategory::Other => self.other,
         }
     }
@@ -332,6 +342,10 @@ pub struct AgentAppAccess {
     pub bundle_id: String,
     #[serde(default = "default_true")]
     pub allowed: bool,
+}
+
+fn default_meeting_max_hours() -> u32 {
+    4
 }
 
 fn default_true() -> bool {
@@ -526,6 +540,17 @@ pub enum OrtAcceleratorSetting {
     #[serde(rename = "directml")]
     DirectMl,
     Rocm,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveDraftStyle {
+    /// A see-through bubble by the text cursor (or above the recording
+    /// pill), drawn by Felix; nothing touches the field.
+    #[default]
+    Bubble,
+    /// Underlined text in the field, through the Felix Draft input method.
+    Inline,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
@@ -732,6 +757,10 @@ pub struct AppSettings {
     /// shortcut and the tray.
     #[serde(default = "default_meeting_mode")]
     pub meeting_mode: crate::meetings::MeetingMode,
+    /// Work out whether a meeting is a call instead of using `meeting_mode`
+    /// (`meetings::detect`).
+    #[serde(default = "default_meeting_true")]
+    pub meeting_detect_mode: bool,
     /// Which model cleans up and summarises meeting transcripts.
     #[serde(default)]
     pub meeting_llm: crate::meetings::MeetingLlm,
@@ -752,9 +781,28 @@ pub struct AppSettings {
     /// Which engine transcribes meetings: the local model or a provider.
     #[serde(default)]
     pub meeting_transcriber: crate::meetings::MeetingTranscriber,
-    /// Tell speakers apart in in-person meetings.
+    /// Tell voices apart: everyone in an in-person meeting, the other side
+    /// (and anyone in the room) on a call.
     #[serde(default = "default_meeting_true")]
     pub meeting_diarize: bool,
+    /// Offer to record when a call app starts using the mic.
+    #[serde(default = "default_meeting_true")]
+    pub meeting_detect_calls: bool,
+    /// Offer to stop (and stop after a countdown) when a call seems over.
+    #[serde(default = "default_meeting_true")]
+    pub meeting_auto_stop: bool,
+    /// Longest a recording runs before it stops on its own, in hours; 0 for
+    /// no limit. A warning comes 10 minutes before.
+    #[serde(default = "default_meeting_max_hours")]
+    pub meeting_max_hours: u32,
+    /// Hide Felix's windows (the pill, cards, settings) from screen sharing
+    /// and screenshots.
+    #[serde(default)]
+    pub hide_from_screen_share: bool,
+    /// Open a panel with the timer, Stop and the notes scratchpad on the
+    /// side of the screen while a meeting records (`meeting_panel`).
+    #[serde(default = "default_meeting_true")]
+    pub meeting_panel: bool,
     /// Let the assistant act on the computer (start Claude Code sessions, run
     /// tasks in other apps), not just write into the field. Off by default.
     #[serde(default)]
@@ -769,10 +817,29 @@ pub struct AppSettings {
     /// don't carry over.
     #[serde(default)]
     pub agent_fast_mode: bool,
-    /// Show a rough live draft in the focused field while dictating
-    /// (`draft.rs`). Experimental, off by default.
+    /// Show a rough live draft while dictating (`draft.rs`). Experimental,
+    /// off by default.
     #[serde(default)]
     pub live_draft: bool,
+    /// Where the live draft shows: a bubble by the cursor, or in the field
+    /// itself through the Felix Draft input method.
+    #[serde(default)]
+    pub live_draft_style: LiveDraftStyle,
+    /// After a paste, follow the field; when you correct a word Felix
+    /// misheard, add the right spelling to the vocabulary (`edit_learning`).
+    #[serde(default = "default_true")]
+    pub learn_from_edits: bool,
+    /// In personal messengers, send each sentence of a dictation as its own
+    /// message (Enter between them) when the message box was empty.
+    #[serde(default)]
+    pub stacked_messages: bool,
+    /// When dictating to Claude Code or Codex in a terminal, turn file names
+    /// from the project into `@path` mentions (`agent_files`).
+    #[serde(default = "default_true")]
+    pub tag_agent_files: bool,
+    /// Tips and warnings the user asked not to see again (`notices`).
+    #[serde(default)]
+    pub muted_notices: Vec<String>,
     /// Apps Felix may always use for computer tasks, or never; others are
     /// asked for each task.
     #[serde(default)]
@@ -1480,6 +1547,7 @@ pub fn get_default_settings() -> AppSettings {
         assistant_enabled: default_assistant_enabled(),
         assistant_name: default_assistant_name(),
         meeting_mode: default_meeting_mode(),
+        meeting_detect_mode: true,
         meeting_llm: Default::default(),
         meeting_cleanup: true,
         meeting_summary_prompt: String::new(),
@@ -1487,10 +1555,20 @@ pub fn get_default_settings() -> AppSettings {
         meeting_input_boost_db: 0.0,
         meeting_transcriber: Default::default(),
         meeting_diarize: true,
+        meeting_detect_calls: true,
+        meeting_auto_stop: true,
+        meeting_max_hours: default_meeting_max_hours(),
+        hide_from_screen_share: false,
+        meeting_panel: true,
         agent_actions_enabled: false,
         agent_auto_send: default_agent_auto_send(),
         agent_fast_mode: false,
         live_draft: false,
+        live_draft_style: LiveDraftStyle::default(),
+        learn_from_edits: true,
+        stacked_messages: false,
+        tag_agent_files: true,
+        muted_notices: Vec::new(),
         agent_app_access: Vec::new(),
         assistant_model: default_assistant_model(),
         assistant_effort: default_assistant_effort(),

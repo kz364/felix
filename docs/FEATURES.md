@@ -68,8 +68,10 @@ secure input and when text is selected.
 - **Learned rules**: corrections, sound-alikes ("cloud" → "Claude" only in
   the right context) and names that depend on the app you're in.
 - **Spelled-out words**: "Rivera, R I V E R A" becomes "Rivera".
-- **Report a mistake**, by voice or text; a model proposes the rule and
-  shows the change before applying it.
+- **Report a mistake**, by voice or text; a model writes the rule and tests
+  it. A fix that passes its tests is applied straight away (with Undo and
+  "Show change"), so you can carry on while it works; anything else waits
+  for a look.
 - **Portable rules**: everything lives in a commented `rules.toml` that
   explains itself to AI agents and other apps; Vocabulary → Export saves it
   as TOML or JSON (with the words taught by voice) to load elsewhere.
@@ -82,8 +84,17 @@ secure input and when text is selected.
   is cached while you speak so only the transcript is processed after),
   Apple Intelligence, or an API provider with your key.
 - **Your instructions**, **screen context** (optional) and **tone by app**.
+- **Coding agents** (Claude, Codex, Cursor, VS Code, Zed, Xcode, terminals,
+  claude.ai, chatgpt.com): the same words and tone, laid out to check before
+  pressing Enter: several requests become a bulleted list and each sentence
+  gets its own line. Always goes through cleanup.
 - **Prompt shortcut**: a separate shortcut that sends the dictation to the
   model as an instruction.
+
+Long dictations with Cohere Transcribe or Canary-Qwen 2.5B are transcribed
+in pieces of up to 30 s, cut at pauses: run whole, both dropped about half
+of a 114 s dictation. Qwen3-ASR and Whisper were fine whole and are
+unchanged (`SPLIT_LONG_AUDIO_ARCHS`). Meetings go through the same path.
 
 ## Voice commands
 

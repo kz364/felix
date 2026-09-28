@@ -19,6 +19,8 @@ import { TypingToolSetting } from "../TypingTool";
 import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { ContextAwarePaste } from "../ContextAwarePaste";
 import { FocusMessageBox } from "../FocusMessageBox";
+import { StackedMessages } from "../StackedMessages";
+import { TagAgentFiles } from "../TagAgentFiles";
 import { ResultPopup } from "../ResultPopup";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { VoiceActivityDetection } from "../VoiceActivityDetection";
@@ -59,6 +61,8 @@ export const DictationSettings: React.FC = () => {
         <ContextAwarePaste descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
         <FocusMessageBox descriptionMode="tooltip" grouped={true} />
+        <TagAgentFiles />
+        <StackedMessages />
         <ResultPopup descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       <SettingsGroup title={t("settings.dictation.groups.sounds")}>

@@ -20,7 +20,8 @@ export const MeetingSettings: React.FC = () => {
     commands.defaultMeetingSummaryPrompt().then(setDefaultPrompt);
   }, []);
 
-  const transcriber = getSetting("meeting_transcriber") ?? "local";
+  const transcriber = getSetting("meeting_transcriber") ?? "auto";
+  const maxHours = getSetting("meeting_max_hours") ?? 4;
   const llm = getSetting("meeting_llm") ?? "chatgpt";
   const autoGain = getSetting("meeting_auto_gain") ?? true;
 
@@ -34,6 +35,7 @@ export const MeetingSettings: React.FC = () => {
       >
         <Dropdown
           options={[
+            { value: "auto", label: t("meetings.settings.transcriber.auto") },
             {
               value: "local",
               label: t("meetings.settings.transcriber.local"),
@@ -57,6 +59,61 @@ export const MeetingSettings: React.FC = () => {
         isUpdating={isUpdating("meeting_diarize")}
         label={t("meetings.settings.diarize.label")}
         description={t("meetings.settings.diarize.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <ToggleSwitch
+        checked={getSetting("meeting_detect_calls") ?? true}
+        onChange={(v) => updateSetting("meeting_detect_calls", v)}
+        isUpdating={isUpdating("meeting_detect_calls")}
+        label={t("meetings.settings.detectCalls.label")}
+        description={t("meetings.settings.detectCalls.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <ToggleSwitch
+        checked={getSetting("meeting_auto_stop") ?? true}
+        onChange={(v) => updateSetting("meeting_auto_stop", v)}
+        isUpdating={isUpdating("meeting_auto_stop")}
+        label={t("meetings.settings.autoStop.label")}
+        description={t("meetings.settings.autoStop.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <SettingContainer
+        title={t("meetings.settings.maxHours.title")}
+        description={t("meetings.settings.maxHours.description")}
+        descriptionMode="tooltip"
+        grouped
+      >
+        <Dropdown
+          options={[2, 4, 8, 0].map((h) => ({
+            value: String(h),
+            label:
+              h === 0
+                ? t("meetings.settings.maxHours.none")
+                : t("meetings.settings.maxHours.hours", { count: h }),
+          }))}
+          selectedValue={String(maxHours)}
+          onSelect={(v) => updateSetting("meeting_max_hours", Number(v))}
+          disabled={isUpdating("meeting_max_hours")}
+        />
+      </SettingContainer>
+      <ToggleSwitch
+        checked={getSetting("hide_from_screen_share") ?? false}
+        onChange={(v) => updateSetting("hide_from_screen_share", v)}
+        isUpdating={isUpdating("hide_from_screen_share")}
+        label={t("meetings.settings.hideFromShare.label")}
+        description={t("meetings.settings.hideFromShare.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <ToggleSwitch
+        checked={getSetting("meeting_panel") ?? true}
+        onChange={(v) => updateSetting("meeting_panel", v)}
+        isUpdating={isUpdating("meeting_panel")}
+        label={t("meetings.settings.panel.label")}
+        description={t("meetings.settings.panel.description")}
         descriptionMode="tooltip"
         grouped
       />

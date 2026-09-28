@@ -5,7 +5,7 @@ import type { AppCategory, CategorizedEntry, Formality } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 
 const FORMALITIES: Formality[] = ["formal", "casual", "very_casual"];
-const ALL: AppCategory[] = ["personal", "work", "email", "other"];
+const ALL: AppCategory[] = ["personal", "work", "email", "coding", "other"];
 
 type MoveFn = (entry: CategorizedEntry, category: AppCategory) => void;
 

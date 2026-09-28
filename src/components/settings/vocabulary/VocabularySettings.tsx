@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { PageHeader } from "../../ui/PageHeader";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { LearnedRules } from "./LearnedRules";
+import { LearnFromEdits } from "./LearnFromEdits";
 import { MistakeReports } from "./MistakeReports";
 import { ReportMistake } from "./ReportMistake";
 import { TaughtWords } from "./TaughtWords";
@@ -48,6 +49,7 @@ export const VocabularySettings: React.FC = () => {
         title={t("settings.vocabulary.learned.title")}
         description={t("settings.vocabulary.learned.description")}
       >
+        <LearnFromEdits />
         <LearnedRules version={version} onChange={changed} />
         <TaughtWords />
       </SettingsGroup>
