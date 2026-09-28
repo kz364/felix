@@ -48,17 +48,21 @@ staging pipeline first:
   contains the first transcript plus real new words, not the "Thank you."
   models invent from breathing.
 
-**Live draft** (experimental, off by default: the Tiny model's draft is
-rough, some apps such as WhatsApp show it in a floating bubble instead of
-inline, and the second model costs a little extra processing): while you talk, Moonshine
-Streaming Tiny transcribes alongside the main model and its rough text shows
-as underlined marked text in the focused field, through Felix Draft, a small
-input method (`src-tauri/draft-ime/`, built by `scripts/build-draft-ime.sh`,
-installed to ~/Library/Input Methods on first use; you add it once under
-Keyboard → Input Sources). Felix switches to it for each dictation and back
-afterwards. The draft is cleared the moment recording stops, before anything
-reads the field, and the main model's text is pasted as before. Skipped in
-secure input and when text is selected.
+**Live draft** (experimental, off by default; the second model costs a
+little extra processing): while you talk, Moonshine Streaming Tiny
+transcribes alongside the main model and its rough text is shown, then the
+main model's text is pasted as usual. Two styles:
+
+- **Bubble** (`draft_bubble.rs`): a click-through bubble styled like the
+  recording pill that follows the text cursor, or rests on the pill.
+- **Inline**: underlined marked text in the focused field, through Felix
+  Draft, a small input method (`src-tauri/draft-ime/`, built by
+  `scripts/build-draft-ime.sh`; you add it once under Keyboard → Input
+  Sources). Some apps, such as WhatsApp, show it in a floating box instead.
+
+When the draft model gets stuck repeating a word or phrase, the repeat is
+shown once until it recovers. Skipped with secure input on (and, inline,
+when text is selected).
 
 ## Vocabulary
 
@@ -95,6 +99,9 @@ Long dictations with Cohere Transcribe or Canary-Qwen 2.5B are transcribed
 in pieces of up to 30 s, cut at pauses: run whole, both dropped about half
 of a 114 s dictation. Qwen3-ASR and Whisper were fine whole and are
 unchanged (`SPLIT_LONG_AUDIO_ARCHS`). Meetings go through the same path.
+For every other model there's a safety net: a dictation over 45 s with
+fewer than 100 words a minute is run again in pieces, and the pieces are
+used only if they hold at least 10% more words.
 
 ## History
 

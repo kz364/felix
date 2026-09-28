@@ -106,6 +106,39 @@ fn run_bubble(app: &AppHandle, rx: mpsc::Receiver<Cmd>) -> Result<(), String> {
     result
 }
 
+/// The small draft model sometimes gets stuck repeating a word or two ("the
+/// plan the plan the plan the plan") before it recovers. Show such a run
+/// once: a phrase of 2–4 words repeated 3+ times in a row, or one word 4+
+/// times ("no no no" is real speech).
+fn without_loops(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let key = |w: &str| {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let mut out: Vec<&str> = Vec::with_capacity(words.len());
+    let mut i = 0;
+    'next: while i < words.len() {
+        for n in 1..=4 {
+            let min_repeats = if n == 1 { 4 } else { 3 };
+            let same = |a: usize, b: usize| (0..n).all(|k| key(words[a + k]) == key(words[b + k]));
+            let mut repeats = 1;
+            while i + (repeats + 1) * n <= words.len() && same(i, i + repeats * n) {
+                repeats += 1;
+            }
+            if repeats >= min_repeats {
+                // Keep the last copy, which carries the latest punctuation.
+                out.extend_from_slice(&words[i + (repeats - 1) * n..i + repeats * n]);
+                i += repeats * n;
+                continue 'next;
+            }
+        }
+        out.push(words[i]);
+        i += 1;
+    }
+    out.join(" ")
+}
+
 /// Feed the recording to the draft model and hand each new guess to `show`
 /// until the recording stops.
 fn stream_draft(
@@ -130,12 +163,7 @@ fn stream_draft(
             Ok(update) if update.committed_changed || update.tentative_changed => {
                 // The whole current guess: committed + tentative can lose
                 // the space where they meet.
-                let draft = stream
-                    .text()
-                    .full
-                    .replace(['\n', '\r'], " ")
-                    .trim()
-                    .to_string();
+                let draft = without_loops(stream.text().full.replace(['\n', '\r'], " ").trim());
                 if draft != last {
                     show(&draft);
                     last = draft;
@@ -479,6 +507,31 @@ mod tis {
         match unsafe { TISRegisterInputSource(url.as_concrete_TypeRef()) } {
             0 => Ok(()),
             err => Err(format!("couldn't register Felix Draft ({err})")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_loops;
+
+    #[test]
+    fn loops_show_once_and_real_speech_stays() {
+        assert_eq!(
+            without_loops("so the plan the plan the plan the plan is to ship"),
+            "so the plan is to ship"
+        );
+        assert_eq!(without_loops("I think the the the the the"), "I think the");
+        assert_eq!(
+            without_loops("we should, we should, we should, we should go"),
+            "we should go"
+        );
+        for text in [
+            "no no no, not that one",
+            "that that is fine",
+            "one two three",
+        ] {
+            assert_eq!(without_loops(text), text);
         }
     }
 }

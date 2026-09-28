@@ -1477,7 +1477,36 @@ impl TranscriptionManager {
                                 texts.push(text);
                             }
                         }
-                        Ok(texts.join(" "))
+                        let text = texts.join(" ");
+                        // Safety net for the other models: a long dictation
+                        // that came back suspiciously short is run again in
+                        // pieces, and the pieces win if they hold clearly
+                        // more words (a skipped stretch, not a rewording).
+                        if !model_splits_long_audio && looks_cut_short(&text, audio.len()) {
+                            let mut pieces = Vec::new();
+                            for piece in split_at_pauses(&audio, PIECE_SAMPLES) {
+                                let t = session.run(piece, &run_options).map_err(|e| {
+                                    anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                                })?;
+                                let t = t.text.trim().to_string();
+                                if !t.is_empty() {
+                                    pieces.push(t);
+                                }
+                            }
+                            let pieces = pieces.join(" ");
+                            let (whole_words, piece_words) = (
+                                text.split_whitespace().count(),
+                                pieces.split_whitespace().count(),
+                            );
+                            warn!(
+                                "Long dictation came back short ({whole_words} words in {:.0}s); in pieces: {piece_words} words",
+                                audio.len() as f32 / 16000.0
+                            );
+                            if piece_words * 10 >= whole_words * 11 {
+                                return Ok(pieces);
+                            }
+                        }
+                        Ok(text)
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -1903,6 +1932,15 @@ fn boost_phrases(custom_words: &[String], model_takes_boost: bool) -> Vec<String
 /// a few words either way, so they stay whole. Add another model only after
 /// checking it the same way.
 const SPLIT_LONG_AUDIO_ARCHS: &[&str] = &["cohere_asr", "canary_qwen"];
+
+/// Whether a long transcript has suspiciously few words for its audio. Kept
+/// loose on purpose (slow real dictations reach ~80 words a minute; a
+/// broken 72 s one had 64): a false alarm only costs a second pass, and the
+/// pieces must hold clearly more words to be used.
+fn looks_cut_short(text: &str, samples: usize) -> bool {
+    let minutes = samples as f32 / 16000.0 / 60.0;
+    minutes > 0.75 && (text.split_whitespace().count() as f32) < 100.0 * minutes
+}
 
 /// Longest piece for those models: ~30 s, what they are trained on.
 const PIECE_SAMPLES: usize = 30 * 16000;
@@ -2631,6 +2669,17 @@ mod tests {
         );
 
         assert_eq!(evidence, OutputLanguageEvidence::TranslatedToEnglish);
+    }
+
+    #[test]
+    fn short_transcripts_of_long_audio_are_flagged() {
+        let words = |n: usize| vec!["word"; n].join(" ");
+        // The broken Cohere results, and their fixed word counts.
+        assert!(looks_cut_short(&words(97), 114 * 16000));
+        assert!(looks_cut_short(&words(77), 72 * 16000));
+        assert!(!looks_cut_short(&words(194), 114 * 16000));
+        // Short dictations are never checked.
+        assert!(!looks_cut_short(&words(5), 40 * 16000));
     }
 
     #[test]
