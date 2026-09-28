@@ -70,6 +70,15 @@ const HISTORY = [
     post_process_requested: false,
     has_audio: true,
     transcription_model: "cohere-transcribe",
+    context: {
+      app_name: "Claude",
+      bundle_id: "com.anthropic.claudefordesktop",
+      url_host: null,
+      declared_category: null,
+      category: "coding",
+      cleanup_context:
+        "Conversation on screen:\nSam: can you ship the login fix today?\n\nText already in the field before the cursor: (empty)",
+    },
   },
   {
     id: 2,
@@ -83,6 +92,14 @@ const HISTORY = [
     post_process_requested: false,
     has_audio: true,
     transcription_model: "cohere-transcribe",
+    context: {
+      app_name: null,
+      bundle_id: null,
+      url_host: null,
+      declared_category: null,
+      category: null,
+      cleanup_context: null,
+    },
   },
 ];
 

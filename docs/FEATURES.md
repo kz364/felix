@@ -96,6 +96,14 @@ in pieces of up to 30 s, cut at pauses: run whole, both dropped about half
 of a 114 s dictation. Qwen3-ASR and Whisper were fine whole and are
 unchanged (`SPLIT_LONG_AUDIO_ARCHS`). Meetings go through the same path.
 
+## History
+
+Each dictation keeps its audio (per the retention setting), the raw
+transcript, what was pasted, the app (and site) it went into, its group
+under Tone by app, and what cleanup was given from the screen. Retry
+re-transcribes the audio and cleans it up with that same app and screen
+context; it never runs the assistant or answers Felix's card.
+
 ## Voice commands
 
 Trigger phrases at the end of a dictation, "new line", and spoken symbols.

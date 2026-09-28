@@ -126,6 +126,12 @@ pub fn current() -> DictationContext {
     CURRENT.lock().unwrap().clone()
 }
 
+/// Put in place a dictation's context (a retry restores the original
+/// one); returns the one it replaces.
+pub fn replace_current(ctx: DictationContext) -> DictationContext {
+    std::mem::replace(&mut *CURRENT.lock().unwrap(), ctx)
+}
+
 /// Bundle id of the frontmost app, and whether it builds its Accessibility
 /// tree lazily (Chromium browsers, Electron apps, Firefox).
 pub fn frontmost_bundle() -> (Option<String>, bool) {

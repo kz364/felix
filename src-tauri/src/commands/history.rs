@@ -94,8 +94,16 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording contains no speech".to_string());
     }
 
+    // Clean it up as the original was: for the app it went into, with the
+    // screen context its cleanup had (entries from before this was kept
+    // count as "everything else", with no screen).
+    let previous = crate::app_context::replace_current(entry.context.dictation_context());
+    crate::screen_context::provide(entry.context.cleanup_context.clone());
     let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+        process_transcription_output(&app, &transcription, entry.post_process_requested, false)
+            .await;
+    crate::screen_context::take_used();
+    crate::app_context::replace_current(previous);
     history_manager
         .update_transcription(
             id,

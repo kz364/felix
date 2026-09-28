@@ -699,6 +699,7 @@ mod tests {
             post_process_requested: false,
             has_audio: true,
             transcription_model: None,
+            context: Default::default(),
         }
     }
 

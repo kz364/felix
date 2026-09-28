@@ -525,6 +525,7 @@ async fn run_post_process_llm(
         }
     };
     let screen = screen.filter(|_| screen_context_for(settings, &provider.id));
+    crate::screen_context::record_used(screen.clone());
 
     let mut model = settings
         .post_process_models
@@ -858,6 +859,20 @@ async fn maybe_convert_chinese_variant(
     }
 }
 
+/// Where a dictation went and what its cleanup was given, for History.
+pub(crate) fn entry_context(app: &AppHandle) -> crate::managers::history::EntryContext {
+    let ctx = crate::app_context::current();
+    let (category, _) = crate::app_context::resolve(&ctx, &get_settings(app).app_rules);
+    crate::managers::history::EntryContext {
+        app_name: ctx.app_name,
+        bundle_id: ctx.bundle_id,
+        url_host: ctx.url_host,
+        declared_category: ctx.declared_category,
+        category: Some(category),
+        cleanup_context: crate::screen_context::take_used(),
+    }
+}
+
 pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
@@ -1008,14 +1023,18 @@ fn fix_reported_mistake(app: &AppHandle, report: String) {
     });
 }
 
+/// `live` is false for a retry from History: it's re-processed for the
+/// record only, so it never answers Felix's card or runs the assistant
+/// (which could repeat an action).
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    live: bool,
 ) -> ProcessedTranscription {
     // "Yes" / "no" / "always" while Felix's card is asking something
     // answers it instead of being pasted.
-    if crate::agent_run::answer_by_voice(transcription) {
+    if live && crate::agent_run::answer_by_voice(transcription) {
         return ProcessedTranscription {
             final_text: String::new(),
             post_processed_text: None,
@@ -1053,7 +1072,8 @@ pub(crate) async fn process_transcription_output(
     // Saying the assistant's name hands the dictation to it instead of the
     // cleanup model. It's on by default, so without a ChatGPT sign-in it
     // stays out of the way and the dictation is pasted as usual.
-    if settings.assistant_enabled
+    if live
+        && settings.assistant_enabled
         && crate::assistant::is_addressed(&final_text, &settings.assistant_name)
         && crate::chatgpt::signed_in_as().is_some()
     {
@@ -1722,7 +1742,12 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
                             let Some(processed) = complete_unless_cancelled(
-                                process_transcription_output(&ah, &transcription, post_process),
+                                process_transcription_output(
+                                    &ah,
+                                    &transcription,
+                                    post_process,
+                                    true,
+                                ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
                             .await
@@ -1751,6 +1776,7 @@ impl ShortcutAction for TranscribeAction {
                                 processed.post_processed_text.clone(),
                                 processed.post_process_prompt.clone(),
                                 transcription_model.clone(),
+                                entry_context(&ah),
                             ) {
                                 error!("Failed to save history entry: {}", err);
                             }
@@ -1991,6 +2017,7 @@ impl ShortcutAction for TranscribeAction {
                                     None,
                                     None,
                                     transcription_model.clone(),
+                                    entry_context(&ah),
                                 ) {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }

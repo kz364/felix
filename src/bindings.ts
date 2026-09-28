@@ -2402,6 +2402,24 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+/**
+ * Where a dictation went and what its cleanup was given (entries from
+ * before this was kept have none of it).
+ */
+export type EntryContext = { app_name: string | null; bundle_id: string | null; 
+/**
+ * The browser tab's site, when it was a browser.
+ */
+url_host: string | null; declared_category: string | null; 
+/**
+ * Its group under Tone by app, at the time.
+ */
+category: AppCategory | null; 
+/**
+ * What cleanup was given from the screen (conversation, text around
+ * the cursor), if anything.
+ */
+cleanup_context: string | null }
 export type FieldState = { role: string; text: string; selection: Selection | null }
 /**
  * Capitalization/punctuation style applied per category.
@@ -2439,7 +2457,7 @@ has_audio: boolean;
  * The speech model that transcribed it (entries from before this was
  * kept have none).
  */
-transcription_model: string | null }
+transcription_model: string | null; context: EntryContext }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation

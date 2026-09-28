@@ -701,7 +701,9 @@
       "description": "Everything you’ve dictated, newest first. Star the ones worth keeping.",
       "keep": {
         "title": "Keeping history"
-      }
+      },
+      "showContext": "What cleanup saw on screen",
+      "hideContext": "Hide screen context"
     },
     "debug": {
       "title": "Debug",

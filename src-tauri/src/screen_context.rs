@@ -255,12 +255,34 @@ enum Slot {
 
 static SLOT: Lazy<Mutex<Slot>> = Lazy::new(|| Mutex::new(Slot::Empty));
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The block the last cleanup was actually given (after the privacy
+/// settings), for History.
+static USED: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// Note what this dictation's cleanup was given.
+pub fn record_used(block: Option<String>) {
+    *USED.lock().unwrap_or_else(|e| e.into_inner()) = block;
+}
+
+/// What the last cleanup was given, taken so it isn't reported twice.
+pub fn take_used() -> Option<String> {
+    USED.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// For a retry: the screen as it was for the original dictation, instead
+/// of reading it now.
+pub fn provide(block: Option<String>) {
+    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    *SLOT.lock().unwrap_or_else(|e| e.into_inner()) = Slot::Ready(generation, block);
+    record_used(None);
+}
 
 /// Start reading the screen for a new dictation (call when recording
 /// starts). Returns the generation to finish it with.
 pub fn begin() -> u64 {
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     *SLOT.lock().unwrap_or_else(|e| e.into_inner()) = Slot::Reading(generation);
+    record_used(None);
     generation
 }
 

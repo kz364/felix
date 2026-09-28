@@ -86,7 +86,8 @@ fn finish(app: &AppHandle, samples: Vec<f32>, post_process: bool) {
                 return;
             }
         };
-        let processed = process_transcription_output(&app, &transcription, post_process).await;
+        let processed =
+            process_transcription_output(&app, &transcription, post_process, true).await;
         if let Err(e) = hm.save_entry(
             String::new(),
             transcription,
@@ -94,6 +95,7 @@ fn finish(app: &AppHandle, samples: Vec<f32>, post_process: bool) {
             processed.post_processed_text.clone(),
             processed.post_process_prompt.clone(),
             model,
+            crate::actions::entry_context(&app),
         ) {
             log::error!("Failed to save history entry: {e}");
         }

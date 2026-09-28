@@ -32,7 +32,41 @@ static MIGRATIONS: &[M] = &[
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_prompt TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_requested BOOLEAN NOT NULL DEFAULT 0;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN transcription_model TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN app_name TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN bundle_id TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN url_host TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN declared_category TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN category TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN cleanup_context TEXT;"),
 ];
+
+/// Where a dictation went and what its cleanup was given (entries from
+/// before this was kept have none of it).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+pub struct EntryContext {
+    pub app_name: Option<String>,
+    pub bundle_id: Option<String>,
+    /// The browser tab's site, when it was a browser.
+    pub url_host: Option<String>,
+    pub declared_category: Option<String>,
+    /// Its group under Tone by app, at the time.
+    pub category: Option<crate::settings::AppCategory>,
+    /// What cleanup was given from the screen (conversation, text around
+    /// the cursor), if anything.
+    pub cleanup_context: Option<String>,
+}
+
+impl EntryContext {
+    /// The app context to replay it with.
+    pub fn dictation_context(&self) -> crate::app_context::DictationContext {
+        crate::app_context::DictationContext {
+            app_name: self.app_name.clone(),
+            bundle_id: self.bundle_id.clone(),
+            url_host: self.url_host.clone(),
+            declared_category: self.declared_category.clone(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct PaginatedHistory {
@@ -69,6 +103,7 @@ pub struct HistoryEntry {
     /// The speech model that transcribed it (entries from before this was
     /// kept have none).
     pub transcription_model: Option<String>,
+    pub context: EntryContext,
 }
 
 pub struct HistoryManager {
@@ -218,6 +253,17 @@ impl HistoryManager {
             post_process_requested: row.get("post_process_requested")?,
             has_audio: !row.get::<_, String>("file_name")?.is_empty(),
             transcription_model: row.get("transcription_model").unwrap_or(None),
+            context: EntryContext {
+                app_name: row.get("app_name").unwrap_or(None),
+                bundle_id: row.get("bundle_id").unwrap_or(None),
+                url_host: row.get("url_host").unwrap_or(None),
+                declared_category: row.get("declared_category").unwrap_or(None),
+                category: row
+                    .get::<_, Option<String>>("category")
+                    .unwrap_or(None)
+                    .and_then(|c| serde_json::from_value(serde_json::Value::String(c)).ok()),
+                cleanup_context: row.get("cleanup_context").unwrap_or(None),
+            },
         })
     }
 
@@ -227,6 +273,7 @@ impl HistoryManager {
 
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory.
+    #[allow(clippy::too_many_arguments)]
     pub fn save_entry(
         &self,
         file_name: String,
@@ -235,6 +282,7 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
         transcription_model: Option<String>,
+        context: EntryContext,
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -250,8 +298,14 @@ impl HistoryManager {
                 post_processed_text,
                 post_process_prompt,
                 post_process_requested,
-                transcription_model
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                transcription_model,
+                app_name,
+                bundle_id,
+                url_host,
+                declared_category,
+                category,
+                cleanup_context
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 &file_name,
                 timestamp,
@@ -262,6 +316,12 @@ impl HistoryManager {
                 &post_process_prompt,
                 post_process_requested,
                 &transcription_model,
+                &context.app_name,
+                &context.bundle_id,
+                &context.url_host,
+                &context.declared_category,
+                category_name(context.category),
+                &context.cleanup_context,
             ],
         )?;
 
@@ -277,6 +337,7 @@ impl HistoryManager {
             post_process_prompt,
             post_process_requested,
             transcription_model,
+            context,
         };
 
         debug!("Saved history entry with id {}", entry.id);
@@ -295,7 +356,8 @@ impl HistoryManager {
         Ok(entry)
     }
 
-    /// Update an existing history entry with new transcription results (used by retry).
+    /// Update an existing history entry with new transcription results (used
+    /// by retry). Its context stays: a retry replays it.
     pub fn update_transcription(
         &self,
         id: i64,
@@ -322,13 +384,11 @@ impl HistoryManager {
             return Err(anyhow!("History entry {} not found", id));
         }
 
-        let entry = conn
-            .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model
-                 FROM transcription_history WHERE id = ?1",
-                params![id],
-                Self::map_history_entry,
-            )?;
+        let entry = conn.query_row(
+            "SELECT * FROM transcription_history WHERE id = ?1",
+            params![id],
+            Self::map_history_entry,
+        )?;
 
         debug!("Updated transcription for history entry {}", id);
 
@@ -438,7 +498,7 @@ impl HistoryManager {
             (Some(cursor_id), Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
                      FROM transcription_history
                      WHERE id < ?1
                      ORDER BY id DESC
@@ -452,7 +512,7 @@ impl HistoryManager {
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
                      FROM transcription_history
                      ORDER BY id DESC
                      LIMIT ?1",
@@ -464,7 +524,7 @@ impl HistoryManager {
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
@@ -495,7 +555,7 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested, transcription_model
+                post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
              FROM transcription_history
              ORDER BY timestamp DESC
              LIMIT 1",
@@ -522,7 +582,7 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested, transcription_model
+                post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
              FROM transcription_history
              WHERE transcription_text != ''
              ORDER BY timestamp DESC
@@ -576,7 +636,7 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested, transcription_model
+                post_process_requested, transcription_model, app_name, bundle_id, url_host, declared_category, category, cleanup_context
              FROM transcription_history
              WHERE id = ?1",
         )?;
@@ -646,7 +706,13 @@ mod tests {
                 post_processed_text TEXT,
                 post_process_prompt TEXT,
                 post_process_requested BOOLEAN NOT NULL DEFAULT 0,
-                transcription_model TEXT
+                transcription_model TEXT,
+                app_name TEXT,
+                bundle_id TEXT,
+                url_host TEXT,
+                declared_category TEXT,
+                category TEXT,
+                cleanup_context TEXT
             );",
         )
         .expect("create transcription_history table");
@@ -677,6 +743,19 @@ mod tests {
             ],
         )
         .expect("insert history entry");
+    }
+
+    #[test]
+    fn category_names_round_trip() {
+        use crate::settings::AppCategory;
+        assert_eq!(
+            category_name(Some(AppCategory::Coding)).as_deref(),
+            Some("coding")
+        );
+        let back: AppCategory =
+            serde_json::from_value(serde_json::Value::String("coding".into())).unwrap();
+        assert_eq!(back, AppCategory::Coding);
+        assert_eq!(category_name(None), None);
     }
 
     #[test]
@@ -714,4 +793,11 @@ mod tests {
         assert_eq!(entry.timestamp, 100);
         assert_eq!(entry.transcription_text, "completed");
     }
+}
+
+/// A category as stored (its serde name, "coding").
+fn category_name(category: Option<crate::settings::AppCategory>) -> Option<String> {
+    category
+        .and_then(|c| serde_json::to_value(c).ok())
+        .and_then(|v| v.as_str().map(str::to_string))
 }

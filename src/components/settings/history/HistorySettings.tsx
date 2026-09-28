@@ -312,6 +312,15 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const [retrying, setRetrying] = useState(false);
 
   const [showOriginal, setShowOriginal] = useState(false);
+  const [showContext, setShowContext] = useState(false);
+  const { app_name, url_host, category, cleanup_context } = entry.context;
+  // "Claude · Coding agents", or "Chrome (mail.google.com) · Email".
+  const where = [
+    app_name && (url_host ? `${app_name} (${url_host})` : app_name),
+    category && t(`settings.style.categories.${category}`),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const hasTranscription = pastedText(entry).trim().length > 0;
   const hasOriginal =
     !!entry.post_processed_text?.trim() &&
@@ -363,7 +372,10 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   return (
     <div className="px-4 pt-3 pb-4 flex flex-col gap-2">
       <div className="flex justify-between items-center">
-        <p className="text-xs text-text/50 tabular-nums">{formattedDate}</p>
+        <p className="text-xs text-text/50">
+          <span className="tabular-nums">{formattedDate}</span>
+          {where && ` · ${where}`}
+        </p>
         <div className="flex items-center">
           <IconButton
             onClick={handleCopyText}
@@ -450,20 +462,39 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      {hasOriginal && !retrying && (
+      {(hasOriginal || cleanup_context) && !retrying && (
         <div className="pb-2 -mt-1 space-y-1">
-          <button
-            onClick={() => setShowOriginal(!showOriginal)}
-            className="text-xs text-text/50 hover:text-text cursor-pointer"
-          >
-            {showOriginal
-              ? t("settings.history.hideOriginal")
-              : t("settings.history.showOriginal")}
-          </button>
+          <div className="flex gap-3">
+            {hasOriginal && (
+              <button
+                onClick={() => setShowOriginal(!showOriginal)}
+                className="text-xs text-text/50 hover:text-text cursor-pointer"
+              >
+                {showOriginal
+                  ? t("settings.history.hideOriginal")
+                  : t("settings.history.showOriginal")}
+              </button>
+            )}
+            {cleanup_context && (
+              <button
+                onClick={() => setShowContext(!showContext)}
+                className="text-xs text-text/50 hover:text-text cursor-pointer"
+              >
+                {showContext
+                  ? t("settings.history.hideContext")
+                  : t("settings.history.showContext")}
+              </button>
+            )}
+          </div>
           {showOriginal && (
             <p className="text-xs text-text/60 select-text cursor-text whitespace-pre-wrap break-words border-s-2 border-stone/20 ps-2">
               {entry.transcription_text}
             </p>
+          )}
+          {showContext && cleanup_context && (
+            <pre className="max-h-64 overflow-auto rounded-md bg-sunken p-2 font-mono text-xs leading-snug text-text/70 select-text whitespace-pre-wrap break-words">
+              {cleanup_context}
+            </pre>
           )}
         </div>
       )}
