@@ -20,6 +20,8 @@ pub struct DictationContext {
 
 static CURRENT: Lazy<Arc<Mutex<DictationContext>>> =
     Lazy::new(|| Arc::new(Mutex::new(DictationContext::default())));
+/// Set while the browser tab's host is being read for the current capture.
+static URL_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Chromium-family browsers share Chrome's AppleScript dictionary.
 const CHROMIUM_BROWSERS: &[&str] = &[
@@ -108,8 +110,10 @@ pub fn capture() {
     log::debug!("Dictation context: {:?}", ctx);
     *CURRENT.lock().unwrap() = ctx;
 
+    URL_PENDING.store(false, std::sync::atomic::Ordering::Release);
     if let Some(bundle_id) = bundle_id.filter(|b| is_browser(b)) {
         let current = Arc::clone(&CURRENT);
+        URL_PENDING.store(true, std::sync::atomic::Ordering::Release);
         std::thread::spawn(move || {
             let host = browser_url(&bundle_id).and_then(|url| url_host(&url));
             log::debug!("Browser tab host: {:?}", host);
@@ -117,8 +121,18 @@ pub fn capture() {
             // Only fill in if no newer capture replaced this one.
             if ctx.bundle_id.as_deref() == Some(bundle_id.as_str()) {
                 ctx.url_host = host;
+                URL_PENDING.store(false, std::sync::atomic::Ordering::Release);
             }
         });
+    }
+}
+
+/// Wait (at most `cap`) until the browser tab's website is known, so its
+/// category's instructions apply. Returns at once outside browsers.
+pub fn wait_for_url(cap: std::time::Duration) {
+    let started = std::time::Instant::now();
+    while URL_PENDING.load(std::sync::atomic::Ordering::Acquire) && started.elapsed() < cap {
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

@@ -26,6 +26,10 @@ const TTL_MS: u64 = 1_500;
 const MIN_VOTES: usize = 3;
 /// …and when this share of its sightings agree.
 const MIN_SHARE: f32 = 0.6;
+/// One name on several voices, each talking at least this long, is a
+/// room on the call (several people on one account): the voices are
+/// numbered instead of all getting the same name.
+const ROOM_VOICE_MS: u64 = 20_000;
 /// Limits on one read of the call app, so a huge browser tree can't stall.
 const MAX_NODES: usize = 4_000;
 const READ_BUDGET: Duration = Duration::from_millis(400);
@@ -80,6 +84,9 @@ const NOT_NAMES: &[&str] = &[
     "speaker",
     "participants",
     "unknown",
+    // Chrome's Edit → Speech → Start / Stop Speaking.
+    "start",
+    "stop",
 ];
 
 /// Teams marks the talking tile by id rather than words.
@@ -177,8 +184,38 @@ fn winner(votes: &BTreeMap<String, usize>, min_votes: usize) -> Option<String> {
 }
 
 /// Names for the voices told apart on the system track (ids from
-/// [`SYSTEM_SPEAKERS`]), where the sightings clearly agree.
+/// [`SYSTEM_SPEAKERS`]), where the sightings clearly agree. Several people
+/// in one room on the call show as one name; their voices become
+/// "Name (1)", "Name (2)" in the order they first spoke.
 pub fn name_voices(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
+    let mut names = vote_names(segments, seen);
+    // How long each voice talks, and when it first does.
+    let mut talk: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
+    for s in segments.iter().filter(|s| s.source == Source::System) {
+        if let Some(id) = s.speaker {
+            let e = talk.entry(id).or_insert((0, s.start_ms));
+            e.0 += s.end_ms.saturating_sub(s.start_ms);
+            e.1 = e.1.min(s.start_ms);
+        }
+    }
+    let mut by_name: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for (id, name) in &names {
+        by_name.entry(name.clone()).or_default().push(*id);
+    }
+    for (name, mut ids) in by_name {
+        let talks = |id: &u32| talk.get(id).map_or(0, |t| t.0) >= ROOM_VOICE_MS;
+        if ids.len() < 2 || !ids.iter().all(talks) {
+            continue;
+        }
+        ids.sort_by_key(|id| talk.get(id).map_or(u64::MAX, |t| t.1));
+        for (n, id) in ids.into_iter().enumerate() {
+            names.insert(id, format!("{name} ({})", n + 1));
+        }
+    }
+    names
+}
+
+fn vote_names(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
     let mut votes: BTreeMap<u32, BTreeMap<String, usize>> = BTreeMap::new();
     for s in segments.iter().filter(|s| s.source == Source::System) {
         let Some(id) = s.speaker.filter(|&n| n >= SYSTEM_SPEAKERS) else {
@@ -225,12 +262,27 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
     let Some(mut transcript) = super::pipeline::load(dir) else {
         return BTreeMap::new();
     };
-    let told_apart = transcript
+    let voices: std::collections::BTreeSet<u32> = transcript
         .segments
         .iter()
-        .any(|s| s.source == Source::System && s.speaker.is_some());
-    if told_apart {
+        .filter(|s| s.source == Source::System)
+        .filter_map(|s| s.speaker)
+        .collect();
+    let names_seen: std::collections::BTreeSet<&str> =
+        seen.iter().map(|s| s.name.as_str()).collect();
+    // One voice but several names: the voices couldn't be told apart (a
+    // muddy line), so the names split the track instead.
+    if !voices.is_empty() && !(voices.len() == 1 && names_seen.len() >= 2) {
         return name_voices(&transcript.segments, &seen);
+    }
+    if voices.len() == 1 {
+        for s in transcript
+            .segments
+            .iter_mut()
+            .filter(|s| s.source == Source::System)
+        {
+            s.speaker = None;
+        }
     }
     let names = split_by_name(&mut transcript.segments, &seen);
     if !names.is_empty() {
@@ -393,6 +445,35 @@ mod tests {
         assert_eq!(names.get(&b).unwrap(), "Ana");
         // Too few sightings: no name.
         assert!(!name_voices(&segments, &sightings[..2]).contains_key(&a));
+    }
+
+    #[test]
+    fn menu_items_about_speaking_are_not_names() {
+        assert_eq!(speaker_in(&texts(&["Start Speaking"])), None);
+        assert_eq!(speaker_in(&texts(&["Stop Speaking"])), None);
+    }
+
+    #[test]
+    fn a_room_on_one_account_gets_numbered_voices() {
+        let a = SYSTEM_SPEAKERS;
+        let b = SYSTEM_SPEAKERS + 1;
+        // Two voices, both while "Yohannes" is marked as talking.
+        let segments = vec![
+            seg(Source::System, 30_000, 60_000, Some(b)),
+            seg(Source::System, 0, 30_000, Some(a)),
+        ];
+        let sightings: Vec<Seen> = (0..60).map(|i| seen(i * 1_000, "Yohannes")).collect();
+        let names = name_voices(&segments, &sightings);
+        assert_eq!(names[&a], "Yohannes (1)");
+        assert_eq!(names[&b], "Yohannes (2)");
+        // A brief second voice is more likely the same person: one name.
+        let segments = vec![
+            seg(Source::System, 0, 50_000, Some(a)),
+            seg(Source::System, 50_000, 55_000, Some(b)),
+        ];
+        let names = name_voices(&segments, &sightings);
+        assert_eq!(names[&a], "Yohannes");
+        assert_eq!(names[&b], "Yohannes");
     }
 
     #[test]

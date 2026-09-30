@@ -70,17 +70,13 @@ pub struct DictationRecord {
     pub inserted: Option<InsertedSpan>,
 }
 
-static AT_START: Lazy<Mutex<Option<FieldSnapshot>>> = Lazy::new(|| Mutex::new(None));
 static RECORDS: Lazy<Mutex<VecDeque<DictationRecord>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 static NEXT_ID: Lazy<Mutex<u32>> = Lazy::new(|| Mutex::new(1));
 
-/// Snapshot the focused field as recording starts (in the background, so a
-/// slow app never delays capture).
+/// Snapshot the focused field as recording starts (shared with the
+/// cleanup's screen context; see [`text_field::snapshot_at_start`]).
 pub fn capture_at_start() {
-    *AT_START.lock().unwrap() = None;
-    std::thread::spawn(|| {
-        *AT_START.lock().unwrap() = text_field::focused_field();
-    });
+    text_field::snapshot_at_start();
 }
 
 fn edge_words(text: &str) -> (Option<String>, Option<String>) {
@@ -138,7 +134,7 @@ pub fn build_record(
 /// After a paste: read the field back once it settles and log the record.
 pub fn record_after_paste(pasted_text: String, before: Option<FieldSnapshot>) {
     let context = crate::app_context::current();
-    let at_start = AT_START.lock().unwrap().take();
+    let at_start = text_field::start_snapshot(Duration::ZERO);
     std::thread::spawn(move || {
         std::thread::sleep(SETTLE_DELAY);
         let after = text_field::focused_field();

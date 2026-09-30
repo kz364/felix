@@ -650,11 +650,65 @@ mod ax {
     }
 }
 
+/// The focused field as a dictation started, read once and shared by the
+/// dictation log and the cleanup's screen context.
+enum StartField {
+    Reading(u64),
+    Ready(Option<FieldSnapshot>),
+}
+
+static START_FIELD: std::sync::Mutex<StartField> = std::sync::Mutex::new(StartField::Ready(None));
+static START_READY: std::sync::Condvar = std::sync::Condvar::new();
+static START_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Read the focused field in the background as recording starts (so a slow
+/// app never delays capture). In Chromium and Electron apps it waits for
+/// the Accessibility tree Handy just switched on, so the field is found.
+pub fn snapshot_at_start() {
+    let generation = START_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    *START_FIELD.lock().unwrap_or_else(|e| e.into_inner()) = StartField::Reading(generation);
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        if let Some(pid) = crate::app_context::frontmost_tree_pid() {
+            wake_tree(pid);
+            wait_for_tree(pid);
+        }
+        let field = focused_field();
+        log::debug!(
+            "Start snapshot of the focused field: {} in {:?}",
+            if field.is_some() { "read" } else { "none" },
+            started.elapsed()
+        );
+        let mut slot = START_FIELD.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*slot, StartField::Reading(g) if g == generation) {
+            *slot = StartField::Ready(field);
+            START_READY.notify_all();
+        }
+    });
+}
+
+/// The start snapshot, waiting at most `wait` for it to be read. `None` if
+/// nothing readable was focused, or it isn't read yet.
+pub fn start_snapshot(wait: std::time::Duration) -> Option<FieldSnapshot> {
+    let slot = START_FIELD.lock().unwrap_or_else(|e| e.into_inner());
+    let (slot, _) = START_READY
+        .wait_timeout_while(slot, wait, |s| matches!(s, StartField::Reading(_)))
+        .unwrap_or_else(|e| e.into_inner());
+    match &*slot {
+        StartField::Ready(field) => field.clone(),
+        StartField::Reading(_) => None,
+    }
+}
+
 /// Snapshot of the focused text field, if it can be read.
 pub fn focused_field() -> Option<FieldSnapshot> {
     #[cfg(target_os = "macos")]
     {
-        ax::focused_field()
+        let field = ax::focused_field();
+        if let Some(f) = &field {
+            crate::paste_apps::saw_text_field(f.pid);
+        }
+        field
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -783,7 +837,20 @@ pub fn paste_target() -> PasteTarget {
         let (bundle_id, lazy_ax) = crate::app_context::frontmost_bundle();
         let live = lazy_ax && crate::app_context::frontmost_pid().is_some_and(tree_is_live);
         let probe = ax::probe_focus();
-        let target = classify_target(bundle_id.as_deref().unwrap_or(""), lazy_ax && !live, &probe);
+        let mut target =
+            classify_target(bundle_id.as_deref().unwrap_or(""), lazy_ax && !live, &probe);
+        let pid = crate::app_context::frontmost_pid();
+        if let Some(pid) = pid {
+            match target {
+                PasteTarget::Text => crate::paste_apps::saw_text_field(pid),
+                // Not seen this version's text fields (it may have updated
+                // and hidden them): paste rather than keep the text back.
+                PasteTarget::NoText if !crate::paste_apps::trust_no_text(pid) => {
+                    target = PasteTarget::Unknown
+                }
+                _ => {}
+            }
+        }
         log::debug!(
             "Paste target in {:?} (tree live: {}): {:?} -> {:?}",
             bundle_id,

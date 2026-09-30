@@ -8,11 +8,14 @@
 //! again.
 //!
 //! It can take the keyboard (to type notes) without making Felix the active
-//! app, so the call app keeps its place.
+//! app, so the call app keeps its place. Dropped near a side of the screen,
+//! it snaps to it. The window changes size in one step; the page animates
+//! the panel growing out of the tab and back.
 
 use serde::Serialize;
 use specta::Type;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const LABEL: &str = "meeting_panel";
@@ -23,6 +26,10 @@ const COLLAPSED: (f64, f64) = (48.0, 176.0);
 const EDGE: f64 = 16.0;
 /// Down from the top of the screen's usable area.
 const TOP: f64 = 72.0;
+/// Dropped this close to a side of the screen, the panel snaps to it.
+const SNAP: f64 = 48.0;
+/// How long the panel has to be still before it snaps.
+const SNAP_AFTER: Duration = Duration::from_millis(250);
 
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
@@ -38,6 +45,8 @@ tauri_nspanel::tauri_panel! {
 /// the user left it.
 static PLACED: AtomicBool = AtomicBool::new(false);
 static EXPANDED_NOW: AtomicBool = AtomicBool::new(true);
+/// Counts moves, so only the last one of a drag snaps.
+static MOVES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, Serialize, Type)]
 pub struct MeetingPanelState {
@@ -78,6 +87,7 @@ pub fn create(app: &AppHandle) {
                     window.on_window_event(move |event| {
                         if let tauri::WindowEvent::Moved(_) = event {
                             keep_tab_on_edge(&w);
+                            snap_when_dropped(&w);
                         }
                     });
                 }
@@ -131,9 +141,87 @@ fn fit(window: &tauri::WebviewWindow, expanded: bool) {
         };
         let top = pos.y as f64 / scale;
         let y = top.clamp(sy, (sy + sh - height).max(sy));
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        set_frame(window, (x, y, width, height), false);
+    } else {
+        let _ = window.set_size(tauri::LogicalSize::new(width, height));
     }
-    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+}
+
+/// Move and size the window in one step (logical, from the top left), so
+/// it doesn't jump twice; `animate` slides it there.
+fn set_frame(window: &tauri::WebviewWindow, (x, y, w, h): (f64, f64, f64, f64), animate: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSScreen, NSWindow};
+        use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
+        if let (Some(mtm), Ok(ns)) = (MainThreadMarker::new(), window.ns_window()) {
+            // Cocoa counts up from the bottom of the main screen.
+            if let Some(main) = NSScreen::screens(mtm).firstObject() {
+                let bottom = main.frame().size.height - y - h;
+                let rect = NSRect::new(NSPoint::new(x, bottom), NSSize::new(w, h));
+                // SAFETY: Tauri's NSWindow for this webview, on the main thread.
+                let ns: &NSWindow = unsafe { &*(ns as *const NSWindow) };
+                ns.setFrame_display_animate(rect, true, animate);
+                return;
+            }
+        }
+    }
+    let _ = animate;
+    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+/// Where a panel at `x` (logical, `width` wide) snaps to on a screen from
+/// `sx`, `sw` wide: flush with a side it's near, else nowhere.
+fn snapped_x(x: f64, width: f64, sx: f64, sw: f64) -> Option<f64> {
+    let left = sx + EDGE;
+    let right = sx + sw - width - EDGE;
+    [left, right]
+        .into_iter()
+        .find(|to| (x - to).abs() <= SNAP && (x - to).abs() > 0.5)
+}
+
+/// Once a drag of the open panel ends near a side, slide it flush.
+fn snap_when_dropped(window: &tauri::WebviewWindow) {
+    if !EXPANDED_NOW.load(Ordering::SeqCst) {
+        return;
+    }
+    let this = MOVES.fetch_add(1, Ordering::SeqCst) + 1;
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SNAP_AFTER);
+        if MOVES.load(Ordering::SeqCst) != this {
+            return;
+        }
+        let w = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if !EXPANDED_NOW.load(Ordering::SeqCst) || mouse_down() {
+                // Still being dragged: the next move tries again.
+                return;
+            }
+            let scale = w.scale_factor().unwrap_or(1.0);
+            let (Some((sx, _, sw, _)), Ok(pos), Ok(size)) =
+                (screen_of(&w), w.outer_position(), w.outer_size())
+            else {
+                return;
+            };
+            let (x, y) = (pos.x as f64 / scale, pos.y as f64 / scale);
+            let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
+            if let Some(to) = snapped_x(x, width, sx, sw) {
+                set_frame(&w, (to, y, width, height), true);
+            }
+        });
+    });
+}
+
+/// Whether a mouse button is held (a drag still going).
+fn mouse_down() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        objc2_app_kit::NSEvent::pressedMouseButtons() != 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// Dragging the tab only moves it up and down the edge.
@@ -171,13 +259,13 @@ pub fn show(app: &AppHandle) {
         let Some(window) = handle.get_webview_window(LABEL) else {
             return;
         };
-        EXPANDED_NOW.store(true, Ordering::SeqCst);
         if !PLACED.swap(true, Ordering::SeqCst) {
+            EXPANDED_NOW.store(true, Ordering::SeqCst);
             if let Some((x, y)) = first_place(&handle, EXPANDED.0) {
                 let _ = window.set_position(tauri::LogicalPosition::new(x, y));
             }
             let _ = window.set_size(tauri::LogicalSize::new(EXPANDED.0, EXPANDED.1));
-        } else {
+        } else if !EXPANDED_NOW.swap(true, Ordering::SeqCst) {
             fit(&window, true);
         }
         emit_state(&handle);
@@ -208,6 +296,23 @@ pub fn hide(app: &AppHandle) {
     });
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snaps_to_a_near_side_only() {
+        // A 1440-wide screen, a 340-wide panel: flush right is x = 1084.
+        assert_eq!(snapped_x(1060.0, 340.0, 0.0, 1440.0), Some(1084.0));
+        assert_eq!(snapped_x(40.0, 340.0, 0.0, 1440.0), Some(EDGE));
+        assert_eq!(snapped_x(600.0, 340.0, 0.0, 1440.0), None);
+        // Already there.
+        assert_eq!(snapped_x(1084.0, 340.0, 0.0, 1440.0), None);
+        // A second screen to the right.
+        assert_eq!(snapped_x(1470.0, 340.0, 1440.0, 1920.0), Some(1456.0));
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_meeting_panel_state() -> MeetingPanelState {
@@ -226,8 +331,9 @@ pub fn set_meeting_panel_expanded(app: AppHandle, expanded: bool) {
             return;
         };
         EXPANDED_NOW.store(expanded, Ordering::SeqCst);
-        emit_state(&handle);
+        // Resized first, so the page animates at its new size.
         fit(&window, expanded);
+        emit_state(&handle);
     });
 }
 

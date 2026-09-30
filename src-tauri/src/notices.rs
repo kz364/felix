@@ -151,6 +151,37 @@ fn present(app: &AppHandle, notice: Notice) {
     crate::overlay::show_notice(app, notice.title, notice.text, buttons, notice.seconds);
 }
 
+/// A dictation kept back because nothing seemed focused in `bundle_id`:
+/// the card with Copy and "Paste anyway", which pastes it and always pastes
+/// in that app from now on (for apps that hide their text boxes from
+/// Accessibility).
+pub fn show_kept_back(app: &AppHandle, text: String, bundle_id: Option<String>) {
+    let mut pending = PENDING.lock().unwrap();
+    pending.clear();
+    let mut buttons = Vec::new();
+    if let Some(bundle_id) = bundle_id {
+        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst).to_string();
+        buttons.push(crate::overlay::NoticeButton {
+            id: id.clone(),
+            label: "Paste anyway".into(),
+        });
+        let pasted = text.clone();
+        let run: Run = Box::new(move |app: &AppHandle| {
+            crate::paste_apps::always_paste_in(&bundle_id);
+            let app2 = app.clone();
+            // The card is gone and the app still has the keyboard.
+            let _ = app.run_on_main_thread(move || {
+                if let Err(e) = crate::clipboard::paste(pasted, app2, None) {
+                    log::error!("Paste anyway failed: {e}");
+                }
+            });
+        });
+        pending.insert(id, run);
+    }
+    drop(pending);
+    crate::overlay::show_result_with_actions(app, text, buttons);
+}
+
 /// Bring up the settings window on a page ("dictation", "vocabulary"…).
 pub fn open_settings(app: &AppHandle, section: &str) {
     crate::show_main_window(app);

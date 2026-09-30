@@ -253,6 +253,9 @@ pub(crate) fn warm_up_at_launch(app: &AppHandle) {
 
 fn prewarm_cleanup(settings: &AppSettings, screen_generation: u64) {
     let with_screen = screen_context_for(settings, &settings.post_process_provider_id);
+    if !with_screen {
+        crate::screen_context::skip(screen_generation);
+    }
     if uses_level_cleanup(settings)
         && settings.post_process_provider_id == crate::local_llm::LOCAL_PROVIDER_ID
     {
@@ -269,12 +272,8 @@ fn prewarm_cleanup(settings: &AppSettings, screen_generation: u64) {
             } else {
                 None
             };
-            if crate::app_context::current()
-                .bundle_id
-                .is_some_and(|b| crate::app_context::is_browser(&b))
-            {
-                std::thread::sleep(Duration::from_millis(800));
-            }
+            // The tab's website picks the category's instructions.
+            crate::app_context::wait_for_url(Duration::from_millis(800));
             let Some(prompt) = level_prompt_with_instructions(&settings, settings.cleanup_level)
             else {
                 return;
@@ -311,13 +310,8 @@ fn prewarm_cleanup(settings: &AppSettings, screen_generation: u64) {
         let settings = settings.clone();
         std::thread::spawn(move || {
             // Browsers resolve the tab's website (and so its category's
-            // instructions) in the background; give that a moment.
-            let in_browser = crate::app_context::current()
-                .bundle_id
-                .is_some_and(|b| crate::app_context::is_browser(&b));
-            if in_browser {
-                std::thread::sleep(Duration::from_millis(800));
-            }
+            // instructions) in the background; wait for that, briefly.
+            crate::app_context::wait_for_url(Duration::from_millis(800));
             let Some(prompt) = level_prompt_with_instructions(&settings, settings.cleanup_level)
             else {
                 return;
@@ -336,6 +330,41 @@ fn prewarm_cleanup(settings: &AppSettings, screen_generation: u64) {
     }
     #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     let _ = settings;
+}
+
+/// How long each step before a paste took, for the log.
+struct PasteTimings {
+    last: Instant,
+    steps: Vec<(&'static str, Duration)>,
+}
+
+impl PasteTimings {
+    /// Starting from when the paste was queued for the main thread.
+    fn new(queued: Instant) -> Self {
+        let mut timings = Self {
+            last: queued,
+            steps: Vec::new(),
+        };
+        timings.mark("to main thread");
+        timings
+    }
+
+    fn mark(&mut self, step: &'static str) {
+        let now = Instant::now();
+        self.steps.push((step, now - self.last));
+        self.last = now;
+    }
+}
+
+impl std::fmt::Display for PasteTimings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let steps: Vec<String> = self
+            .steps
+            .iter()
+            .map(|(step, d)| format!("{step} {:.1} ms", d.as_secs_f64() * 1000.0))
+            .collect();
+        f.write_str(&steps.join(", "))
+    }
 }
 
 /// Whether every dictation gets the level-based AI cleanup.
@@ -365,6 +394,7 @@ async fn post_process_transcription(
 ) -> Option<String> {
     let output = run_post_process_llm(settings, transcription, request).await?;
     let output = crate::cleanup::unwrap_output(&output);
+    let output = crate::cleanup::without_new_dashes(transcription, &output);
     let level = match request {
         CleanupRequest::Level(level) => Some(level),
         CleanupRequest::SelectedPrompt => None,
@@ -516,7 +546,10 @@ async fn run_post_process_llm(
     }
 
     // Taken even when unused, so a late read can't leak into the next one.
-    let screen = crate::screen_context::take_for_cleanup();
+    // Waits briefly for a read still in flight.
+    let screen = tauri::async_runtime::spawn_blocking(crate::screen_context::take_for_cleanup)
+        .await
+        .unwrap_or(None);
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -1803,6 +1836,7 @@ impl ShortcutAction for TranscribeAction {
                                 // Felix can't ask itself from the main thread.
                                 let own_target = crate::text_field::own_app_paste_target();
                                 ah.run_on_main_thread(move || {
+                                    let mut timings = PasteTimings::new(paste_time);
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
                                         utils::hide_recording_overlay(&ah_clone);
@@ -1848,31 +1882,59 @@ impl ShortcutAction for TranscribeAction {
                                         placement,
                                         None | Some(crate::assistant::Placement::Insert)
                                     );
-                                    // In Claude, Codex or WhatsApp with no text box
-                                    // focused, put the cursor in the thread's
-                                    // message box (not a terminal) first.
-                                    if !final_text.is_empty()
-                                        && inserting
-                                        && settings.focus_message_box
-                                    {
-                                        crate::screen_context::focus_message_box();
+                                    // A readable text field in focus takes the
+                                    // paste as it is: no message box to find, and
+                                    // no need to ask what's focused.
+                                    let text_field_in_focus = (!final_text.is_empty()
+                                        && own_target.is_none())
+                                    .then(crate::text_field::focused_field)
+                                    .flatten();
+                                    timings.mark("field");
+                                    if text_field_in_focus.is_none() {
+                                        // In Claude, Codex or WhatsApp with no text
+                                        // box focused, put the cursor in the thread's
+                                        // message box (not a terminal) first.
+                                        if !final_text.is_empty()
+                                            && inserting
+                                            && settings.focus_message_box
+                                        {
+                                            crate::screen_context::focus_message_box();
+                                            timings.mark("message box");
+                                        }
+                                        // Nothing focused that takes text: show it
+                                        // instead of pasting into the void.
+                                        if !final_text.is_empty()
+                                            && settings.result_popup_enabled
+                                            && own_target
+                                                .unwrap_or_else(crate::text_field::paste_target)
+                                                == crate::text_field::PasteTarget::NoText
+                                        {
+                                            info!("No text field focused; showing the dictation instead of pasting");
+                                            // Felix's own window has no "Paste anyway".
+                                            let bundle_id = own_target
+                                                .is_none()
+                                                .then(|| crate::app_context::frontmost_bundle().0)
+                                                .flatten();
+                                            crate::notices::show_kept_back(
+                                                &ah_clone,
+                                                final_text,
+                                                bundle_id,
+                                            );
+                                            set_tray_state(&ah_clone, TrayIconState::Idle);
+                                            return;
+                                        }
+                                        timings.mark("target");
                                     }
-                                    // Nothing focused that takes text: show it
-                                    // instead of pasting into the void.
-                                    if !final_text.is_empty()
-                                        && settings.result_popup_enabled
-                                        && own_target
-                                            .unwrap_or_else(crate::text_field::paste_target)
-                                            == crate::text_field::PasteTarget::NoText
-                                    {
-                                        info!("No text field focused; showing the dictation instead of pasting");
-                                        crate::overlay::show_result_overlay(&ah_clone, final_text);
-                                        set_tray_state(&ah_clone, TrayIconState::Idle);
-                                        return;
-                                    }
-                                    let before = (!final_text.is_empty())
-                                        .then(crate::text_field::focused_field)
-                                        .flatten();
+                                    let before = match text_field_in_focus {
+                                        Some(field) => Some(field),
+                                        None => {
+                                            let field = (!final_text.is_empty())
+                                                .then(crate::text_field::focused_field)
+                                                .flatten();
+                                            timings.mark("field again");
+                                            field
+                                        }
+                                    };
                                     let final_text = match (&before, settings.context_aware_paste && inserting) {
                                         (Some(field), true) => {
                                             // Continuing right after the last
@@ -1898,6 +1960,7 @@ impl ShortcutAction for TranscribeAction {
                                         }
                                         _ => final_text,
                                     };
+                                    timings.mark("adapt");
                                     // Talking to Claude Code or Codex: file names
                                     // become mentions.
                                     let final_text = if settings.tag_agent_files && inserting {
@@ -1932,12 +1995,15 @@ impl ShortcutAction for TranscribeAction {
                                             return;
                                         }
                                     }
+                                    timings.mark("tags and stacking");
                                     let pasted_text = final_text.clone();
                                     match utils::paste(final_text, ah_clone.clone(), submit_key) {
                                         Ok(()) => {
+                                            timings.mark("paste");
                                             debug!(
-                                                "Text pasted successfully in {:?}",
-                                                paste_time.elapsed()
+                                                "Text pasted successfully in {:?} ({})",
+                                                paste_time.elapsed(),
+                                                timings
                                             );
                                             if let Some(id) = &bench_id {
                                                 let text = pasted_text.clone();

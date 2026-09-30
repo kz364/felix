@@ -11,6 +11,8 @@ pub mod detect;
 pub mod diarize;
 pub mod echo;
 mod jobs;
+pub use jobs::split_runaways;
+pub mod language;
 pub mod level;
 pub mod live;
 pub mod llm;
@@ -23,6 +25,7 @@ pub mod summary;
 mod system_audio;
 pub mod track;
 pub mod transcript;
+pub mod voiceprint;
 pub mod watch;
 
 pub use capture::{MeetingMode, Recording};

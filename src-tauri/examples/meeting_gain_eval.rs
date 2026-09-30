@@ -9,7 +9,9 @@
 //! they're private.
 //!
 //! Each clip is transcribed like an in-person meeting with:
-//! no gain · dictation's AGC · levelling at +24, +30 and +36 dB maximum.
+//! no gain · dictation's AGC · a percentile gain over the whole clip (p95 of
+//! the last 10 s to RMS 0.06, ×8 at most, slewing 2/s) · the app's own
+//! in-person auto gain (the same gain, run per chunk).
 
 use handy_app_lib::audio_toolkit::read_wav_samples;
 use handy_app_lib::meetings::level::LevelSettings;
@@ -73,6 +75,39 @@ fn dictation_agc(samples: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// Granola-style live gain: aim the loudest 5% of the last 10 s at RMS 0.06,
+/// at most ×8, changing by at most 2 (linear) a second.
+fn percentile_gain(samples: &[f32]) -> Vec<f32> {
+    const FRAME: usize = 480;
+    const HISTORY: usize = 10_000 / 30;
+    let step = 2.0 * FRAME as f32 / 16_000.0;
+    let mut history: std::collections::VecDeque<f32> = Default::default();
+    let mut gain = 1.0f32;
+    let mut out = Vec::with_capacity(samples.len());
+    for frame in samples.chunks(FRAME) {
+        let rms = (frame.iter().map(|v| v * v).sum::<f32>() / frame.len() as f32).sqrt();
+        history.push_back(rms);
+        if history.len() > HISTORY {
+            history.pop_front();
+        }
+        let mut sorted: Vec<f32> = history.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        let p95 = sorted[sorted.len() * 95 / 100];
+        let want = if p95 > 0.0 {
+            (0.06 / p95).clamp(1.0, 8.0)
+        } else {
+            1.0
+        };
+        gain += (want - gain).clamp(-step, step);
+        out.extend(
+            frame
+                .iter()
+                .map(|v| handy_app_lib::audio_toolkit::audio::soft_limit(v * gain)),
+        );
+    }
+    out
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let model_path = args.next().expect("model path");
@@ -82,26 +117,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = model.session()?;
     let options = RunOptions::default();
 
-    let variants: Vec<(&str, Option<LevelSettings>, bool)> = vec![
-        ("no gain", None, false),
-        ("dictation AGC", None, true),
-        (
-            "level +24",
-            Some(LevelSettings {
-                max_boost_db: 24.0,
-                ..LevelSettings::new(0.0, true)
-            }),
-            false,
-        ),
-        (
-            "level +30",
-            Some(LevelSettings {
-                max_boost_db: 30.0,
-                ..LevelSettings::new(0.0, true)
-            }),
-            false,
-        ),
-        ("level +36", Some(LevelSettings::new(0.0, true)), false),
+    // (name, levelling, pre-processing: 1 dictation AGC, 2 percentile gain)
+    let variants: Vec<(&str, Option<LevelSettings>, u8)> = vec![
+        ("no gain", None, 0),
+        ("dictation AGC", None, 1),
+        ("percentile", None, 2),
+        ("app (auto gain)", Some(LevelSettings::new(0.0, true)), 0),
     ];
     let mut totals = vec![0.0f64; variants.len()];
     let mut n = 0;
@@ -131,10 +152,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::env::temp_dir().join(format!("handy-gain-eval-{}-{k}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir)?;
-            let audio = if *agc {
-                dictation_agc(&samples)
-            } else {
-                samples.clone()
+            let audio = match agc {
+                1 => dictation_agc(&samples),
+                2 => percentile_gain(&samples),
+                _ => samples.clone(),
             };
             write_wav(&dir.join("mic.wav"), &audio);
             let t = pipeline::run(
@@ -142,6 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 MeetingMode::InPerson,
                 &vad,
                 *level,
+                None,
                 None,
                 "eval",
                 |a| {
@@ -155,6 +177,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("{e:?}"))?;
             let text: Vec<&str> = t.segments.iter().map(|s| s.text.as_str()).collect();
             let score = wer(&reference, &text.join(" "));
+            if std::env::var_os("SHOW_TEXT").is_some() {
+                eprintln!(
+                    "--- {} / {}\n{}",
+                    wav.display(),
+                    variants[k].0,
+                    text.join(" | ")
+                );
+            }
             totals[k] += score;
             row.push_str(&format!("{:>13.1}%", score * 100.0));
             let _ = std::fs::remove_dir_all(&dir);

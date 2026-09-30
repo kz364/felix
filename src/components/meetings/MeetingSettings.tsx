@@ -6,6 +6,11 @@ import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Slider } from "../ui/Slider";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { X } from "lucide-react";
+import {
+  getLanguageLabel,
+  MODEL_CAPABILITY_LANGUAGES,
+} from "../../lib/constants/languages";
 
 /** How meetings are transcribed, told apart, tidied and summarised. */
 export const MeetingSettings: React.FC = () => {
@@ -53,6 +58,7 @@ export const MeetingSettings: React.FC = () => {
           disabled={isUpdating("meeting_transcriber")}
         />
       </SettingContainer>
+      <MeetingLanguages />
       <ToggleSwitch
         checked={getSetting("meeting_diarize") ?? true}
         onChange={(v) => updateSetting("meeting_diarize", v)}
@@ -184,5 +190,60 @@ export const MeetingSettings: React.FC = () => {
         />
       </SettingContainer>
     </>
+  );
+};
+
+/** The languages meetings are held in: none means found from each
+ *  recording. Several for people who switch between them. */
+const MeetingLanguages: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const chosen = getSetting("meeting_languages") ?? [];
+  const set = (languages: string[]) =>
+    updateSetting("meeting_languages", languages);
+  const label = (code: string) => getLanguageLabel(code) ?? code;
+
+  return (
+    <SettingContainer
+      title={t("meetings.settings.languages.title")}
+      description={t("meetings.settings.languages.description")}
+      descriptionMode="tooltip"
+      grouped
+    >
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {chosen.length === 0 && (
+          <span className="text-sm text-text/60">
+            {t("meetings.settings.languages.automatic")}
+          </span>
+        )}
+        {chosen.map((code) => (
+          <span
+            key={code}
+            className="inline-flex items-center gap-1 rounded-full border border-stone/25 ps-2.5 pe-1 py-0.5 text-sm"
+          >
+            {label(code)}
+            <button
+              onClick={() => set(chosen.filter((c) => c !== code))}
+              disabled={isUpdating("meeting_languages")}
+              title={t("meetings.settings.languages.remove", {
+                language: label(code),
+              })}
+              className="rounded-full p-0.5 text-text/50 hover:text-text hover:bg-stone/10 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <Dropdown
+          options={MODEL_CAPABILITY_LANGUAGES.filter(
+            (l) => !chosen.includes(l.value),
+          )}
+          selectedValue={null}
+          placeholder={t("meetings.settings.languages.add")}
+          onSelect={(v) => set([...chosen, v])}
+          disabled={isUpdating("meeting_languages")}
+        />
+      </div>
+    </SettingContainer>
   );
 };

@@ -139,6 +139,38 @@ fn without_loops(text: &str) -> String {
     out.join(" ")
 }
 
+/// Holds the draft steady: shows only the words two guesses in a row agree
+/// on, so a word the model is still unsure of doesn't flicker in and out.
+/// Once shown, words stay until two guesses agree on something else.
+#[derive(Default)]
+struct Steady {
+    last: Vec<String>,
+    shown: Vec<String>,
+}
+
+impl Steady {
+    fn next(&mut self, guess: &str) -> String {
+        let key = |w: &str| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        };
+        let words: Vec<String> = guess.split_whitespace().map(str::to_string).collect();
+        let agreed = words
+            .iter()
+            .zip(&self.last)
+            .take_while(|(a, b)| key(a) == key(b))
+            .count();
+        let contradicts =
+            (0..agreed.min(self.shown.len())).any(|i| key(&words[i]) != key(&self.shown[i]));
+        if agreed >= self.shown.len() || contradicts {
+            // The newest guess carries the latest punctuation.
+            self.shown = words[..agreed].to_vec();
+        }
+        self.last = words;
+        self.shown.join(" ")
+    }
+}
+
 /// Feed the recording to the draft model and hand each new guess to `show`
 /// until the recording stops.
 fn stream_draft(
@@ -158,12 +190,14 @@ fn stream_draft(
         .stream(&RunOptions::default(), &StreamOptions::default())
         .map_err(|e| format!("draft stream: {e}"))?;
     let mut last = String::new();
+    let mut steady = Steady::default();
     while let Ok(Cmd::Feed(pcm)) = rx.recv() {
         match stream.feed(&pcm) {
             Ok(update) if update.committed_changed || update.tentative_changed => {
                 // The whole current guess: committed + tentative can lose
                 // the space where they meet.
-                let draft = without_loops(stream.text().full.replace(['\n', '\r'], " ").trim());
+                let guess = without_loops(stream.text().full.replace(['\n', '\r'], " ").trim());
+                let draft = steady.next(&guess);
                 if draft != last {
                     show(&draft);
                     last = draft;
@@ -513,7 +547,21 @@ mod tis {
 
 #[cfg(test)]
 mod tests {
-    use super::without_loops;
+    use super::{without_loops, Steady};
+
+    #[test]
+    fn draft_shows_what_two_guesses_agree_on() {
+        let mut s = Steady::default();
+        assert_eq!(s.next("we ship"), "");
+        assert_eq!(s.next("we ship on"), "we ship");
+        // An unsure last word flickering doesn't show.
+        assert_eq!(s.next("we ship at"), "we ship");
+        assert_eq!(s.next("we ship at noon."), "we ship at");
+        // One odd guess doesn't take shown words back...
+        assert_eq!(s.next("with chip"), "we ship at");
+        // ...two that agree do.
+        assert_eq!(s.next("with chip at noon"), "with chip");
+    }
 
     #[test]
     fn loops_show_once_and_real_speech_stays() {

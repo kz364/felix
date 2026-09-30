@@ -101,6 +101,7 @@ const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
     max_hours: null,
     hide_from_screen_share: null,
     panel: null,
+    languages: null,
     ...patch,
   });
 
@@ -303,6 +304,7 @@ const settingUpdaters: {
   hide_from_screen_share: (value) =>
     meetingUpdate({ hide_from_screen_share: value ?? null }),
   meeting_panel: (value) => meetingUpdate({ panel: value ?? null }),
+  meeting_languages: (value) => meetingUpdate({ languages: value ?? null }),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

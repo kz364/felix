@@ -86,11 +86,14 @@ mod mac {
             .unwrap_or_default()
     }
 
-    /// Walk the tree depth-first; `visit` returns true to stop.
+    /// Walk the tree depth-first; `visit` returns true to stop. With
+    /// `skip_menus`, the menu bar isn't gone into (it's the app's menus,
+    /// not its window, and Chrome's has hundreds of items).
     fn walk(
         element: AXUIElementRef,
         depth: usize,
         max_depth: usize,
+        skip_menus: bool,
         visit: &mut dyn FnMut(AXUIElementRef, Node) -> bool,
     ) -> bool {
         unsafe { AXUIElementSetMessagingTimeout(element, 0.5) };
@@ -99,10 +102,11 @@ mod mac {
             role: string_attribute(element, "AXRole").unwrap_or_default(),
             label: label(element),
         };
+        let menu = skip_menus && node.role == "AXMenuBar";
         if visit(element, node) {
             return true;
         }
-        if depth >= max_depth {
+        if depth >= max_depth || menu {
             return false;
         }
         let Some(children) = copy_attribute(element, "AXChildren") else {
@@ -116,7 +120,7 @@ mod mac {
             unsafe { CFArray::wrap_under_get_rule(children.0 as _) };
         array
             .iter()
-            .any(|child| walk(*child, depth + 1, max_depth, visit))
+            .any(|child| walk(*child, depth + 1, max_depth, skip_menus, visit))
     }
 
     pub fn is_trusted() -> bool {
@@ -159,7 +163,7 @@ mod mac {
     pub fn dump(pid: i32, max_depth: usize) -> Vec<Node> {
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
         let mut nodes = Vec::new();
-        walk(app.0, 0, max_depth, &mut |_, node| {
+        walk(app.0, 0, max_depth, false, &mut |_, node| {
             nodes.push(node);
             false
         });
@@ -175,7 +179,7 @@ mod mac {
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
         let started = std::time::Instant::now();
         let mut out = Vec::new();
-        walk(app.0, 0, max_depth, &mut |element, _| {
+        walk(app.0, 0, max_depth, true, &mut |element, _| {
             let texts: Vec<String> = [
                 "AXTitle",
                 "AXDescription",
@@ -198,7 +202,7 @@ mod mac {
     pub fn press(pid: i32, role: &str, label: &str, max_depth: usize) -> Result<(), String> {
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
         let mut result = Err(format!("No {role} \"{label}\""));
-        walk(app.0, 0, max_depth, &mut |element, node| {
+        walk(app.0, 0, max_depth, false, &mut |element, node| {
             if !node.matches(role, label) {
                 return false;
             }

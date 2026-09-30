@@ -93,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &vad,
         level,
         speakers.as_deref().map(Path::new),
+        None,
         "example-compare",
         |audio| -> Result<String, Stopped> {
             let this_index = chunk_index;

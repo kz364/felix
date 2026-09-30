@@ -1333,11 +1333,18 @@
       "open": "Settings",
       "transcriber": {
         "title": "Transcribe with",
-        "description": "Meetings are transcribed in the cloud when they can be: it's much more accurate on long calls with several people. Automatic uses OpenAI or Groq with the API key from Models → Accounts, and this Mac if there's no key. This Mac uses your dictation model, and nothing leaves the Mac.",
+        "description": "Meetings are transcribed in the cloud when they can be: it's much more accurate on long calls with several people. Automatic uses OpenAI or Groq with the API key from Models → Accounts, and this Mac if there's no key. This Mac uses your dictation model, or another downloaded model that knows the meeting's languages, and nothing leaves the Mac.",
         "auto": "Automatic (cloud first)",
         "local": "This Mac",
         "openai": "OpenAI",
         "groq": "Groq"
+      },
+      "languages": {
+        "title": "Meeting languages",
+        "description": "The languages your meetings are held in. Pick more than one if people switch between them. Automatic listens to a few stretches of each meeting to find out. Meetings go to a model that knows them all.",
+        "automatic": "Automatic",
+        "add": "Add a language…",
+        "remove": "Remove {{language}}"
       },
       "diarize": {
         "label": "Tell speakers apart",
@@ -1391,7 +1398,9 @@
     },
     "errors": {
       "start": "Couldn't start recording: {{error}}",
-      "stop": "Couldn't stop recording: {{error}}"
+      "stop": "Couldn't stop recording: {{error}}",
+      "pause": "Couldn't pause: {{error}}",
+      "resume": "Couldn't resume: {{error}}"
     },
     "back": "All meetings",
     "titlePlaceholder": "Untitled meeting",
@@ -1494,7 +1503,17 @@
       "expand": "Show notes",
       "collapse": "Make smaller",
       "close": "Close until the next meeting",
-      "openInFelix": "Open in Felix"
-    }
+      "openInFelix": "Open in Felix",
+      "pause": "Pause",
+      "resume": "Resume",
+      "pausedAt": "Paused at {{time}}",
+      "bullet": "Bullet list",
+      "tabs": {
+        "notes": "Notes",
+        "transcript": "Transcript"
+      },
+      "transcriptEmpty": "What's said shows up here as you go. It's rough; the full transcript is made when you stop."
+    },
+    "paused": "Paused"
   }
 }

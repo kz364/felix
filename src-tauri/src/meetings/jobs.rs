@@ -252,8 +252,31 @@ impl MeetingManager {
                 tauri::path::BaseDirectory::Resource,
             )
             .map_err(|e| format!("Couldn't find the VAD model: {e}"))?;
+        // The user's voice on this mic, once they've recorded a print.
+        let voiceprint = crate::portable::app_data_dir(&self.app)
+            .ok()
+            .and_then(|dir| super::voiceprint::load(&dir, &info.mic));
+        // The languages it's in: chosen, found before, or listened for now.
+        let models = self
+            .app
+            .try_state::<Arc<crate::managers::model::ModelManager>>()
+            .map(|m| m.get_available_models())
+            .unwrap_or_default();
+        let languages = if !settings.meeting_languages.is_empty() {
+            settings.meeting_languages.clone()
+        } else if !info.languages.is_empty() {
+            info.languages.clone()
+        } else {
+            self.languages_in(&dir, &models)
+        };
+        if !languages.is_empty() {
+            log::info!("Meeting {id} is in {languages:?}");
+            let found = languages.clone();
+            self.update_info(id, |i| i.languages = found);
+        }
         // A provider's API, if one is chosen: no need to share the local engine.
         if let Some(remote) = Remote::from_settings(&settings)? {
+            let remote = remote.for_languages(&languages);
             let engine = format!("{} {}", remote.name, remote.model);
             log::info!("Transcribing meeting {id} with {engine}");
             return pipeline::run(
@@ -262,6 +285,7 @@ impl MeetingManager {
                 &vad,
                 level,
                 speaker_model.as_deref(),
+                voiceprint.as_deref(),
                 &engine,
                 |audio| {
                     tauri::async_runtime::block_on(remote.transcribe(&audio))
@@ -270,6 +294,30 @@ impl MeetingManager {
                 progress,
             )
             .map(|_| ());
+        }
+
+        // The dictation model doesn't know the meeting's languages: use a
+        // downloaded one that does, loaded just for this meeting.
+        match super::language::route(&models, &settings.selected_model, &languages) {
+            super::language::Route::Other(model_id) => {
+                return self.transcribe_with_own_model(
+                    id,
+                    &dir,
+                    &model_id,
+                    &languages,
+                    info.mode,
+                    &vad,
+                    level,
+                    speaker_model.as_deref(),
+                    voiceprint.as_deref(),
+                    progress,
+                );
+            }
+            super::language::Route::NoModel => log::warn!(
+                "No downloaded model knows all of {languages:?}; transcribing meeting {id} with {} anyway",
+                settings.selected_model
+            ),
+            super::language::Route::Current => {}
         }
 
         let tm = self
@@ -287,6 +335,7 @@ impl MeetingManager {
             &vad,
             level,
             speaker_model.as_deref(),
+            voiceprint.as_deref(),
             &engine,
             |audio| self.transcribe_chunk(&tm, audio),
             progress,
@@ -294,6 +343,111 @@ impl MeetingManager {
         tm.set_meeting_job(false);
         tm.maybe_unload_immediately("meeting transcription");
         result.map(|_| ())
+    }
+
+    /// The languages heard in the recording, from a few stretches of each
+    /// track, by the best downloaded model that can tell. Empty if none can.
+    fn languages_in(
+        &self,
+        dir: &std::path::Path,
+        models: &[crate::managers::model::ModelInfo],
+    ) -> Vec<String> {
+        let Some(detector) = super::language::detector(models) else {
+            log::info!("No model to find a meeting's languages with");
+            return vec![];
+        };
+        let Some(path) = self
+            .app
+            .try_state::<Arc<crate::managers::model::ModelManager>>()
+            .and_then(|m| m.get_model_path(&detector.id).ok())
+        else {
+            return vec![];
+        };
+        let started = Instant::now();
+        let result = (|| -> Result<Vec<String>, String> {
+            let model = transcribe_cpp::Model::load(&path).map_err(|e| e.to_string())?;
+            let mut session = model.session().map_err(|e| e.to_string())?;
+            let mut hits = Vec::new();
+            for track in ["mic.wav", "system.wav"] {
+                let Ok(audio) = crate::audio_toolkit::read_wav_samples(dir.join(track)) else {
+                    continue;
+                };
+                for span in super::language::sample_spans(&audio) {
+                    let t = session
+                        .run(&audio[span], &transcribe_cpp::RunOptions::default())
+                        .map_err(|e| e.to_string())?;
+                    if let Some(l) = t.language.filter(|_| !t.text.trim().is_empty()) {
+                        hits.push(l.split(['-', '_']).next().unwrap_or(&l).to_lowercase());
+                    }
+                }
+            }
+            Ok(super::language::languages_heard(&hits))
+        })();
+        match result {
+            Ok(languages) => {
+                log::info!(
+                    "Found {languages:?} in the meeting with {} in {:?}",
+                    detector.id,
+                    started.elapsed()
+                );
+                languages
+            }
+            Err(e) => {
+                log::warn!("Couldn't find the meeting's languages: {e}");
+                vec![]
+            }
+        }
+    }
+
+    /// Transcribe with a model other than dictation's, loaded for this job.
+    #[allow(clippy::too_many_arguments)]
+    fn transcribe_with_own_model(
+        &self,
+        id: &str,
+        dir: &std::path::Path,
+        model_id: &str,
+        languages: &[String],
+        mode: super::MeetingMode,
+        vad: &std::path::Path,
+        level: Option<super::level::LevelSettings>,
+        speaker_model: Option<&std::path::Path>,
+        voiceprint: Option<&[f32]>,
+        progress: impl FnMut(pipeline::Step),
+    ) -> Result<(), Stopped> {
+        let path = self
+            .app
+            .try_state::<Arc<crate::managers::model::ModelManager>>()
+            .ok_or_else(|| "Models aren't available".to_string())?
+            .get_model_path(model_id)
+            .map_err(|e| e.to_string())?;
+        let model = transcribe_cpp::Model::load(&path)
+            .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
+        let mut session = model.session().map_err(|e| e.to_string())?;
+        let options = transcribe_cpp::RunOptions {
+            // One language is named; a mix is left to the model, chunk by chunk.
+            language: (languages.len() == 1).then(|| languages[0].clone()),
+            ..Default::default()
+        };
+        let engine = format!("local {model_id} {}", languages.join("+"));
+        log::info!("Transcribing meeting {id} with {engine}");
+        let mut run = |audio: &[f32]| {
+            session
+                .run(audio, &options)
+                .map(|t| t.text)
+                .map_err(|e| e.to_string())
+        };
+        pipeline::run(
+            dir,
+            mode,
+            vad,
+            level,
+            speaker_model,
+            voiceprint,
+            &engine,
+            |audio| split_runaways(&mut run, &audio),
+            progress,
+        )
+        .map(|_| ())
     }
 
     /// Transcribe one chunk when dictation isn't using the model. Dictation
@@ -444,6 +598,10 @@ impl MeetingManager {
         }
         let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
         let about = about_meeting(info, &paragraphs_of(&dir, &transcript));
+        let context = summary::SummaryContext {
+            previous: self.previous_in_series(info),
+            british: tauri_plugin_os::locale().is_some_and(|l| summary::spells_british(&l)),
+        };
         self.progress_to(id, Stage::Summarizing, 0, 1);
         let summary = summary::summarize(
             &llm,
@@ -451,11 +609,38 @@ impl MeetingManager {
             &about,
             &notes,
             &lines,
+            &context,
             |done, total| self.progress_to(id, Stage::Summarizing, done, total),
         )
         .await?;
         summary::save_json(&dir, summary::SUMMARY_FILE, &summary)?;
         Ok(summary)
+    }
+}
+
+impl MeetingManager {
+    /// The last summarised meeting the user gave the same title, as context
+    /// for a recurring meeting.
+    fn previous_in_series(&self, info: &MeetingInfo) -> Option<String> {
+        let title = info.title.as_deref().filter(|_| !info.title_is_auto)?;
+        let key = title.trim().to_lowercase();
+        self.list().into_iter().find_map(|m| {
+            let same = m.started_at < info.started_at
+                && !m.title_is_auto
+                && m.title
+                    .as_deref()
+                    .is_some_and(|t| t.trim().to_lowercase() == key);
+            if !same {
+                return None;
+            }
+            let dir = self.dir_of(&m.id).ok()?;
+            let previous: Summary = summary::load_json(&dir, summary::SUMMARY_FILE)?;
+            let when = chrono::DateTime::from_timestamp_millis(m.started_at)?
+                .with_timezone(&chrono::Local)
+                .format("%-d %B %Y")
+                .to_string();
+            Some(summary::previous_block(title, &when, &previous))
+        })
     }
 }
 
@@ -496,6 +681,33 @@ pub(super) fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph]) -> Str
         }
     };
     format!("{}\n{who}{title}{block}{we}", meta_line(info))
+}
+
+/// Transcribe a chunk; one the model runs away on is split at its quietest
+/// point and tried again in halves.
+pub fn split_runaways(
+    run: &mut dyn FnMut(&[f32]) -> Result<String, String>,
+    audio: &[f32],
+) -> Result<String, Stopped> {
+    match run(audio) {
+        Ok(text) => Ok(text),
+        Err(e) if ran_away(&e) => {
+            if audio.len() < 2 * MIN_SPLIT_SAMPLES {
+                log::warn!(
+                    "Leaving out {:.1} s of a meeting the model keeps looping on",
+                    audio.len() as f32 / 16_000.0
+                );
+                return Ok(String::new());
+            }
+            let cut = quietest_split(audio);
+            let first = split_runaways(run, &audio[..cut])?;
+            let second = split_runaways(run, &audio[cut..])?;
+            Ok(format!("{} {}", first.trim(), second.trim())
+                .trim()
+                .to_string())
+        }
+        Err(e) => Err(Stopped::Failed(e)),
+    }
 }
 
 /// The model decoded until its token cap (usually looping on a phrase).

@@ -814,6 +814,25 @@ async stopMeeting() : Promise<Result<MeetingInfo | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Pause from the panel; Resume carries on in the same meeting.
+ */
+async pauseMeeting() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pause_meeting") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumePausedMeeting() : Promise<Result<MeetingInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_paused_meeting") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getMeetingState() : Promise<MeetingState> {
     return await TAURI_INVOKE("get_meeting_state");
 },
@@ -842,6 +861,17 @@ async meetingTrackPath(id: string, file: string) : Promise<Result<string, string
 /**
  * The transcript so far, or `None` if there isn't one yet.
  */
+/**
+ * The rough transcript made while recording (`live.json`), for the panel.
+ */
+async getLiveTranscript(id: string) : Promise<Result<Paragraph[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_live_transcript", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getMeetingTranscript(id: string) : Promise<Result<MeetingTranscript | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_meeting_transcript", { id }) };
@@ -2065,6 +2095,11 @@ meeting_mode?: MeetingMode;
  */
 meeting_detect_mode?: boolean; 
 /**
+ * The languages meetings are held in (ISO codes). Empty: found from
+ * the recording. Meetings go to a model that knows them all.
+ */
+meeting_languages?: string[]; 
+/**
  * Which model cleans up and summarises meeting transcripts.
  */
 meeting_llm?: MeetingLlm; 
@@ -2600,6 +2635,10 @@ call_app?: string | null;
  */
 resumed_at_ms?: number[]; 
 /**
+ * The languages it was transcribed as (chosen, or found in it).
+ */
+languages?: string[]; 
+/**
  * Names the call app showed for the other side's voices, by number;
  * the user's own names in `speakers` win.
  */
@@ -2638,11 +2677,15 @@ export type MeetingPanelState = { expanded: boolean }
 /**
  * Meeting settings to change; fields left out stay as they are.
  */
-export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null }
+export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */
-export type MeetingState = { recording: MeetingInfo | null; elapsed_ms: number; transcribing: TranscribeProgress | null; 
+export type MeetingState = { recording: MeetingInfo | null; 
+/**
+ * A meeting paused from the panel, waiting for Resume or Stop.
+ */
+paused: MeetingInfo | null; elapsed_ms: number; transcribing: TranscribeProgress | null; 
 /**
  * "What did I miss?" and "Suggest a question" work (a cloud
  * transcriber keeps a live transcript).
@@ -2653,7 +2696,12 @@ export type MeetingStatus = "recording" | "recorded" |
  * Handy quit or crashed while recording; the audio up to a few seconds
  * before is kept.
  */
-"interrupted"
+"interrupted" | 
+/**
+ * Paused from the panel: the files are closed and it carries on with
+ * Resume. Transcribed once it's stopped.
+ */
+"paused"
 /**
  * What transcribes meetings. Meetings are cloud-first: local models
  * aren't good enough for long, many-voiced audio, and nobody is waiting.

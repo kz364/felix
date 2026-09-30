@@ -14,6 +14,38 @@ use std::time::{Duration, Instant};
 
 /// How often the writers drain the rings.
 const DRAIN_EVERY: Duration = Duration::from_millis(50);
+/// How often a writer checks its device is still delivering.
+const CHECK_EVERY: Duration = Duration::from_secs(2);
+/// No samples for this long: the device died (unplugged, tap gone).
+const STALLED_AFTER: Duration = Duration::from_secs(3);
+/// Between attempts to reopen a device.
+const REOPEN_EVERY: Duration = Duration::from_secs(5);
+/// How much audio to count before trusting a measured sample rate.
+const RATE_WINDOW: Duration = Duration::from_secs(4);
+
+/// The rate a device is really delivering at, when it's clearly not the one
+/// it declared: the nearest standard rate to `measured`, if that's more than
+/// 15% off `declared`. The system audio tap reports 48 kHz even when the
+/// output (AirPods on a call) runs at 24 kHz, which would record the call
+/// at double speed with gaps.
+fn actual_rate(declared: u32, measured: f64) -> Option<u32> {
+    const RATES: [u32; 8] = [
+        8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
+    ];
+    if (measured / declared as f64 - 1.0).abs() <= 0.15 {
+        return None;
+    }
+    let nearest = RATES.into_iter().min_by(|a, b| {
+        (*a as f64 - measured)
+            .abs()
+            .total_cmp(&(*b as f64 - measured).abs())
+    })?;
+    ((nearest as f64 / measured - 1.0).abs() <= 0.1 && nearest != declared).then_some(nearest)
+}
+
+/// On a call, system audio silent this long gets its tap rebuilt, in case
+/// the tap went dead while still delivering zeros.
+const SYSTEM_SILENCE_LIMIT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -74,12 +106,110 @@ pub struct Source {
 trait Keepalive: Send {}
 impl<T: Send> Keepalive for T {}
 
+type Opened = (Source, Box<dyn Keepalive>);
+
+/// Where a track's audio comes from, reopened when it dies or moves.
+trait Input: Send {
+    fn open(&mut self) -> Result<Opened, String>;
+    /// The device it should record has changed since it was opened (the
+    /// system default moved to other hardware).
+    fn moved(&mut self) -> bool {
+        false
+    }
+    /// Reopen after this long without sound.
+    fn silence_limit(&self) -> Option<Duration> {
+        None
+    }
+    /// Gain to apply to its samples right now.
+    fn gain(&mut self) -> f32 {
+        1.0
+    }
+}
+
+/// The meeting mic: the chosen device, or whatever the system default is.
+struct MicInput {
+    chosen: Option<cpal::Device>,
+    opened: String,
+    /// The Mac's input volume for it when the meeting started, in dB.
+    start_db: Option<f32>,
+}
+
+impl MicInput {
+    fn volume_db(&self) -> Option<f32> {
+        let chosen = self.chosen.is_some().then_some(self.opened.as_str());
+        super::mic::input_volume_db(chosen)
+    }
+}
+
+impl Input for MicInput {
+    fn open(&mut self) -> Result<Opened, String> {
+        let (source, stream) = match super::mic::start(self.chosen.clone()) {
+            Ok(opened) => opened,
+            // The chosen mic went away mid-meeting: carry on with the default.
+            Err(e) if self.chosen.is_some() && !self.opened.is_empty() => {
+                log::warn!("Meeting mic couldn't reopen ({e}); using the default input");
+                super::mic::start(None)?
+            }
+            Err(e) => return Err(e),
+        };
+        let reopened = !self.opened.is_empty();
+        let device_changed = reopened && self.opened != source.label;
+        self.opened = source.label.clone();
+        if !reopened || device_changed {
+            self.start_db = self.volume_db();
+        }
+        Ok((source, Box::new(stream)))
+    }
+
+    fn gain(&mut self) -> f32 {
+        match (self.start_db, self.volume_db()) {
+            (Some(start), Some(now)) => super::mic::undo_volume_change(start, now),
+            _ => 1.0,
+        }
+    }
+
+    fn moved(&mut self) -> bool {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        if self.chosen.is_some() {
+            return false;
+        }
+        crate::audio_toolkit::get_cpal_host()
+            .default_input_device()
+            .and_then(|d| d.name().ok())
+            .is_some_and(|name| name != self.opened)
+    }
+}
+
+/// The call's audio: a tap on everything the Mac plays.
+#[cfg(target_os = "macos")]
+struct SystemInput {
+    output: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl Input for SystemInput {
+    fn open(&mut self) -> Result<Opened, String> {
+        let (source, tap) = super::system_audio::start()?;
+        self.output = super::system_audio::output_uid();
+        Ok((source, Box::new(tap)))
+    }
+
+    fn moved(&mut self) -> bool {
+        // The tap's aggregate device is built on the output it started with.
+        super::system_audio::output_uid() != self.output
+    }
+
+    fn silence_limit(&self) -> Option<Duration> {
+        Some(SYSTEM_SILENCE_LIMIT)
+    }
+}
+
 /// Set once when the recording stops: the time every track ends at.
 type StopAt = Arc<OnceLock<Instant>>;
 
 struct Track {
+    /// Owns the device too, and stops it before the last drain.
     writer: JoinHandle<Result<TrackSummary, String>>,
-    keepalive: Box<dyn Keepalive>,
 }
 
 /// A meeting being recorded.
@@ -104,7 +234,8 @@ struct WriterSetup {
 }
 
 fn spawn_writer(
-    mut source: Source,
+    mut input: Box<dyn Input>,
+    (mut source, keepalive): Opened,
     path: PathBuf,
     setup: WriterSetup,
 ) -> Result<JoinHandle<Result<TrackSummary, String>>, String> {
@@ -129,8 +260,19 @@ fn spawn_writer(
                 Duration::from_millis(20),
             );
             let mut buf = Vec::with_capacity(source.rate as usize);
+            let mut keepalive = Some(keepalive);
+            let started = Instant::now();
+            let (mut last_audio, mut last_loud) = (started, started);
+            // Samples the device delivered since `counting_since`.
+            let (mut counted, mut counting_since) = (0u64, started);
+            let (mut last_check, mut last_open) = (started, started);
+            let mut gain = input.gain();
             loop {
                 let stopping = stop_at.get().copied();
+                if stopping.is_some() {
+                    // The device first, so nothing arrives after this drain.
+                    drop(keepalive.take());
+                }
                 buf.clear();
                 let n = source.consumer.slots();
                 if let Ok(chunk) = source.consumer.read_chunk(n) {
@@ -139,9 +281,16 @@ fn spawn_writer(
                     buf.extend_from_slice(b);
                     chunk.commit_all();
                 }
+                if gain != 1.0 {
+                    for v in &mut buf {
+                        *v *= gain;
+                    }
+                }
                 let now = Instant::now();
                 let incoming = buf.len() as u64 * SAMPLE_RATE as u64 / source.rate as u64;
+                counted += buf.len() as u64;
                 if incoming > 0 {
+                    last_audio = now;
                     writer.align(incoming, now)?;
                 }
                 let mut result = Ok(());
@@ -159,6 +308,7 @@ fn spawn_writer(
                     .level_slot(name)
                     .store(peak.to_bits(), Ordering::Relaxed);
                 if loud {
+                    last_loud = now;
                     activity
                         .slot(name)
                         .store(now.duration_since(t0).as_millis() as u64, Ordering::Relaxed);
@@ -175,6 +325,83 @@ fn spawn_writer(
                     return writer.finish_at(end);
                 }
                 writer.keep_up(now)?;
+                let window = now.duration_since(counting_since);
+                if window >= RATE_WINDOW {
+                    let measured = counted as f64 / window.as_secs_f64();
+                    // Only while audio flows: a stall is handled below.
+                    if now.duration_since(last_audio) < STALLED_AFTER {
+                        if let Some(rate) = actual_rate(source.rate, measured) {
+                            log::warn!(
+                                "Meeting {name} track: device says {} Hz but delivers about {measured:.0} Hz; recording at {rate} Hz",
+                                source.rate
+                            );
+                            let mut flushed = Ok(());
+                            resampler.finish(|frame| {
+                                if flushed.is_ok() {
+                                    flushed = writer.write(frame, now);
+                                }
+                            });
+                            flushed?;
+                            source.rate = rate;
+                            resampler = FrameResampler::new(
+                                rate as usize,
+                                SAMPLE_RATE as usize,
+                                Duration::from_millis(20),
+                            );
+                        }
+                    }
+                    (counted, counting_since) = (0, now);
+                }
+                if now.duration_since(last_check) >= CHECK_EVERY {
+                    last_check = now;
+                    let new_gain = input.gain();
+                    if (new_gain - gain).abs() > 0.01 {
+                        log::info!(
+                            "Meeting {name} track: input volume moved; gain now {:.1} dB",
+                            20.0 * new_gain.log10()
+                        );
+                        gain = new_gain;
+                    }
+                    let silent = now.duration_since(last_loud.max(last_open));
+                    let why = if now.duration_since(last_audio) >= STALLED_AFTER {
+                        Some("no audio is arriving")
+                    } else if input.moved() {
+                        Some("the device changed")
+                    } else if input.silence_limit().is_some_and(|limit| silent >= limit) {
+                        Some("it has been silent")
+                    } else {
+                        None
+                    };
+                    if let Some(why) = why.filter(|_| now.duration_since(last_open) >= REOPEN_EVERY)
+                    {
+                        last_open = now;
+                        log::warn!("Meeting {name} track: {why}; reopening the device");
+                        drop(keepalive.take());
+                        let mut flushed = Ok(());
+                        resampler.finish(|frame| {
+                            if flushed.is_ok() {
+                                flushed = writer.write(frame, now);
+                            }
+                        });
+                        flushed?;
+                        match input.open() {
+                            Ok((new_source, new_keepalive)) => {
+                                log::info!("Meeting {name} track now on {}", new_source.label);
+                                source = new_source;
+                                keepalive = Some(new_keepalive);
+                                resampler = FrameResampler::new(
+                                    source.rate as usize,
+                                    SAMPLE_RATE as usize,
+                                    Duration::from_millis(20),
+                                );
+                                last_audio = Instant::now();
+                                (counted, counting_since) = (0, last_audio);
+                            }
+                            // Gaps are padded with silence; try again shortly.
+                            Err(e) => log::warn!("Meeting {name} track couldn't reopen: {e}"),
+                        }
+                    }
+                }
                 std::thread::sleep(DRAIN_EVERY);
             }
         })
@@ -222,20 +449,28 @@ impl Recording {
         };
         let mut tracks = Vec::new();
 
-        let (source, stream) = super::mic::start(mic)?;
-        let mic_label = source.label.clone();
+        let mut mic = Box::new(MicInput {
+            chosen: mic,
+            opened: String::new(),
+            start_db: None,
+        });
+        let opened = mic.open()?;
+        let mic_label = opened.0.label.clone();
         tracks.push(Track {
-            writer: spawn_writer(source, dir.join("mic.wav"), setup("mic"))?,
-            keepalive: Box::new(stream),
+            writer: spawn_writer(mic, opened, dir.join("mic.wav"), setup("mic"))?,
         });
 
         let mut system_error = None;
         if mode == MeetingMode::Call {
-            match start_system() {
-                Ok((source, keepalive)) => {
+            match system_input() {
+                Ok((input, opened)) => {
                     tracks.push(Track {
-                        writer: spawn_writer(source, dir.join("system.wav"), setup("system"))?,
-                        keepalive,
+                        writer: spawn_writer(
+                            input,
+                            opened,
+                            dir.join("system.wav"),
+                            setup("system"),
+                        )?,
                     });
                 }
                 Err(e) => {
@@ -285,15 +520,7 @@ impl Recording {
     /// Stop the devices, write out what's buffered and close the files.
     pub fn stop(self) -> Result<Vec<TrackSummary>, String> {
         let end = Instant::now();
-        // Devices first, so nothing arrives after the final drain.
-        let writers: Vec<_> = self
-            .tracks
-            .into_iter()
-            .map(|track| {
-                drop(track.keepalive);
-                track.writer
-            })
-            .collect();
+        let writers: Vec<_> = self.tracks.into_iter().map(|t| t.writer).collect();
         let _ = self.stop_at.set(end);
         let mut summaries = Vec::new();
         let mut first_error = None;
@@ -320,12 +547,30 @@ impl Recording {
 }
 
 #[cfg(target_os = "macos")]
-fn start_system() -> Result<(Source, Box<dyn Keepalive>), String> {
-    let (source, tap) = super::system_audio::start()?;
-    Ok((source, Box::new(tap)))
+fn system_input() -> Result<(Box<dyn Input>, Opened), String> {
+    let mut input = Box::new(SystemInput { output: None });
+    let opened = input.open()?;
+    Ok((input, opened))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn start_system() -> Result<(Source, Box<dyn Keepalive>), String> {
+fn system_input() -> Result<(Box<dyn Input>, Opened), String> {
     Err("System audio capture is only available on macOS".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::actual_rate;
+
+    #[test]
+    fn a_device_running_slower_than_it_says_is_caught() {
+        // AirPods on a call behind a tap that says 48 kHz.
+        assert_eq!(actual_rate(48_000, 23_870.0), Some(24_000));
+        assert_eq!(actual_rate(48_000, 16_100.0), Some(16_000));
+        // Normal jitter is left alone.
+        assert_eq!(actual_rate(48_000, 47_200.0), None);
+        assert_eq!(actual_rate(24_000, 26_000.0), None);
+        // Nothing near a standard rate: keep what it says.
+        assert_eq!(actual_rate(48_000, 36_000.0), None);
+    }
 }

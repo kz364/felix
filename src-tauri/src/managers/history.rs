@@ -688,6 +688,13 @@ impl HistoryManager {
     }
 }
 
+/// A category as stored (its serde name, "coding").
+fn category_name(category: Option<crate::settings::AppCategory>) -> Option<String> {
+    category
+        .and_then(|c| serde_json::to_value(c).ok())
+        .and_then(|v| v.as_str().map(str::to_string))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,11 +800,4 @@ mod tests {
         assert_eq!(entry.timestamp, 100);
         assert_eq!(entry.transcription_text, "completed");
     }
-}
-
-/// A category as stored (its serde name, "coding").
-fn category_name(category: Option<crate::settings::AppCategory>) -> Option<String> {
-    category
-        .and_then(|c| serde_json::to_value(c).ok())
-        .and_then(|v| v.as_str().map(str::to_string))
 }

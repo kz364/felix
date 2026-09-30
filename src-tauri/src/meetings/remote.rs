@@ -117,6 +117,25 @@ impl Remote {
         })
     }
 
+    /// For a meeting in these languages: one is passed as the language;
+    /// several are left to the model, with a note that they mix.
+    pub fn for_languages(mut self, languages: &[String]) -> Self {
+        match languages {
+            [] => {}
+            [one] => self.language = Some(one.clone()),
+            many => {
+                self.language = None;
+                if let Some(line) = super::language::prompt_for(many) {
+                    self.prompt = Some(match self.prompt.take() {
+                        Some(words) => format!("{line} {words}"),
+                        None => line,
+                    });
+                }
+            }
+        }
+        self
+    }
+
     /// Transcribe one chunk (16 kHz mono). Retries rate limits and server
     /// errors with backoff; other errors fail straight away.
     pub async fn transcribe(&self, audio: &[f32]) -> Result<String, String> {

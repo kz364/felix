@@ -32,6 +32,13 @@ staging pipeline first:
 
 - Shortcuts, microphone, language, pasting, sounds and silence detection.
 - **Preferred microphones**: a priority list; the first one connected wins.
+- **Pasting survives app updates**: when nothing that takes text seems
+  focused, Felix shows the dictation instead of pasting, but only in an
+  app version that has shown it a focused text box before (Apple's apps
+  always count). After an update (or a new bundle id, as ChatGPT's
+  2026-09 update did) it pastes as normal until it's seen one. The card's
+  "Paste anyway" pastes and always pastes in that app from then on
+  (`paste_apps.json`).
 - **Input gain and automatic gain control** before silence detection, so
   quiet speech and weak mics reach the model. ⚠️ Whether automatic gain
   control improves accuracy hasn't been measured yet; it's being
@@ -60,8 +67,10 @@ main model's text is pasted as usual. Two styles:
   `scripts/build-draft-ime.sh`; you add it once under Keyboard → Input
   Sources). Some apps, such as WhatsApp, show it in a floating box instead.
 
-When the draft model gets stuck repeating a word or phrase, the repeat is
-shown once until it recovers. Skipped with secure input on (and, inline,
+The draft only shows words two guesses in a row agree on, so a word the
+model is still unsure of doesn't flicker in and out; shown words stay until
+two guesses agree on something else. When the draft model gets stuck
+repeating a word or phrase, the repeat is shown once until it recovers. Skipped with secure input on (and, inline,
 when text is selected).
 
 ## Vocabulary
@@ -83,13 +92,14 @@ when text is selected).
 ## Writing
 
 - **Cleanup** of fillers, repeats, self-corrections, punctuation and
-  numbers, with guards that reject rewrites that add or drop content.
+  numbers, with guards that reject rewrites that add or drop content. Em
+  dashes the model adds (that you didn't say) become commas.
 - **Providers**: a local Qwen model via Ollama (one-click setup; the prompt
   is cached while you speak so only the transcript is processed after),
   Apple Intelligence, or an API provider with your key.
 - **Your instructions**, **screen context** (optional) and **tone by app**.
-- **Coding agents** (Claude, Codex, Cursor, VS Code, Zed, Xcode, terminals,
-  claude.ai, chatgpt.com): the same words and tone, laid out to check before
+- **Coding agents** (Claude, Codex, Cursor, VS Code, Zed, Xcode, claude.ai,
+  chatgpt.com; terminals are left out, so a command stays as spoken): the same words and tone, laid out to check before
   pressing Enter: several requests become a bulleted list and each sentence
   gets its own line. Always goes through cleanup.
 - **Prompt shortcut**: a separate shortcut that sends the dictation to the
@@ -144,6 +154,46 @@ OAuth client, which OpenAI doesn't officially support for other apps.
 Record meetings (microphone and system audio), transcribe them locally or
 with an OpenAI or Groq API key, identify speakers and write summaries.
 Meetings never interrupt or change dictation.
+
+- **Recording that recovers**: a mic or system-audio tap that stops
+  delivering, a change of the default mic or output, or five minutes of
+  silence from the tap on a call reopens the device; the gap is kept as
+  silence. If the chosen mic disappears, recording carries on with the
+  default one.
+- **Mic volume held steady**: when a call app (Zoom, Teams) moves the Mac's
+  input volume mid-meeting, the recording is scaled back to the level it
+  started at (within ±18 dB). Mics without a volume control are left alone.
+- **In-person gain**: the loudest 5% of the last 10 s is aimed at a steady
+  level (at most ×8, changing slowly), and the silence detection hears the
+  same, so quiet and distant voices are found. On test clips it cut the word
+  error rate from 70% (the old per-stretch levelling) to 49%.
+- **Summaries** keep very short meetings short, follow up on the last
+  meeting with the same name (its overview and action items), and use
+  British spelling when the Mac is set to British English.
+- **Right speed on AirPods**: the system-audio tap reads the rate the
+  output really runs at (AirPods drop to 24 kHz in a call while the tap
+  says 48 kHz), and every track checks the rate it measures, so a call is
+  never recorded at double speed with gaps.
+- **Languages**: Settings → Meetings → Meeting languages (several allowed;
+  none means Automatic, which listens to eight stretches of the meeting).
+  On this Mac the meeting goes to the most accurate downloaded model that
+  knows every language, which may not be the dictation model; the cloud
+  gets the language, or a note that the speakers switch between them.
+- **Side panel**: Pause and Resume (the files close; Stop transcribes),
+  Notes and Transcript tabs with one scroll, bullet lists in notes ("- ",
+  Enter, Tab), a running rough transcript (the cloud, or the dictation
+  model in 15 s pieces only when dictation isn't using it), snapping to a
+  side of the screen when dropped near it, and a bouncy open and fold.
+- **Rooms on a call**: when the call app names one person for several
+  voices that each talk for 20 s or more, they show as "Name (1)",
+  "Name (2)" instead of all as one. When speaker detection hears only one voice
+  on the other side (a muddy line) but the call app showed several names,
+  the names split it instead. Names are read from the call window, not the
+  app's menus.
+- **Your voice in person** (groundwork, not switched on): given a voiceprint
+  for the mic, the in-person speaker that clearly matches it becomes "Me".
+  Nothing records voiceprints yet; they'll be one per mic, and never made
+  from dictation mics like a DJI clip mic.
 
 ## Models
 

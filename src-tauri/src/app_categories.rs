@@ -41,7 +41,8 @@ const KNOWN_APPS: &[(&str, AppCategory)] = &[
     ("it.bloop.airmail2", AppCategory::Email),
     ("com.freron.MailMate", AppCategory::Email),
     ("ch.protonmail.desktop", AppCategory::Email),
-    // Coding agents, editors and terminals
+    // Coding agents and editors. Terminals stay out: a command line wants
+    // the dictation as spoken, not laid out as a prompt.
     ("com.anthropic.claudefordesktop", AppCategory::Coding),
     ("com.openai.codex", AppCategory::Coding),
     ("com.todesktop.230313mzl4w4u92", AppCategory::Coding), // Cursor
@@ -49,10 +50,6 @@ const KNOWN_APPS: &[(&str, AppCategory)] = &[
     ("com.microsoft.VSCode", AppCategory::Coding),
     ("dev.zed.Zed", AppCategory::Coding),
     ("com.apple.dt.Xcode", AppCategory::Coding),
-    ("com.apple.Terminal", AppCategory::Coding),
-    ("com.googlecode.iterm2", AppCategory::Coding),
-    ("com.mitchellh.ghostty", AppCategory::Coding),
-    ("dev.warp.Warp-Stable", AppCategory::Coding),
 ];
 
 /// Built-in website assignments (domain, display name, category).

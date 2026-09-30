@@ -39,6 +39,7 @@ mod memory;
 pub mod notices;
 mod nudges;
 mod overlay;
+mod paste_apps;
 mod paste_tx;
 pub mod portable;
 mod recovery;
@@ -223,6 +224,7 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 fn initialize_core_logic(app_handle: &AppHandle) {
     if let Ok(dir) = portable::app_data_dir(app_handle) {
         rules::init(&dir);
+        paste_apps::init(&dir);
         // Vocabulary and corrections now live only in the rules file.
         match rules::take_from_settings(settings::get_settings(app_handle)) {
             Ok(Some(settings)) => settings::write_settings(app_handle, settings),
@@ -813,6 +815,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_agent_actions_setting,
             meetings::manager::start_meeting,
             meetings::manager::stop_meeting,
+            meetings::manager::pause_meeting,
+            meetings::manager::get_live_transcript,
+            meetings::manager::resume_paused_meeting,
             meetings::manager::get_meeting_state,
             meetings::manager::list_meetings,
             meetings::manager::open_meeting_folder,

@@ -186,6 +186,8 @@ const PlayerBar: React.FC<{ player: Player }> = ({ player }) => {
 
 /** Voices on the other side of a call are numbered from here. */
 const SYSTEM_SPEAKERS = 100;
+/** The user's own voice, matched by their voiceprint (in person). */
+const ME = 4294967295;
 
 /** "Speaker 2" or "Them 1", or the name the user (or the call app) gave. */
 const useSpeakerName = () => {
@@ -193,9 +195,11 @@ const useSpeakerName = () => {
   return (meeting: MeetingInfo, n: number) =>
     meeting.speakers?.[n] ??
     meeting.app_speakers?.[n] ??
-    (n >= SYSTEM_SPEAKERS
-      ? t("meetings.speaker.themNumbered", { n: n - SYSTEM_SPEAKERS + 1 })
-      : t("meetings.speaker.numbered", { n: n + 1 }));
+    (n === ME
+      ? t("meetings.speaker.me")
+      : n >= SYSTEM_SPEAKERS
+        ? t("meetings.speaker.themNumbered", { n: n - SYSTEM_SPEAKERS + 1 })
+        : t("meetings.speaker.numbered", { n: n + 1 }));
 };
 
 /** Who said a paragraph, as the transcript labels it. */
@@ -958,6 +962,7 @@ const MeetingDetail: React.FC<{
           {meeting.status === "interrupted" && (
             <Chip tone="warning">{t("meetings.interrupted")}</Chip>
           )}
+          {meeting.status === "paused" && <Chip>{t("meetings.paused")}</Chip>}
           {meeting.mode === "call" &&
             !meeting.tracks.some((tr) => tr.file === "system.wav") && (
               <Chip tone="warning">{t("meetings.noSystemAudio")}</Chip>
@@ -1204,6 +1209,7 @@ const MeetingRow: React.FC<{
           {meeting.status === "interrupted" && (
             <Chip tone="warning">{t("meetings.interrupted")}</Chip>
           )}
+          {meeting.status === "paused" && <Chip>{t("meetings.paused")}</Chip>}
           {meeting.transcript === "queued" && (
             <Chip>{t("meetings.status.queued")}</Chip>
           )}
@@ -1269,6 +1275,7 @@ export const MeetingsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const [live, setLive] = useState<MeetingState>({
     recording: null,
+    paused: null,
     elapsed_ms: 0,
     transcribing: null,
     live: false,

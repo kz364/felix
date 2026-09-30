@@ -7,6 +7,11 @@
 //! `summarize`, also cleans up the transcript and writes the summary with
 //! ChatGPT (the app's own sign-in), using `notes.md` from the folder, and
 //! prints the Markdown.
+//!
+//! ENGINE=<name> is recorded in the transcript (default "example"). Chunks a
+//! model loops on are split and tried again, as in the app. On a call, the
+//! names the call app showed are put on the voices and written to
+//! `app_speakers.json` for `meeting.json`.
 
 use handy_app_lib::meetings::llm::Llm;
 use handy_app_lib::meetings::transcript::{self, Source};
@@ -49,13 +54,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &vad,
         level,
         speakers.as_deref().map(Path::new),
-        "example",
+        None,
+        &std::env::var("ENGINE").unwrap_or_else(|_| "example".into()),
         |audio| {
             audio_secs += audio.len() as f64 / 16_000.0;
-            session
-                .run(&audio, &options)
-                .map(|r| r.text)
-                .map_err(|e| pipeline::Stopped::Failed(e.to_string()))
+            let mut run = |a: &[f32]| {
+                session
+                    .run(a, &options)
+                    .map(|r| r.text)
+                    .map_err(|e| e.to_string())
+            };
+            handy_app_lib::meetings::split_runaways(&mut run, &audio)
         },
         |step| match step {
             pipeline::Step::Identifying => eprintln!("telling speakers apart"),
@@ -80,6 +89,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if s.echo { " ECHO" } else { "" },
             s.text
         );
+    }
+    if mode == MeetingMode::Call {
+        let names = handy_app_lib::meetings::active_speaker::apply(Path::new(&dir));
+        eprintln!("names from the call app: {names:?}");
+        std::fs::write(
+            Path::new(&dir).join("app_speakers.json"),
+            serde_json::to_string(&names)?,
+        )?;
     }
     let label = |p: &transcript::Paragraph| match (mode, p.source) {
         (MeetingMode::Call, Source::Mic) => Some("Me".to_string()),
@@ -115,7 +132,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 MeetingMode::InPerson => "An in-person meeting; speakers aren't labelled.",
             };
             let started = Instant::now();
-            let s = summary::summarize(&llm, "", about, &notes, &lines, |_, _| {}).await;
+            let s = summary::summarize(
+                &llm,
+                "",
+                about,
+                &notes,
+                &lines,
+                &Default::default(),
+                |_, _| {},
+            )
+            .await;
             eprintln!("summary took {:.1}s", started.elapsed().as_secs_f64());
             (paragraphs, s)
         });

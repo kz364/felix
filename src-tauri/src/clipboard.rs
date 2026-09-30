@@ -51,6 +51,43 @@ fn finish_clipboard_paste(
     paste_result
 }
 
+/// Apps that need the full `paste_delay_ms` before ⌘V even once the
+/// pasteboard shows our text (bundle ids). Add one here if it ever pastes
+/// the old clipboard.
+#[cfg(target_os = "macos")]
+const FULL_PASTE_DELAY_APPS: &[&str] = &[];
+
+#[cfg(target_os = "macos")]
+fn pasteboard_change_count() -> isize {
+    objc2_app_kit::NSPasteboard::generalPasteboard().changeCount()
+}
+
+/// Before ⌘V: wait until the pasteboard shows our write (its change count
+/// moved on from `before`), at most `cap`. Some apps drop a ⌘V that arrives
+/// before the change is visible; once it is, there's nothing left to wait
+/// for. Without a way to tell (other platforms), wait the full `cap`.
+fn wait_for_clipboard_write(before: Option<isize>, cap: Duration) {
+    #[cfg(target_os = "macos")]
+    {
+        let full_delay = crate::app_context::frontmost_bundle()
+            .0
+            .is_some_and(|b| FULL_PASTE_DELAY_APPS.contains(&b.as_str()));
+        if let (Some(before), false) = (before, full_delay) {
+            let started = std::time::Instant::now();
+            while started.elapsed() < cap {
+                if pasteboard_change_count() != before {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            log::debug!("Pasteboard change not seen within {cap:?}");
+            return;
+        }
+    }
+    let _ = before;
+    std::thread::sleep(cap);
+}
+
 /// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
 fn paste_via_clipboard(
     text: &str,
@@ -59,6 +96,7 @@ fn paste_via_clipboard(
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
     // Only probe for an image when there is no text to restore. Text is by far the
@@ -70,10 +108,18 @@ fn paste_via_clipboard(
         None
     };
 
+    let saved = started.elapsed();
+    #[cfg(target_os = "macos")]
+    let change_before = Some(pasteboard_change_count());
+    #[cfg(not(target_os = "macos"))]
+    let change_before = None;
+
     // Write text to clipboard first
     write_text_to_clipboard(app_handle, text)?;
+    let written = started.elapsed();
 
-    std::thread::sleep(Duration::from_millis(paste_delay_ms));
+    wait_for_clipboard_write(change_before, Duration::from_millis(paste_delay_ms));
+    let waited = started.elapsed();
 
     // Capture key injection errors so the original clipboard is restored before
     // propagating them to the caller.
@@ -100,7 +146,8 @@ fn paste_via_clipboard(
         Ok(())
     })();
 
-    finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
+    let keys = started.elapsed();
+    let result = finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
         // Restore original clipboard content even when key injection failed.
         // Text takes priority so this path stays identical to the previous behavior;
         // an image is only restored when the clipboard held no text at all, which is
@@ -114,7 +161,17 @@ fn paste_via_clipboard(
             // Nothing was there to begin with — don't leave the transcription behind.
             let _ = clipboard.clear();
         }
-    })
+    });
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    log::debug!(
+        "Clipboard paste: save {:.1} ms, write {:.1} ms, wait {:.1} ms, ⌘V {:.1} ms (text lands as it starts), after and restore {:.1} ms",
+        ms(saved),
+        ms(written - saved),
+        ms(waited - written),
+        ms(keys - waited),
+        ms(started.elapsed() - keys)
+    );
+    result
 }
 
 /// Attempts to send a key combination using Linux-native tools.

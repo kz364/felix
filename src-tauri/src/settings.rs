@@ -781,6 +781,10 @@ pub struct AppSettings {
     /// Which engine transcribes meetings: the local model or a provider.
     #[serde(default)]
     pub meeting_transcriber: crate::meetings::MeetingTranscriber,
+    /// The languages meetings are held in (ISO codes). Empty: found from
+    /// the recording. Meetings go to a model that knows them all.
+    #[serde(default)]
+    pub meeting_languages: Vec<String>,
     /// Tell voices apart: everyone in an in-person meeting, the other side
     /// (and anyone in the room) on a call.
     #[serde(default = "default_meeting_true")]
@@ -1554,6 +1558,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_gain: true,
         meeting_input_boost_db: 0.0,
         meeting_transcriber: Default::default(),
+        meeting_languages: Vec::new(),
         meeting_diarize: true,
         meeting_detect_calls: true,
         meeting_auto_stop: true,

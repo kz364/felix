@@ -254,6 +254,10 @@ enum Slot {
 }
 
 static SLOT: Lazy<Mutex<Slot>> = Lazy::new(|| Mutex::new(Slot::Empty));
+static SLOT_READY: std::sync::Condvar = std::sync::Condvar::new();
+/// How long a starting cleanup waits for a screen read still in flight:
+/// short dictations otherwise get cleaned up without their context.
+const CLEANUP_WAITS_FOR_READ: std::time::Duration = std::time::Duration::from_millis(150);
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// The block the last cleanup was actually given (after the privacy
 /// settings), for History.
@@ -286,12 +290,23 @@ pub fn begin() -> u64 {
     generation
 }
 
+/// This dictation's cleanup won't be given the screen: nothing to wait for.
+pub fn skip(generation: u64) {
+    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    if matches!(*slot, Slot::Reading(g) if g == generation) {
+        *slot = Slot::Ready(generation, None);
+        SLOT_READY.notify_all();
+    }
+}
+
 /// Read the screen now (blocking, ~5–300 ms) and store the prompt block for
 /// this dictation. `None` if cleanup already started without it, so the
 /// caller needn't prewarm with it.
 pub fn read_for(generation: u64) -> Option<Option<String>> {
     let started = std::time::Instant::now();
-    let block = read().filter(|c| !c.is_empty()).map(|c| {
+    // The field as the dictation started, shared with the dictation log.
+    let field = crate::text_field::start_snapshot(std::time::Duration::from_secs(1));
+    let block = read_with(field).filter(|c| !c.is_empty()).map(|c| {
         log::debug!(
             "Screen context: {} chars of conversation, {} before and {} after the cursor, in {:?}",
             c.conversation.len(),
@@ -305,6 +320,7 @@ pub fn read_for(generation: u64) -> Option<Option<String>> {
     match *slot {
         Slot::Reading(g) if g == generation => {
             *slot = Slot::Ready(generation, block.clone());
+            SLOT_READY.notify_all();
             Some(block)
         }
         _ => None,
@@ -323,7 +339,23 @@ pub fn peek() -> Option<String> {
 /// The context for the cleanup that's starting: what was read, if it's
 /// ready. Later reads for this dictation are dropped.
 pub fn take_for_cleanup() -> Option<String> {
-    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    take_for_cleanup_within(CLEANUP_WAITS_FOR_READ)
+}
+
+fn take_for_cleanup_within(wait: std::time::Duration) -> Option<String> {
+    let started = std::time::Instant::now();
+    let slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut slot, timeout) = SLOT_READY
+        .wait_timeout_while(slot, wait, |s| matches!(s, Slot::Reading(_)))
+        .unwrap_or_else(|e| e.into_inner());
+    if timeout.timed_out() {
+        log::debug!("Screen context not read within {wait:?}; cleaning up without it");
+    } else if started.elapsed() > std::time::Duration::from_millis(1) {
+        log::debug!(
+            "Cleanup waited {:?} for the screen context",
+            started.elapsed()
+        );
+    }
     match std::mem::replace(&mut *slot, Slot::Empty) {
         Slot::Ready(g, block) => {
             *slot = Slot::Taken(g);
@@ -337,8 +369,14 @@ pub fn take_for_cleanup() -> Option<String> {
     }
 }
 
-/// Read the frontmost app's screen.
-pub fn read() -> Option<ScreenContext> {
+/// Read the screen around an already-read focused field.
+fn read_with(field: Option<crate::text_field::FieldSnapshot>) -> Option<ScreenContext> {
+    read_with_field(Some(field))
+}
+
+fn read_with_field(
+    known: Option<Option<crate::text_field::FieldSnapshot>>,
+) -> Option<ScreenContext> {
     let (bundle_id, _) = crate::app_context::frontmost_bundle();
     if bundle_id.as_deref().is_some_and(never_read) {
         return None;
@@ -347,7 +385,7 @@ pub fn read() -> Option<ScreenContext> {
         crate::text_field::wake_tree(pid);
         crate::text_field::wait_for_tree(pid);
     }
-    let field = crate::text_field::focused_field();
+    let field = known.unwrap_or_else(crate::text_field::focused_field);
     let screen = mac_read();
     let (window_title, conversation) = match screen {
         Some(s) => (
@@ -980,7 +1018,7 @@ mod tests {
     #[test]
     fn a_late_read_is_dropped_once_cleanup_started() {
         let g = begin();
-        assert_eq!(take_for_cleanup(), None);
+        assert_eq!(take_for_cleanup_within(std::time::Duration::ZERO), None);
         // Reading finishes after cleanup took the slot: not used.
         let mut slot = SLOT.lock().unwrap();
         assert!(matches!(*slot, Slot::Taken(x) if x == g));
@@ -988,5 +1026,22 @@ mod tests {
         drop(slot);
         assert_eq!(take_for_cleanup(), Some("ctx".into()));
         assert_eq!(take_for_cleanup(), None);
+
+        // (Same test: the slot is shared.) Cleanup waits briefly for a read
+        // in flight.
+        let g = begin();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let mut slot = SLOT.lock().unwrap();
+            *slot = Slot::Ready(g, Some("ctx".into()));
+            SLOT_READY.notify_all();
+        });
+        assert_eq!(take_for_cleanup(), Some("ctx".into()));
+        // Skipped reads aren't waited for.
+        let g = begin();
+        skip(g);
+        let started = std::time::Instant::now();
+        assert_eq!(take_for_cleanup(), None);
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
     }
 }

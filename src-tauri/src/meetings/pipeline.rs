@@ -29,40 +29,12 @@ pub struct Analysis {
     pub energy: Vec<f32>,
 }
 
-/// The gain that lifts a quiet track's room noise to about -45 dBFS, so the
-/// VAD hears distant voices above it (in person). Only for finding speech;
-/// the audio itself is levelled per chunk.
-fn vad_gain(wav: &Path) -> Result<f32, String> {
-    let mut reader = hound::WavReader::open(wav).map_err(|e| format!("{}: {e}", wav.display()))?;
-    let mut levels = Vec::new();
-    let mut sum = 0.0f32;
-    let mut n = 0;
-    for sample in reader.samples::<i16>() {
-        let v = sample.map_err(|e| e.to_string())? as f32 / i16::MAX as f32;
-        sum += v * v;
-        n += 1;
-        if n == FRAME_SAMPLES {
-            levels.push((sum / n as f32).sqrt());
-            (sum, n) = (0.0, 0);
-        }
-    }
-    levels.retain(|l| *l > 0.0);
-    if levels.is_empty() {
-        return Ok(1.0);
-    }
-    levels.sort_by(|a, b| a.total_cmp(b));
-    let noise = levels[levels.len() / 5];
-    Ok((0.0056 / noise).clamp(
-        1.0,
-        crate::audio_toolkit::audio::db_to_linear(super::level::MAX_BOOST_DB),
-    ))
-}
-
-/// Run the VAD over a 16 kHz mono WAV. With `lift_quiet`, a quiet track is
-/// raised for the VAD (see [`vad_gain`]).
-pub fn analyze(wav: &Path, vad_model: &Path, lift_quiet: bool) -> Result<Analysis, String> {
+/// Run the VAD over a 16 kHz mono WAV. With `live_gain`, the VAD hears the
+/// track through the in-person gain ([`super::level::LiveGain`]), so quiet
+/// and distant voices are found.
+pub fn analyze(wav: &Path, vad_model: &Path, live_gain: bool) -> Result<Analysis, String> {
     let mut vad = SileroVad::new(vad_model, VAD_THRESHOLD).map_err(|e| e.to_string())?;
-    let gain = if lift_quiet { vad_gain(wav)? } else { 1.0 };
+    let mut gain = live_gain.then(super::level::LiveGain::default);
     let mut reader = hound::WavReader::open(wav).map_err(|e| format!("{}: {e}", wav.display()))?;
     check_format(&reader, wav)?;
     let mut lifted = Vec::with_capacity(FRAME_SAMPLES);
@@ -75,16 +47,14 @@ pub fn analyze(wav: &Path, vad_model: &Path, lift_quiet: bool) -> Result<Analysi
         if frame.len() == FRAME_SAMPLES {
             let e = frame.iter().map(|s| s * s).sum::<f32>() / FRAME_SAMPLES as f32;
             // Digital silence (padding, nothing playing) needs no model.
-            let frame_for_vad = if gain > 1.0 {
-                lifted.clear();
-                lifted.extend(
-                    frame
-                        .iter()
-                        .map(|s| crate::audio_toolkit::audio::soft_limit(s * gain)),
-                );
-                &lifted
-            } else {
-                &frame
+            let frame_for_vad = match &mut gain {
+                Some(gain) => {
+                    lifted.clear();
+                    lifted.extend_from_slice(&frame);
+                    gain.process(&mut lifted);
+                    &lifted
+                }
+                None => &frame,
             };
             speech.push(
                 e > 0.0
@@ -238,6 +208,7 @@ pub fn run(
     vad_model: &Path,
     level: Option<LevelSettings>,
     speaker_model: Option<&Path>,
+    voiceprint: Option<&[f32]>,
     engine: &str,
     mut transcribe: impl FnMut(Vec<f32>) -> Result<String, Stopped>,
     mut progress: impl FnMut(Step),
@@ -300,22 +271,21 @@ pub fn run(
     // Who speaks when. In person: every voice on the mic. On a call: the
     // voices on the system track, and anyone in the room with the user on
     // the mic. If it fails, the transcript goes ahead without speakers.
-    let diarize = |wav: &Path, speech: &[bool]| {
-        super::diarize::speakers(wav, speech, speaker_model?)
+    let diarize = |wav: &Path, speech: &[bool], print: Option<&[f32]>| {
+        super::diarize::speakers(wav, speech, speaker_model?, print)
             .inspect_err(|e| log::warn!("Couldn't tell the speakers apart: {e}"))
             .ok()
     };
     let (mic_speakers, system_speakers) = if speaker_model.is_some() {
         progress(Step::Identifying);
         let mic_speakers = match (&mic_speech, mode) {
-            (Some(speech), MeetingMode::InPerson) => diarize(&mic_wav, speech),
-            (Some(speech), MeetingMode::Call) => {
-                diarize(&mic_wav, speech).map(|labels| super::diarize::others_in_room(&labels))
-            }
+            (Some(speech), MeetingMode::InPerson) => diarize(&mic_wav, speech, voiceprint),
+            (Some(speech), MeetingMode::Call) => diarize(&mic_wav, speech, None)
+                .map(|labels| super::diarize::others_in_room(&labels)),
             _ => None,
         };
         let system_speakers = system.as_ref().and_then(|s| {
-            diarize(&system_wav, &s.speech)
+            diarize(&system_wav, &s.speech, None)
                 .map(|labels| super::diarize::offset(&labels, SYSTEM_SPEAKERS))
         });
         (mic_speakers, system_speakers)
@@ -331,7 +301,16 @@ pub fn run(
                 Some(labels) => plan.extend(
                     super::diarize::split_by_speaker(c, labels)
                         .into_iter()
-                        .map(|(c, s)| (source, c, s.filter(|&s| s != super::diarize::ME))),
+                        // On a call the user is the mic's unlabelled voice;
+                        // in person, a voiceprint match stays labelled.
+                        .map(|(c, s)| {
+                            let me_unlabelled = mode == MeetingMode::Call;
+                            (
+                                source,
+                                c,
+                                s.filter(|&s| !(me_unlabelled && s == super::diarize::ME)),
+                            )
+                        }),
                 ),
                 None => plan.push((source, c, None)),
             }
@@ -361,13 +340,36 @@ pub fn run(
             Source::Mic => echo.as_deref(),
             Source::System => None,
         };
-        let mut audio = read_chunk(&dir.join(source.file()), chunk, silence)?;
-        if let (Source::Mic, MeetingMode::InPerson, Some(settings), Some(m)) =
-            (source, mode, level, &mic)
-        {
-            let start = (chunk.start_ms * SAMPLE_RATE as u64 / 1000) as usize;
-            super::level::level(&mut audio, start, &m.speech, settings);
-        }
+        let in_person_mic = source == Source::Mic && mode == MeetingMode::InPerson;
+        let audio = match level {
+            Some(settings) if in_person_mic && settings.auto => {
+                // Run the gain over the lead-in too, so it starts settled.
+                let from = chunk.start_ms.saturating_sub(super::level::WARMUP_MS);
+                let lead_in = ((chunk.start_ms - from) * SAMPLE_RATE as u64 / 1000) as usize;
+                let mut audio = read_chunk(
+                    &dir.join(source.file()),
+                    Chunk {
+                        start_ms: from,
+                        end_ms: chunk.end_ms,
+                    },
+                    silence,
+                )?;
+                let boost = crate::audio_toolkit::audio::db_to_linear(settings.boost_db);
+                if (boost - 1.0).abs() > 1e-3 {
+                    audio.iter_mut().for_each(|s| *s *= boost);
+                }
+                super::level::percentile_gain(&mut audio);
+                audio.split_off(lead_in.min(audio.len()))
+            }
+            _ => {
+                let mut audio = read_chunk(&dir.join(source.file()), chunk, silence)?;
+                if let (true, Some(settings), Some(m)) = (in_person_mic, level, &mic) {
+                    let start = (chunk.start_ms * SAMPLE_RATE as u64 / 1000) as usize;
+                    super::level::level(&mut audio, start, &m.speech, settings);
+                }
+                audio
+            }
+        };
         let text = transcribe(audio)?;
         t.segments.push(Segment {
             source,

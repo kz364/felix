@@ -1,6 +1,14 @@
 /* Pieces of a meeting in progress, shared by the Meetings page and the
  * side panel that shows while recording. */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -11,6 +19,13 @@ import {
   type MeetingInfo,
   type MeetingNotes,
 } from "@/bindings";
+import {
+  afterInput,
+  onEnter,
+  onTab,
+  toggleBullet,
+  type Edit,
+} from "@/lib/utils/bullets";
 
 /** `m:ss`, or `h:mm:ss` from an hour. */
 export const clock = (ms: number) => {
@@ -74,11 +89,18 @@ export const TitleEditor: React.FC<{
 
 type SaveState = "idle" | "saving" | "saved";
 
-/** The user's own notes, saved as they type. They go into the summary. */
-export const NotesEditor: React.FC<{ id: string; minRows?: number }> = ({
-  id,
-  minRows = 5,
-}) => {
+export type NotesEditorHandle = {
+  toggleBullet: () => void;
+  focusEnd: () => void;
+};
+
+/** The user's own notes, saved as they type. They go into the summary.
+ * "- " starts a bullet list. `bare`: no heading or box, for the panel,
+ * which has its own. */
+export const NotesEditor = forwardRef<
+  NotesEditorHandle,
+  { id: string; minRows?: number; bare?: boolean }
+>(function NotesEditor({ id, minRows = 5, bare = false }, ref) {
   const { t } = useTranslation();
   const [notes, setNotes] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -133,7 +155,82 @@ export const NotesEditor: React.FC<{ id: string; minRows?: number }> = ({
     el.style.height = `${el.scrollHeight}px`;
   }, [notes]);
 
+  const change = (text: string) => {
+    setNotes(text);
+    pending.current = text;
+    setSaveState("idle");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(flush, 600);
+  };
+
+  // Where the cursor goes after a list edit, once the text is in.
+  const cursorAfter = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = area.current;
+    if (el && cursorAfter.current !== null) {
+      el.setSelectionRange(cursorAfter.current, cursorAfter.current);
+      cursorAfter.current = null;
+    }
+  }, [notes]);
+  const apply = (edit: Edit | null) => {
+    if (!edit) return false;
+    cursorAfter.current = edit.cursor;
+    change(edit.text);
+    return true;
+  };
+
+  useImperativeHandle(ref, () => ({
+    toggleBullet: () => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      apply(toggleBullet(el.value, el.selectionStart));
+    },
+    focusEnd: () => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    },
+  }));
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    if (el.selectionStart !== el.selectionEnd || e.nativeEvent.isComposing) {
+      return;
+    }
+    const edit =
+      e.key === "Enter" && !e.shiftKey
+        ? onEnter(el.value, el.selectionStart)
+        : e.key === "Tab"
+          ? onTab(el.value, el.selectionStart, e.shiftKey)
+          : null;
+    if (apply(edit)) e.preventDefault();
+  };
+
   if (notes === null) return null;
+  const textarea = (
+    <textarea
+      ref={area}
+      value={notes}
+      rows={minRows}
+      onChange={(e) => {
+        const el = e.target;
+        if (!apply(afterInput(el.value, el.selectionStart))) {
+          change(el.value);
+        }
+      }}
+      onKeyDown={onKeyDown}
+      onBlur={flush}
+      placeholder={t("meetings.notes.placeholder")}
+      className={
+        bare
+          ? "w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-text/35"
+          : "w-full resize-none rounded-xl border border-stone/20 bg-background px-4 py-3 text-sm leading-relaxed outline-none focus:border-accent/60 placeholder:text-text/35"
+      }
+    />
+  );
+  if (bare) return textarea;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between px-1">
@@ -148,24 +245,10 @@ export const NotesEditor: React.FC<{ id: string; minRows?: number }> = ({
               : ""}
         </span>
       </div>
-      <textarea
-        ref={area}
-        value={notes}
-        rows={minRows}
-        onChange={(e) => {
-          setNotes(e.target.value);
-          pending.current = e.target.value;
-          setSaveState("idle");
-          clearTimeout(timer.current);
-          timer.current = setTimeout(flush, 600);
-        }}
-        onBlur={flush}
-        placeholder={t("meetings.notes.placeholder")}
-        className="w-full resize-none rounded-xl border border-stone/20 bg-background px-4 py-3 text-sm leading-relaxed outline-none focus:border-accent/60 placeholder:text-text/35"
-      />
+      {textarea}
     </div>
   );
-};
+});
 
 /** "What did I miss?" and "Suggest a question" while a call records. */
 export const LiveHelp: React.FC = () => {

@@ -126,3 +126,140 @@ pub fn start(device: Option<cpal::Device>) -> Result<(Source, MicStream), String
         },
     ))
 }
+
+/// The input volume the Mac has set for a mic (`None`: the default input),
+/// in dB. `None` when the device has no volume control. Call apps (Zoom,
+/// Teams) move this slider on their own during calls.
+#[cfg(target_os = "macos")]
+pub fn input_volume_db(device_name: Option<&str>) -> Option<f32> {
+    use objc2::rc::Retained;
+    use objc2_core_audio::{
+        kAudioDevicePropertyVolumeDecibels, kAudioHardwarePropertyDefaultInputDevice,
+        kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain, kAudioObjectPropertyName,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput, kAudioObjectSystemObject,
+        kAudioObjectUnknown, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
+        AudioObjectHasProperty, AudioObjectID, AudioObjectPropertyAddress,
+    };
+    use objc2_foundation::NSString;
+    use std::mem::size_of;
+    use std::ptr::NonNull;
+
+    let address = |selector, scope, element| AudioObjectPropertyAddress {
+        mSelector: selector,
+        mScope: scope,
+        mElement: element,
+    };
+    // SAFETY: each call passes a valid address and a buffer of the size it
+    // says; the name is a +1 CFString handed to `Retained`.
+    unsafe {
+        let get =
+            |object: AudioObjectID, addr: &AudioObjectPropertyAddress, out: *mut u8, size: u32| {
+                let mut size = size;
+                AudioObjectGetPropertyData(
+                    object,
+                    NonNull::from(addr),
+                    0,
+                    std::ptr::null(),
+                    NonNull::from(&mut size),
+                    NonNull::new_unchecked(out as *mut std::ffi::c_void),
+                ) == 0
+                    && size > 0
+            };
+        let system = kAudioObjectSystemObject as AudioObjectID;
+        let global = |sel| {
+            address(
+                sel,
+                kAudioObjectPropertyScopeGlobal,
+                kAudioObjectPropertyElementMain,
+            )
+        };
+        let device = match device_name {
+            None => {
+                let mut id: AudioObjectID = kAudioObjectUnknown;
+                get(
+                    system,
+                    &global(kAudioHardwarePropertyDefaultInputDevice),
+                    &mut id as *mut _ as *mut u8,
+                    size_of::<AudioObjectID>() as u32,
+                )
+                .then_some(id)?
+            }
+            Some(name) => {
+                let addr = global(kAudioHardwarePropertyDevices);
+                let mut size = 0u32;
+                if AudioObjectGetPropertyDataSize(
+                    system,
+                    NonNull::from(&addr),
+                    0,
+                    std::ptr::null(),
+                    NonNull::from(&mut size),
+                ) != 0
+                {
+                    return None;
+                }
+                let mut ids = vec![0 as AudioObjectID; size as usize / size_of::<AudioObjectID>()];
+                if ids.is_empty() || !get(system, &addr, ids.as_mut_ptr() as *mut u8, size) {
+                    return None;
+                }
+                ids.into_iter().find(|&id| {
+                    let mut cf: *mut NSString = std::ptr::null_mut();
+                    get(
+                        id,
+                        &global(kAudioObjectPropertyName),
+                        &mut cf as *mut _ as *mut u8,
+                        size_of::<*mut NSString>() as u32,
+                    ) && Retained::from_raw(cf).is_some_and(|n| n.to_string() == name)
+                })?
+            }
+        };
+        if device == kAudioObjectUnknown {
+            return None;
+        }
+        // The main element, or else the first channel.
+        [kAudioObjectPropertyElementMain, 1]
+            .into_iter()
+            .find_map(|element| {
+                let addr = address(
+                    kAudioDevicePropertyVolumeDecibels,
+                    kAudioObjectPropertyScopeInput,
+                    element,
+                );
+                if !AudioObjectHasProperty(device, NonNull::from(&addr)) {
+                    return None;
+                }
+                let mut db = 0f32;
+                get(
+                    device,
+                    &addr,
+                    &mut db as *mut f32 as *mut u8,
+                    size_of::<f32>() as u32,
+                )
+                .then_some(db)
+                .filter(|db| db.is_finite())
+            })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn input_volume_db(_device_name: Option<&str>) -> Option<f32> {
+    None
+}
+
+/// Gain that undoes a change to the mic's input volume since `start_db`,
+/// kept to ±18 dB so a slider pulled to the bottom doesn't turn into noise.
+pub fn undo_volume_change(start_db: f32, now_db: f32) -> f32 {
+    10f32.powf(((start_db - now_db) / 20.0).clamp(-18.0 / 20.0, 18.0 / 20.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::undo_volume_change;
+
+    #[test]
+    fn a_lowered_slider_is_made_up_within_limits() {
+        assert!((undo_volume_change(0.0, 0.0) - 1.0).abs() < 1e-6);
+        assert!((undo_volume_change(0.0, -6.0) - 1.995).abs() < 0.01);
+        assert!((undo_volume_change(-6.0, 0.0) - 0.501).abs() < 0.01);
+        assert!((undo_volume_change(0.0, -40.0) - 7.94).abs() < 0.05);
+    }
+}

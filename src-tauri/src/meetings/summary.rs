@@ -369,6 +369,47 @@ pub fn sections(lines: &[String], budget: usize) -> Vec<String> {
     out
 }
 
+/// Below this many characters of transcript, the notes stay as short as the
+/// meeting was instead of padding out every section.
+pub const SHORT_TRANSCRIPT_CHARS: usize = 200;
+
+/// What the summariser is told beyond the meeting itself.
+#[derive(Default)]
+pub struct SummaryContext {
+    /// The last meeting of the same name: its overview and open actions.
+    pub previous: Option<String>,
+    /// The Mac is set to British (or Commonwealth) English.
+    pub british: bool,
+}
+
+/// Locales that spell the British way.
+pub fn spells_british(locale: &str) -> bool {
+    let l = locale.replace('_', "-").to_lowercase();
+    ["en-gb", "en-au", "en-nz", "en-ie", "en-za", "en-in"]
+        .iter()
+        .any(|p| l == *p || l.starts_with(&format!("{p}-")))
+}
+
+/// The previous meeting in a series, as the summariser reads it.
+pub fn previous_block(title: &str, when: &str, previous: &Summary) -> String {
+    let mut text = format!("{title} ({when}): {}", previous.overview.trim());
+    let open: Vec<String> = previous
+        .action_items
+        .iter()
+        .map(|a| {
+            if a.owner.is_empty() {
+                a.task.clone()
+            } else {
+                format!("{} ({})", a.task, a.owner)
+            }
+        })
+        .collect();
+    if !open.is_empty() {
+        text.push_str(&format!("\nAction items from then: {}", open.join("; ")));
+    }
+    text
+}
+
 /// Write the summary. `about` describes the meeting (date, length, who's
 /// who); `lines` is the transcript, one `[m:ss] Speaker: text` per line.
 /// Long meetings are noted section by section first, then summarised from
@@ -379,6 +420,7 @@ pub async fn summarize(
     about: &str,
     notes: &str,
     lines: &[String],
+    context: &SummaryContext,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Summary, String> {
     let guidance = if guidance.trim().is_empty() {
@@ -386,7 +428,21 @@ pub async fn summarize(
     } else {
         guidance
     };
-    let instructions = format!("{SUMMARY_FRAME}\n\n{guidance}");
+    let mut instructions = format!("{SUMMARY_FRAME}\n\n{guidance}");
+    let spoken: usize = lines.iter().map(|l| l.len()).sum();
+    if spoken < SHORT_TRANSCRIPT_CHARS {
+        instructions.push_str("\n\nThe transcript is very short. Keep the notes as short as it is: leave out any section it has nothing for, and don't pad.");
+    }
+    if context.previous.is_some() {
+        instructions.push_str("\n\nThe previous meeting of the same name is given for context. Use it to follow up (what's changed, which earlier action items came up), but only note what was said in this meeting.");
+    }
+    if context.british {
+        instructions.push_str("\n\nUse British spelling.");
+    }
+    let about = match &context.previous {
+        Some(p) => format!("{about}\n\n# Previous meeting\n{p}"),
+        None => about.to_string(),
+    };
     let notes_block = if notes.trim().is_empty() {
         "(The user didn't type any notes.)".to_string()
     } else {
@@ -563,6 +619,16 @@ mod tests {
         assert_eq!(out[0].raw.as_deref(), Some("um so hi everyone"));
         assert_eq!(out[1].text, "next");
         assert_eq!(out[1].raw, None);
+    }
+
+    #[test]
+    fn british_spelling_follows_the_locale() {
+        for l in ["en-GB", "en_GB", "en-AU", "en-GB-u-mu-celsius"] {
+            assert!(spells_british(l), "{l}");
+        }
+        for l in ["en-US", "en", "de-DE", "en-GBX"] {
+            assert!(!spells_british(l), "{l}");
+        }
     }
 
     #[test]

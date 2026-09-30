@@ -235,6 +235,45 @@ const RESPONSES: Record<string, unknown> = {
     megabytes: 61.3,
   },
   benchmark_records: BENCHMARK,
+  get_meeting_state: {
+    recording: {
+      id: "2026-09-30_10-00-00",
+      mode: "call",
+      status: "recording",
+      started_at: Date.now() - 754_000,
+      ended_at: null,
+      mic: "MacBook Pro Microphone",
+      system_error: null,
+      tracks: [],
+      title: "Weekly sync with Sam",
+    },
+    paused: null,
+    elapsed_ms: 754_000,
+    transcribing: null,
+    live: false,
+  },
+  get_meeting_panel_state: { expanded: true },
+  get_meeting_notes:
+    "• Launch moved to Thursday\n• Sam to send the pricing sheet",
+  meeting_level: 0.4,
+  get_live_transcript: [
+    {
+      source: "system",
+      start_ms: 12_000,
+      end_ms: 30_000,
+      text: "Morning! Shall we start with the launch date?",
+      raw: null,
+      speaker: null,
+    },
+    {
+      source: "mic",
+      start_ms: 31_000,
+      end_ms: 52_000,
+      text: "Yes, I think Thursday works better for everyone.",
+      raw: null,
+      speaker: null,
+    },
+  ],
   list_meetings: [],
   get_meetings: [],
   get_available_microphones: [
@@ -257,7 +296,11 @@ const RESPONSES: Record<string, unknown> = {
 
 export function installTauriMock() {
   mockWindows(
-    window.location.pathname.includes("overlay") ? "recording_overlay" : "main",
+    window.location.pathname.includes("overlay")
+      ? "recording_overlay"
+      : window.location.pathname.includes("meeting-panel")
+        ? "meeting_panel"
+        : "main",
   );
   mockConvertFileSrc("macos");
   mockIPC(

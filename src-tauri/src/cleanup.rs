@@ -511,6 +511,18 @@ pub fn unwrap_output(output: &str) -> String {
     s.to_string()
 }
 
+/// Em dashes the model added that the transcript didn't have become commas.
+/// Small models reach for them, and they read as machine-written.
+pub fn without_new_dashes(input: &str, output: &str) -> String {
+    if input.contains('\u{2014}') || !output.contains('\u{2014}') {
+        return output.to_string();
+    }
+    let re = regex::Regex::new(r"[ \t]*\u{2014}[ \t]*").unwrap();
+    re.replace_all(output, ", ")
+        .replace(",,", ",")
+        .replace(", .", ".")
+}
+
 const META_PREFIXES: &[&str] = &[
     "here is",
     "here's",
@@ -1055,6 +1067,22 @@ mod tests {
             unwrap_output("\"Quoted\" and \"more\""),
             "\"Quoted\" and \"more\""
         );
+    }
+
+    #[test]
+    fn new_em_dashes_become_commas() {
+        assert_eq!(
+            without_new_dashes(
+                "we ship friday then we test",
+                "We ship Friday \u{2014} then we test."
+            ),
+            "We ship Friday, then we test."
+        );
+        assert_eq!(without_new_dashes("a b", "A\u{2014}b."), "A, b.");
+        // The speaker's own dashes (or the transcript's) stay.
+        let kept = "Friday \u{2014} then.";
+        assert_eq!(without_new_dashes(kept, kept), kept);
+        assert_eq!(without_new_dashes("x", "No dashes."), "No dashes.");
     }
 
     #[test]

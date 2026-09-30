@@ -13,15 +13,15 @@ use objc2_core_audio::{
     kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey,
     kAudioAggregateDeviceSubDeviceListKey, kAudioAggregateDeviceTapAutoStartKey,
     kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey, kAudioDevicePropertyDeviceUID,
-    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyTranslatePIDToProcessObject,
-    kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
-    kAudioObjectUnknown, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey,
-    kAudioSubTapUIDKey, kAudioTapPropertyFormat, AudioDeviceCreateIOProcID,
-    AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop,
-    AudioHardwareCreateAggregateDevice, AudioHardwareCreateProcessTap,
-    AudioHardwareDestroyAggregateDevice, AudioHardwareDestroyProcessTap,
-    AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
-    AudioObjectPropertySelector, CATapDescription, CATapMuteBehavior,
+    kAudioDevicePropertyNominalSampleRate, kAudioHardwarePropertyDefaultOutputDevice,
+    kAudioHardwarePropertyTranslatePIDToProcessObject, kAudioObjectPropertyElementMain,
+    kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioObjectUnknown,
+    kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
+    kAudioTapPropertyFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID,
+    AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioHardwareCreateAggregateDevice,
+    AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
+    AudioHardwareDestroyProcessTap, AudioObjectGetPropertyData, AudioObjectID,
+    AudioObjectPropertyAddress, AudioObjectPropertySelector, CATapDescription, CATapMuteBehavior,
 };
 use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::CFDictionary;
@@ -89,6 +89,13 @@ unsafe fn default_output_uid() -> Result<Retained<NSString>, String> {
 }
 
 /// State the IOProc reads on the audio thread.
+/// The UID of the output the Mac plays through right now.
+pub fn output_uid() -> Option<String> {
+    unsafe { default_output_uid() }
+        .ok()
+        .map(|uid| uid.to_string())
+}
+
 struct Callback {
     producer: UnsafeCell<rtrb::Producer<f32>>,
 }
@@ -278,6 +285,23 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
         ));
     }
 
+    // The tap's format can say 48 kHz while the output it's built on runs
+    // slower (AirPods on a call: 24 kHz); the device's own rate is what
+    // arrives.
+    let rate = match get_property::<f64>(
+        session.aggregate,
+        kAudioDevicePropertyNominalSampleRate,
+        None,
+        0.0,
+    ) {
+        Ok(device_rate) if device_rate >= 8_000.0 && device_rate.round() as u32 != rate => {
+            log::warn!(
+                "System audio tap says {rate} Hz but its device runs at {device_rate} Hz; using the device's"
+            );
+            device_rate.round() as u32
+        }
+        _ => rate,
+    };
     let (producer, consumer) = rtrb::RingBuffer::new(rate as usize * RING_SECONDS);
     session.callback = Box::into_raw(Box::new(Callback {
         producer: UnsafeCell::new(producer),

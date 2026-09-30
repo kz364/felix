@@ -491,8 +491,47 @@ pub fn offset(labels: &[Option<u32>], base: u32) -> Vec<Option<u32>> {
     labels.iter().map(|l| l.map(|s| s + base)).collect()
 }
 
-/// Label every speech frame of a mic track with a speaker.
-pub fn speakers(wav: &Path, speech: &[bool], model: &Path) -> Result<Vec<Option<u32>>, String> {
+/// A speaker at least this close to the user's voiceprint (cosine of the
+/// centroids) can be the user...
+pub const VOICEPRINT_MATCH: f32 = 0.8;
+/// ...and must be this much closer than any other speaker.
+pub const VOICEPRINT_MARGIN: f32 = 0.1;
+
+/// Relabel as [`ME`] the one speaker whose voice matches the user's print,
+/// if one clearly does. `speakers` holds a speaker per embedding.
+pub fn mark_me(embeddings: &[Vec<f32>], speakers: &mut [u32], voiceprint: &[f32]) {
+    let Some(&last) = speakers.iter().max() else {
+        return;
+    };
+    let labels: Vec<usize> = speakers.iter().map(|&s| s as usize).collect();
+    let mut scores: Vec<(u32, f32)> = (0..=last)
+        .filter(|s| speakers.contains(s))
+        .map(|s| {
+            (
+                s,
+                cosine(&centroid(embeddings, &labels, s as usize), voiceprint),
+            )
+        })
+        .collect();
+    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let (me, best) = scores[0];
+    let runner_up = scores.get(1).map_or(-1.0, |s| s.1);
+    log::info!("Voiceprint: best speaker {best:.2}, next {runner_up:.2}");
+    if best >= VOICEPRINT_MATCH && best - runner_up >= VOICEPRINT_MARGIN {
+        for s in speakers.iter_mut().filter(|s| **s == me) {
+            *s = ME;
+        }
+    }
+}
+
+/// Label every speech frame of a mic track with a speaker. With the user's
+/// `voiceprint` for this mic, their voice is labelled [`ME`].
+pub fn speakers(
+    wav: &Path,
+    speech: &[bool],
+    model: &Path,
+    voiceprint: Option<&[f32]>,
+) -> Result<Vec<Option<u32>>, String> {
     let wins = windows(speech);
     if wins.is_empty() {
         return Ok(vec![None; speech.len()]);
@@ -510,7 +549,10 @@ pub fn speakers(wav: &Path, speech: &[bool], model: &Path) -> Result<Vec<Option<
         let b = (to * FRAME_SAMPLES).min(samples.len());
         embeddings.push(embedder.embed(&samples[a..b])?);
     }
-    let speakers = cluster(&embeddings);
+    let mut speakers = cluster(&embeddings);
+    if let Some(print) = voiceprint {
+        mark_me(&embeddings, &mut speakers, print);
+    }
     log::info!(
         "Meeting diarization: {} windows, {} speakers",
         wins.len(),
@@ -533,6 +575,27 @@ mod tests {
                 })
                 .collect(),
         )
+    }
+
+    #[test]
+    fn the_voice_matching_the_print_becomes_me_only_when_clear() {
+        let a: Vec<f32> = (0..32).map(|i| if i < 16 { 1.0 } else { 0.0 }).collect();
+        let b: Vec<f32> = (0..32).map(|i| if i < 16 { 0.0 } else { 1.0 }).collect();
+        let embs: Vec<Vec<f32>> = (0..10)
+            .map(|i| around(if i % 2 == 0 { &a } else { &b }, 0.2, i))
+            .collect();
+        let labels: Vec<u32> = (0..10).map(|i| i % 2).collect();
+        let mut marked = labels.clone();
+        mark_me(&embs, &mut marked, &unit(b.clone()));
+        assert!(marked
+            .iter()
+            .enumerate()
+            .all(|(i, &s)| s == if i % 2 == 1 { ME } else { 0 }));
+        // A print halfway between the two voices matches neither.
+        let mut unsure = labels.clone();
+        let half: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x + y).collect();
+        mark_me(&embs, &mut unsure, &unit(half));
+        assert_eq!(unsure, labels);
     }
 
     #[test]

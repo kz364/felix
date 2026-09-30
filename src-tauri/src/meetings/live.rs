@@ -1,7 +1,8 @@
 //! A rough transcript while the meeting is still going, so "What did I
-//! miss?" and "Suggest a question" have something to go on, and sign-offs
-//! can end the recording. Only with a cloud transcriber: meetings are
-//! cloud-first, and the model on this Mac is kept free for dictation.
+//! miss?" and "Suggest a question" have something to go on, sign-offs can
+//! end the recording, and the panel can show it. With a cloud transcriber
+//! it goes to the cloud; otherwise the dictation model does it in short
+//! pieces, only while dictation isn't using it.
 //!
 //! Every [`EVERY`] the new audio on each track is cut at a quiet moment and
 //! sent off whole; no VAD, since the proper transcript is made from scratch
@@ -11,12 +12,14 @@ use super::remote::Remote;
 use super::track::SAMPLE_RATE;
 use super::transcript::{self, Segment, Source};
 use super::MeetingMode;
+use crate::managers::audio::AudioRecordingManager;
+use crate::managers::transcription::TranscriptionManager;
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 
 pub const FILE: &str = "live.json";
 /// How often new audio is sent.
@@ -25,6 +28,11 @@ const EVERY: Duration = Duration::from_secs(20);
 const MIN_NEW_SECS: u64 = 5;
 /// One request carries at most this much.
 const MAX_CHUNK_SECS: u64 = 60;
+/// A local piece is shorter, so dictation that starts meanwhile never waits
+/// long for the model.
+const MAX_LOCAL_CHUNK_SECS: u64 = 15;
+/// Pieces per track each round, so a round can catch up after a busy one.
+const PIECES_PER_ROUND: usize = 4;
 /// The cut goes at the quietest moment in this last stretch.
 const CUT_SEARCH_SECS: u64 = 2;
 const FRAME: usize = 480;
@@ -159,18 +167,64 @@ struct Track {
     done: u64,
 }
 
+/// What makes the live transcript.
+enum Engine {
+    Remote(Remote),
+    /// The dictation model, when dictation isn't using it.
+    Local(AppHandle),
+}
+
+/// The model couldn't take a piece this round; try it again next round.
+struct Busy;
+
+impl Engine {
+    fn max_chunk_secs(&self) -> u64 {
+        match self {
+            Engine::Remote(_) => MAX_CHUNK_SECS,
+            Engine::Local(_) => MAX_LOCAL_CHUNK_SECS,
+        }
+    }
+
+    fn transcribe(&self, audio: &[f32]) -> Result<Result<String, String>, Busy> {
+        match self {
+            Engine::Remote(remote) => {
+                Ok(tauri::async_runtime::block_on(remote.transcribe(audio))
+                    .map_err(|e| e.to_string()))
+            }
+            Engine::Local(app) => {
+                let recording = app
+                    .try_state::<Arc<AudioRecordingManager>>()
+                    .is_some_and(|a| a.is_recording());
+                let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
+                    return Err(Busy);
+                };
+                if recording || !tm.is_idle_for_meeting() {
+                    if !recording && !tm.is_model_loaded() {
+                        tm.initiate_model_load();
+                    }
+                    return Err(Busy);
+                }
+                Ok(tm
+                    .transcribe_for_meeting(audio.to_vec())
+                    .map_err(|e| e.to_string()))
+            }
+        }
+    }
+}
+
 /// While recording: keep `live.json` up to date until `stop` is set.
 pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBool>) {
     let settings = crate::rules::with_rules(crate::settings::get_settings(app));
-    let remote = match Remote::from_settings(&settings) {
-        Ok(Some(remote)) => remote,
-        _ => return,
+    let engine = match Remote::from_settings(&settings) {
+        Ok(Some(remote)) => Engine::Remote(remote.for_languages(&settings.meeting_languages)),
+        _ => Engine::Local(app.clone()),
     };
     let id = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let dir = dir.to_path_buf();
+    let app = app.clone();
     let _ = std::thread::Builder::new()
         .name("meeting-live".into())
         .spawn(move || {
@@ -203,41 +257,52 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
             while wait(&stop) {
                 let mut added = false;
                 for track in &mut tracks {
-                    let max = MAX_CHUNK_SECS * SAMPLE_RATE as u64;
-                    let Some(audio) = read_from(&track.path, track.done, max) else {
-                        continue;
-                    };
-                    if (audio.len() as u64) < MIN_NEW_SECS * SAMPLE_RATE as u64 {
-                        continue;
-                    }
-                    let cut = cut_point(&audio);
-                    let audio = &audio[..cut];
-                    let start = track.done;
-                    track.done += cut as u64;
-                    if !has_sound(audio) {
-                        continue;
-                    }
-                    match tauri::async_runtime::block_on(remote.transcribe(audio)) {
-                        Ok(text) if !text.trim().is_empty() => {
-                            failures = 0;
-                            let segment = Segment {
-                                source: track.source,
-                                start_ms: start * 1000 / SAMPLE_RATE as u64,
-                                end_ms: track.done * 1000 / SAMPLE_RATE as u64,
-                                text,
-                                echo: false,
-                                speaker: None,
-                            };
-                            note_sign_offs(&id, &segment);
-                            segments.push(segment);
-                            added = true;
+                    // A few pieces a round, so a local model keeps up.
+                    for _ in 0..PIECES_PER_ROUND {
+                        if stop.load(Ordering::Acquire) {
+                            break;
                         }
-                        Ok(_) => failures = 0,
-                        Err(e) => {
-                            failures += 1;
-                            log::warn!("Live transcript: {e}");
-                            // Try this stretch again next round.
+                        let max = engine.max_chunk_secs() * SAMPLE_RATE as u64;
+                        let Some(audio) = read_from(&track.path, track.done, max) else {
+                            break;
+                        };
+                        if (audio.len() as u64) < MIN_NEW_SECS * SAMPLE_RATE as u64 {
+                            break;
+                        }
+                        let cut = cut_point(&audio);
+                        let audio = &audio[..cut];
+                        let start = track.done;
+                        track.done += cut as u64;
+                        if !has_sound(audio) {
+                            continue;
+                        }
+                        let Ok(result) = engine.transcribe(audio) else {
                             track.done = start;
+                            break;
+                        };
+                        match result {
+                            Ok(text) if !text.trim().is_empty() => {
+                                failures = 0;
+                                let segment = Segment {
+                                    source: track.source,
+                                    start_ms: start * 1000 / SAMPLE_RATE as u64,
+                                    end_ms: track.done * 1000 / SAMPLE_RATE as u64,
+                                    text,
+                                    echo: false,
+                                    speaker: None,
+                                };
+                                note_sign_offs(&id, &segment);
+                                segments.push(segment);
+                                added = true;
+                            }
+                            Ok(_) => failures = 0,
+                            Err(e) => {
+                                failures += 1;
+                                log::warn!("Live transcript: {e}");
+                                // Try this stretch again next round.
+                                track.done = start;
+                                break;
+                            }
                         }
                     }
                 }
@@ -251,6 +316,7 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
                     if let Err(e) = super::summary::save_json(&dir, FILE, &segments) {
                         log::warn!("Couldn't save the live transcript: {e}");
                     }
+                    let _ = app.emit("meeting-live-transcript", &id);
                 }
             }
         });

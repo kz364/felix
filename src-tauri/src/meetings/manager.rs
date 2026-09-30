@@ -52,6 +52,9 @@ pub enum MeetingStatus {
     /// Handy quit or crashed while recording; the audio up to a few seconds
     /// before is kept.
     Interrupted,
+    /// Paused from the panel: the files are closed and it carries on with
+    /// Resume. Transcribed once it's stopped.
+    Paused,
 }
 
 /// A meeting's `meeting.json`.
@@ -96,6 +99,9 @@ pub struct MeetingInfo {
     /// Offsets into the recording (ms) where it was resumed after a stop.
     #[serde(default)]
     pub resumed_at_ms: Vec<u64>,
+    /// The languages it was transcribed as (chosen, or found in it).
+    #[serde(default)]
+    pub languages: Vec<String>,
     /// Names the call app showed for the other side's voices, by number;
     /// the user's own names in `speakers` win.
     #[serde(default)]
@@ -129,6 +135,7 @@ impl MeetingInfo {
         match (self.mode, p.source, p.speaker) {
             (MeetingMode::Call, Source::Mic, None) => Some("Me".into()),
             (MeetingMode::Call, Source::System, None) => Some("Them".into()),
+            (_, _, Some(super::diarize::ME)) => Some("Me".into()),
             (_, _, Some(n)) => Some(default_speaker_name(n)),
             _ => None,
         }
@@ -181,6 +188,8 @@ pub struct TranscribeProgress {
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct MeetingState {
     pub recording: Option<MeetingInfo>,
+    /// A meeting paused from the panel, waiting for Resume or Stop.
+    pub paused: Option<MeetingInfo>,
     pub elapsed_ms: u64,
     pub transcribing: Option<TranscribeProgress>,
     /// "What did I miss?" and "Suggest a question" work (a cloud
@@ -208,6 +217,8 @@ struct Active {
 pub struct MeetingManager {
     pub(super) app: AppHandle,
     active: Mutex<Option<Active>>,
+    /// The meeting paused from the panel, if any.
+    paused: Mutex<Option<MeetingInfo>>,
     /// Serialises read-modify-write of `meeting.json` files.
     meta_lock: Mutex<()>,
     /// Feeds jobs to the background worker, started on first use.
@@ -239,6 +250,11 @@ pub(super) fn read_info(dir: &Path) -> Option<MeetingInfo> {
     serde_json::from_slice(&std::fs::read(dir.join(META_FILE)).ok()?).ok()
 }
 
+/// The longest track, in seconds.
+fn recorded_seconds(info: &MeetingInfo) -> f64 {
+    info.tracks.iter().map(|t| t.seconds).fold(0.0, f64::max)
+}
+
 /// `m:ss`, or `h:mm:ss` from an hour.
 pub fn format_elapsed(d: Duration) -> String {
     let s = d.as_secs();
@@ -254,6 +270,7 @@ impl MeetingManager {
         let manager = Self {
             app: app.clone(),
             active: Mutex::new(None),
+            paused: Mutex::new(None),
             meta_lock: Mutex::new(()),
             jobs: Mutex::new(None),
             queued: Mutex::new(HashSet::new()),
@@ -295,6 +312,17 @@ impl MeetingManager {
     /// interrupted; their WAVs are valid up to the last flush.
     fn recover_interrupted(&self) {
         for mut info in self.list() {
+            if info.status == MeetingStatus::Paused {
+                // Handy quit while paused: the files were already closed.
+                info.status = MeetingStatus::Recorded;
+                if !info.tracks.is_empty() {
+                    info.transcript = Some(TranscriptStatus::Queued);
+                }
+                if let Ok(dir) = self.dir_of(&info.id) {
+                    write_info(&dir, &info);
+                }
+                continue;
+            }
             if info.status != MeetingStatus::Recording {
                 continue;
             }
@@ -354,11 +382,19 @@ impl MeetingManager {
 
     pub fn state(&self) -> MeetingState {
         let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        let paused = self
+            .paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         MeetingState {
             recording: active.as_ref().map(|a| a.info.clone()),
-            elapsed_ms: active
-                .as_ref()
-                .map_or(0, |a| a.recording.elapsed().as_millis() as u64),
+            elapsed_ms: match (active.as_ref(), paused.as_ref()) {
+                (Some(a), _) => a.recording.elapsed().as_millis() as u64,
+                (None, Some(p)) => (recorded_seconds(p) * 1000.0) as u64,
+                (None, None) => 0,
+            },
+            paused,
             transcribing: self
                 .progress
                 .lock()
@@ -390,6 +426,12 @@ impl MeetingManager {
         chosen: Option<MeetingMode>,
         call_app: Option<String>,
     ) -> Result<MeetingInfo, String> {
+        let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(a) = active.as_ref() {
+            return Ok(a.info.clone());
+        }
+        drop(active);
+        self.finish_paused();
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = active.as_ref() {
             return Ok(a.info.clone());
@@ -427,6 +469,7 @@ impl MeetingManager {
             output_device: output_device_name(),
             call_app,
             resumed_at_ms: vec![],
+            languages: vec![],
             app_speakers: BTreeMap::new(),
             mode_auto: chosen.is_none(),
         };
@@ -461,6 +504,18 @@ impl MeetingManager {
         if active.is_some() {
             return Err("Stop the current recording first".into());
         }
+        let other_paused = self
+            .paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|p| p.id != id);
+        if other_paused {
+            // Resuming another meeting finishes the paused one.
+            drop(active);
+            self.finish_paused();
+            return self.resume(id);
+        }
         if self.is_processing(id) {
             return Err("This meeting is being processed; try again when it's done".into());
         }
@@ -491,6 +546,7 @@ impl MeetingManager {
             write_info(&dir, &info);
         }
         log::info!("Meeting {id} resumed");
+        *self.paused.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.activate(&mut active, info.clone(), recording);
         drop(active);
         self.changed();
@@ -547,8 +603,72 @@ impl MeetingManager {
     }
 
     pub fn stop(&self) -> Result<Option<MeetingInfo>, String> {
+        if !self.is_recording() {
+            return Ok(self.finish_paused());
+        }
+        let (info, outcome) = self.close_recording(MeetingStatus::Recorded)?;
+        self.finish(&info);
+        outcome
+    }
+
+    /// Close the files but keep the panel, to carry on with `resume_paused`.
+    pub fn pause(&self) -> Result<(), String> {
+        let (info, outcome) = self.close_recording(MeetingStatus::Paused)?;
+        outcome?;
+        log::info!("Meeting {} paused", info.id);
+        *self.paused.lock().unwrap_or_else(|e| e.into_inner()) = Some(info);
+        self.changed();
+        Ok(())
+    }
+
+    /// Carry on with the paused meeting.
+    pub fn resume_paused(&self) -> Result<MeetingInfo, String> {
+        let id = self
+            .paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|p| p.id.clone())
+            .ok_or("Nothing is paused")?;
+        self.resume(&id)
+    }
+
+    /// Stop the paused meeting for good: transcribe it and hide the panel.
+    fn finish_paused(&self) -> Option<MeetingInfo> {
+        let paused = self
+            .paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()?;
+        let info = self.update_info(&paused.id, |i| {
+            if i.status == MeetingStatus::Paused {
+                i.status = MeetingStatus::Recorded;
+            }
+        })?;
+        log::info!("Meeting {} stopped while paused", info.id);
+        self.finish(&info);
+        Some(info)
+    }
+
+    /// After the last stop: hide the panel and transcribe.
+    fn finish(&self, info: &MeetingInfo) {
+        self.changed();
+        crate::meeting_panel::hide(&self.app);
+        if !info.tracks.is_empty() {
+            self.queue(Job::Transcribe(info.id.clone()));
+        }
+        super::watch::stopped(&self.app, info);
+    }
+
+    /// Stop the recording in progress and save `meeting.json` with `status`
+    /// (Interrupted if the files couldn't be closed).
+    #[allow(clippy::type_complexity)]
+    fn close_recording(
+        &self,
+        status: MeetingStatus,
+    ) -> Result<(MeetingInfo, Result<Option<MeetingInfo>, String>), String> {
         let Some(active) = self.active.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-            return Ok(None);
+            return Err("Nothing is recording".into());
         };
         active.helpers.store(true, Ordering::Release);
         let dir = active.recording.dir.clone();
@@ -556,7 +676,7 @@ impl MeetingManager {
         let mut info = read_info(&dir).unwrap_or(active.info);
         let result = active.recording.stop();
         info.ended_at = Some(now_ms());
-        info.status = MeetingStatus::Recorded;
+        info.status = status;
         let outcome = match result {
             Ok(tracks) => {
                 if info.mode_auto {
@@ -576,19 +696,20 @@ impl MeetingManager {
             write_info(&dir, &info);
         }
         log::info!("Meeting {} stopped: {:?}", info.id, info.tracks);
-        self.changed();
-        crate::meeting_panel::hide(&self.app);
-        if !info.tracks.is_empty() {
-            self.queue(Job::Transcribe(info.id.clone()));
-        }
-        super::watch::stopped(&self.app, &info);
-        outcome
+        Ok((info, outcome))
     }
 
     /// Start with the last mode, or stop.
     pub fn toggle(&self) -> Result<(), String> {
         if self.is_recording() {
             self.stop().map(|_| ())
+        } else if self
+            .paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            self.resume_paused().map(|_| ())
         } else {
             let settings = crate::settings::get_settings(&self.app);
             let mode = (!settings.meeting_detect_mode).then_some(settings.meeting_mode);
@@ -658,6 +779,19 @@ pub async fn stop_meeting(app: AppHandle) -> Result<Option<MeetingInfo>, String>
     app.state::<Arc<MeetingManager>>().stop()
 }
 
+/// Pause from the panel; Resume carries on in the same meeting.
+#[tauri::command]
+#[specta::specta]
+pub async fn pause_meeting(app: AppHandle) -> Result<(), String> {
+    app.state::<Arc<MeetingManager>>().pause()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn resume_paused_meeting(app: AppHandle) -> Result<MeetingInfo, String> {
+    app.state::<Arc<MeetingManager>>().resume_paused()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_meeting_state(app: AppHandle) -> MeetingState {
@@ -709,6 +843,15 @@ pub fn get_meeting_transcript(
         complete: t.complete,
         paragraphs: paragraphs_of(&dir, &t),
     }))
+}
+
+/// The rough transcript made while recording (`live.json`), for the panel.
+#[tauri::command]
+#[specta::specta]
+pub fn get_live_transcript(app: AppHandle, id: String) -> Result<Vec<Paragraph>, String> {
+    Ok(transcript::paragraphs(&super::live::load(&meeting_dir(
+        &app, &id,
+    )?)))
 }
 
 /// The user's own fixes to a transcript, by [`summary::paragraph_key`].
@@ -967,6 +1110,15 @@ pub fn delete_meeting(app: AppHandle, id: String) -> Result<(), String> {
     if manager.is_processing(&id) {
         return Err("This meeting is being processed; try again when it's done".into());
     }
+    if manager
+        .paused
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|p| p.id == id)
+    {
+        return Err("Stop the recording first".into());
+    }
     trash(&dir)?;
     log::info!("Meeting {id} moved to the Trash");
     let _ = app.emit("meetings-changed", ());
@@ -1099,6 +1251,7 @@ pub struct MeetingSettingsUpdate {
     pub auto_gain: Option<bool>,
     pub input_boost_db: Option<f32>,
     pub transcriber: Option<super::MeetingTranscriber>,
+    pub languages: Option<Vec<String>>,
     pub diarize: Option<bool>,
     pub detect_calls: Option<bool>,
     pub auto_stop: Option<bool>,
@@ -1131,6 +1284,9 @@ pub fn change_meeting_settings(
     }
     if let Some(v) = update.transcriber {
         settings.meeting_transcriber = v;
+    }
+    if let Some(v) = update.languages {
+        settings.meeting_languages = v;
     }
     if let Some(v) = update.diarize {
         settings.meeting_diarize = v;

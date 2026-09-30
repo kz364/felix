@@ -666,15 +666,6 @@ pub struct NoticeButton {
 /// for the hover watch.
 static RESULT_RECT: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::Mutex::new(None);
 
-/// Show dictated text in the overlay when there was nowhere to paste it: the
-/// pill grows into a card with the text, Copy and close buttons, and an
-/// auto-close countdown that pauses while the pointer is over it. Shown even
-/// when the recording overlay is turned off, since the text would otherwise
-/// be lost from view.
-pub fn show_result_overlay(app_handle: &AppHandle, text: String) {
-    show_result_overlay_titled(app_handle, text, None);
-}
-
 /// The result card with its own heading (e.g. why the assistant failed).
 pub fn show_result_overlay_titled(app_handle: &AppHandle, text: String, title: Option<String>) {
     let seconds = settings::get_settings(app_handle).result_popup_seconds;
@@ -686,6 +677,21 @@ pub fn show_result_overlay_titled(app_handle: &AppHandle, text: String, title: O
         actions: Vec::new(),
     };
     show_result_payload(app_handle, payload);
+}
+
+/// A dictation to rescue (with Copy) and buttons of a notice.
+pub fn show_result_with_actions(app_handle: &AppHandle, text: String, actions: Vec<NoticeButton>) {
+    let seconds = settings::get_settings(app_handle).result_popup_seconds;
+    show_result_payload(
+        app_handle,
+        ResultPopup {
+            text,
+            title: None,
+            timeout_ms: seconds.saturating_mul(1000),
+            copy: true,
+            actions,
+        },
+    );
 }
 
 /// A notice: a heading, a line of text and its buttons (see `notices`).
