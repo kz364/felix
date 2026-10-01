@@ -287,10 +287,40 @@ pub(crate) fn add_to(settings: &mut AppSettings, rules: &Rules) {
     }
 }
 
-/// The settings with the current rules file added.
+/// The settings with the current rules file added, and the user's own name
+/// (from their Mac account) as vocabulary.
 pub(crate) fn with_rules(mut settings: AppSettings) -> AppSettings {
     add_to(&mut settings, &current());
+    for word in my_name() {
+        if !settings.custom_words.iter().any(|w| w.trim() == word) {
+            settings.custom_words.push(word.clone());
+        }
+    }
     settings
+}
+
+/// The words of the Mac account's full name ("Kaspar Hidayat"), so the
+/// user's own name is always spelled right. Read once.
+fn my_name() -> &'static [String] {
+    static NAME: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        let full = std::process::Command::new("/usr/bin/id")
+            .arg("-F")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        name_words(&full)
+    })
+}
+
+/// Name words worth spelling: letters only, two or more of them.
+fn name_words(full: &str) -> Vec<String> {
+    full.split_whitespace()
+        .filter(|w| w.chars().count() >= 2 && w.chars().all(char::is_alphabetic))
+        .map(str::to_string)
+        .collect()
 }
 
 /// How a test case came out.
@@ -1471,5 +1501,12 @@ expect = "run cube cuddle apply"
 {"id":null,"event":"undone","at":"t"}"#;
         assert_eq!(last_applied_in(log).as_deref(), Some("b"));
         assert_eq!(last_applied_in(""), None);
+    }
+
+    #[test]
+    fn the_account_name_becomes_name_words() {
+        assert_eq!(name_words("Sam Rivera\n"), vec!["Sam", "Rivera"]);
+        assert_eq!(name_words("J. Rivera-Lee 2"), Vec::<String>::new());
+        assert!(name_words("").is_empty());
     }
 }

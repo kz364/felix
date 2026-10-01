@@ -207,11 +207,40 @@ impl MeetingManager {
         std::fs::rename(&partial, path).map_err(|e| e.to_string())
     }
 
+    /// The user's word corrections, as dictation applies them: vocabulary
+    /// spelling, taught words and replacements ("codecs" → "Codex").
+    /// Sound-alikes are left to cleanup, which sees the conversation.
+    fn apply_corrections(&self, id: &str) {
+        let Ok(dir) = self.dir_of(id) else { return };
+        let Some(mut t) = pipeline::load(&dir) else {
+            return;
+        };
+        let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+        let mut changed = 0;
+        for seg in &mut t.segments {
+            let text = crate::vocabulary::apply_canonical_forms(&seg.text, &settings.custom_words);
+            let text = crate::vocab_teach::apply_taught_rules(&text, &settings);
+            let text =
+                crate::scratchpad::apply_text_replacements(&text, &settings.text_replacements);
+            if text != seg.text {
+                seg.text = text;
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            log::info!("Meeting {id}: corrected words in {changed} segments");
+            if let Err(e) = pipeline::save(&dir, &t) {
+                log::warn!("{e}");
+            }
+        }
+    }
+
     /// Transcribe one meeting. True if it's done and can be summarised.
     fn transcribe(&self, id: &str) -> bool {
         match self.transcribe_inner(id) {
             Ok(()) => {
                 log::info!("Meeting {id} transcribed");
+                self.apply_corrections(id);
                 let names = self
                     .dir_of(id)
                     .map(|dir| super::speakers::apply(&dir))
@@ -633,6 +662,7 @@ impl MeetingManager {
                 &raw,
                 &label,
                 &settings.custom_words,
+                &settings.soundalikes,
                 &mut cleaned,
                 |done, total| self.progress_to(id, Stage::CleaningUp, done, total),
             )

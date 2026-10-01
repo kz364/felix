@@ -114,8 +114,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (paragraphs, s) = tauri::async_runtime::block_on(async {
             let started = Instant::now();
             let mut cleaned = summary::Cleaned::default();
-            if let Some(e) =
-                summary::clean(&llm, &paragraphs, &speaker, &[], &mut cleaned, |_, _| {}).await
+            if let Some(e) = summary::clean(
+                &llm,
+                &paragraphs,
+                &speaker,
+                &[],
+                &[],
+                &mut cleaned,
+                |_, _| {},
+            )
+            .await
             {
                 eprintln!("cleanup error: {e}");
             }

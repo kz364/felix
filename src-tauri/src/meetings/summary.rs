@@ -133,15 +133,27 @@ fn cleanup_schema() -> Value {
     })
 }
 
-fn with_vocabulary(instructions: &str, vocabulary: &[String]) -> String {
-    if vocabulary.is_empty() {
-        instructions.to_string()
-    } else {
-        format!(
-            "{instructions}\n\nSpell these names and terms exactly like this: {}.",
+fn with_vocabulary(
+    instructions: &str,
+    vocabulary: &[String],
+    soundalikes: &[crate::settings::Soundalike],
+) -> String {
+    let mut out = instructions.to_string();
+    if !vocabulary.is_empty() {
+        out.push_str(&format!(
+            "\n\nSpell these names and terms exactly like this: {}.",
             vocabulary.join(", ")
-        )
+        ));
     }
+    // What dictation decides with its local model, cleanup decides from
+    // the conversation.
+    for s in soundalikes {
+        out.push_str(&format!(
+            "\n- \"{}\" may be speech recognition mishearing {} ({}): write {} where that's what's meant, and leave the ordinary word otherwise.",
+            s.heard, s.word, s.meaning, s.word
+        ));
+    }
+    out
 }
 
 /// Clean the paragraphs `todo` (indices into `paragraphs`) and add the
@@ -152,10 +164,11 @@ pub async fn clean(
     paragraphs: &[Paragraph],
     label: &(dyn Fn(&Paragraph) -> String + Sync),
     vocabulary: &[String],
+    soundalikes: &[crate::settings::Soundalike],
     cleaned: &mut Cleaned,
     mut progress: impl FnMut(usize, usize),
 ) -> Option<String> {
-    let instructions = with_vocabulary(CLEANUP_INSTRUCTIONS, vocabulary);
+    let instructions = with_vocabulary(CLEANUP_INSTRUCTIONS, vocabulary, soundalikes);
     let schema = cleanup_schema();
     let todo: Vec<usize> = (0..paragraphs.len())
         .filter(|&i| !cleaned.texts.contains_key(&paragraph_key(&paragraphs[i])))
