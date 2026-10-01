@@ -390,7 +390,7 @@ impl MeetingManager {
             return vec![];
         };
         let started = Instant::now();
-        let result = (|| -> Result<Vec<String>, String> {
+        let result = self.without_dictation_model(|| -> Result<Vec<String>, String> {
             let model = transcribe_cpp::Model::load(&path).map_err(|e| e.to_string())?;
             let mut session = model.session().map_err(|e| e.to_string())?;
             let mut hits = Vec::new();
@@ -408,7 +408,7 @@ impl MeetingManager {
                 }
             }
             Ok(super::language::languages_heard(&hits))
-        })();
+        });
         match result {
             Ok(languages) => {
                 log::info!(
@@ -423,6 +423,37 @@ impl MeetingManager {
                 vec![]
             }
         }
+    }
+
+    /// Run `work`, which loads a model other than dictation's, with the
+    /// dictation model out of memory so the two aren't loaded at once; it's
+    /// loaded again afterwards. Left alone while dictation is using it, and
+    /// dictation meanwhile loads it on demand as after an idle unload.
+    fn without_dictation_model<T>(&self, work: impl FnOnce() -> T) -> T {
+        let recording = self
+            .app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|a| a.is_recording());
+        let set_aside = self
+            .app
+            .try_state::<Arc<TranscriptionManager>>()
+            .map(|tm| tm.inner().clone())
+            .filter(|tm| !recording && tm.is_idle_for_meeting())
+            .filter(|tm| match tm.unload_model() {
+                Ok(()) => true,
+                Err(e) => {
+                    log::warn!("Couldn't unload the dictation model: {e}");
+                    false
+                }
+            });
+        if set_aside.is_some() {
+            log::info!("Unloaded the dictation model while a meeting uses another");
+        }
+        let result = work();
+        if let Some(tm) = set_aside {
+            tm.initiate_model_load();
+        }
+        result
     }
 
     /// Transcribe with a model other than dictation's, loaded for this job.
@@ -446,34 +477,36 @@ impl MeetingManager {
             .ok_or_else(|| "Models aren't available".to_string())?
             .get_model_path(model_id)
             .map_err(|e| e.to_string())?;
-        let model = transcribe_cpp::Model::load(&path)
-            .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
-        let mut session = model.session().map_err(|e| e.to_string())?;
-        let options = transcribe_cpp::RunOptions {
-            // One language is named; a mix is left to the model, chunk by chunk.
-            language: (languages.len() == 1).then(|| languages[0].clone()),
-            ..Default::default()
-        };
-        let engine = format!("local {model_id} {}", languages.join("+"));
-        log::info!("Transcribing meeting {id} with {engine}");
-        let mut run = |audio: &[f32]| {
-            session
-                .run(audio, &options)
-                .map(|t| t.text)
-                .map_err(|e| e.to_string())
-        };
-        pipeline::run(
-            dir,
-            mode,
-            vad,
-            level,
-            speaker_model,
-            voiceprint,
-            &engine,
-            |audio| split_runaways(&mut run, &audio),
-            progress,
-        )
-        .map(|_| ())
+        self.without_dictation_model(|| {
+            let model = transcribe_cpp::Model::load(&path)
+                .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
+            let mut session = model.session().map_err(|e| e.to_string())?;
+            let options = transcribe_cpp::RunOptions {
+                // One language is named; a mix is left to the model, chunk by chunk.
+                language: (languages.len() == 1).then(|| languages[0].clone()),
+                ..Default::default()
+            };
+            let engine = format!("local {model_id} {}", languages.join("+"));
+            log::info!("Transcribing meeting {id} with {engine}");
+            let mut run = |audio: &[f32]| {
+                session
+                    .run(audio, &options)
+                    .map(|t| t.text)
+                    .map_err(|e| e.to_string())
+            };
+            pipeline::run(
+                dir,
+                mode,
+                vad,
+                level,
+                speaker_model,
+                voiceprint,
+                &engine,
+                |audio| split_runaways(&mut run, &audio),
+                progress,
+            )
+            .map(|_| ())
+        })
     }
 
     /// Transcribe one chunk when dictation isn't using the model. Dictation
