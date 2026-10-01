@@ -422,14 +422,24 @@ pub fn check_file(rules: &Path, settings_store: Option<&Path>) -> Result<Vec<Tes
 /// A line of a before/after comparison.
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 pub struct DiffLine {
-    /// "same", "added" or "removed".
+    /// "same", "added", "removed", or "changed" (a line edited in place,
+    /// such as a word added to `vocabulary`).
+    pub kind: String,
+    /// For "changed", the line as it is now.
+    pub text: String,
+    /// For "changed": the line's words, each "same", "added" or "removed",
+    /// so only what changed is marked.
+    pub parts: Vec<DiffPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+pub struct DiffPart {
     pub kind: String,
     pub text: String,
 }
 
-/// Line diff (longest common subsequence); rules files are small.
-pub fn diff(old: &str, new: &str) -> Vec<DiffLine> {
-    let (a, b): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+/// Longest-common-subsequence diff: (kind, index in `a` or `b`).
+fn lcs_diff<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(&'static str, usize)> {
     let mut lcs = vec![vec![0u32; b.len() + 1]; a.len() + 1];
     for i in (0..a.len()).rev() {
         for j in (0..b.len()).rev() {
@@ -440,22 +450,111 @@ pub fn diff(old: &str, new: &str) -> Vec<DiffLine> {
             };
         }
     }
-    let line = |kind: &str, text: &str| DiffLine {
-        kind: kind.into(),
-        text: text.into(),
-    };
     let (mut i, mut j, mut out) = (0, 0, Vec::new());
     while i < a.len() || j < b.len() {
         if i < a.len() && j < b.len() && a[i] == b[j] {
-            out.push(line("same", a[i]));
+            out.push(("same", i));
             i += 1;
             j += 1;
         } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            out.push(line("added", b[j]));
+            out.push(("added", j));
             j += 1;
         } else {
-            out.push(line("removed", a[i]));
+            out.push(("removed", i));
             i += 1;
+        }
+    }
+    out
+}
+
+/// Words and the punctuation between them, so a line's diff marks words.
+fn tokens(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut prev: Option<bool> = None;
+    for (i, c) in line.char_indices() {
+        let word = c.is_alphanumeric() || c == '_';
+        if prev.is_some_and(|p| p != word || !word) && i > start {
+            out.push(&line[start..i]);
+            start = i;
+        }
+        prev = Some(word);
+    }
+    if start < line.len() {
+        out.push(&line[start..]);
+    }
+    out
+}
+
+/// The same setting on both lines (`key = …`), so one was edited into the
+/// other.
+fn same_key(old: &str, new: &str) -> bool {
+    let key = |l: &str| l.split_once('=').map(|(k, _)| k.trim().to_string());
+    key(old).is_some_and(|k| !k.is_empty() && Some(k) == key(new))
+}
+
+/// Line diff; a line edited in place is one "changed" line.
+pub fn diff(old: &str, new: &str) -> Vec<DiffLine> {
+    let (a, b): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+    let line = |kind: &str, text: &str| DiffLine {
+        kind: kind.into(),
+        text: text.into(),
+        parts: Vec::new(),
+    };
+    let steps = lcs_diff(&a, &b);
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < steps.len() {
+        match steps[k] {
+            ("same", i) => {
+                out.push(line("same", a[i]));
+                k += 1;
+            }
+            _ => {
+                // A run of changes: pair removed and added lines that set
+                // the same key.
+                let end = steps[k..]
+                    .iter()
+                    .position(|s| s.0 == "same")
+                    .map_or(steps.len(), |n| k + n);
+                let removed: Vec<usize> = steps[k..end]
+                    .iter()
+                    .filter(|s| s.0 == "removed")
+                    .map(|s| s.1)
+                    .collect();
+                let mut paired = Vec::new();
+                for &(kind, j) in &steps[k..end] {
+                    if kind != "added" {
+                        continue;
+                    }
+                    match removed
+                        .iter()
+                        .find(|&&i| !paired.contains(&i) && same_key(a[i], b[j]))
+                    {
+                        Some(&i) => {
+                            paired.push(i);
+                            let (ta, tb) = (tokens(a[i]), tokens(b[j]));
+                            let parts = lcs_diff(&ta, &tb)
+                                .into_iter()
+                                .map(|(kind, x)| DiffPart {
+                                    kind: kind.into(),
+                                    text: if kind == "added" { tb[x] } else { ta[x] }.into(),
+                                })
+                                .collect();
+                            out.push(DiffLine {
+                                kind: "changed".into(),
+                                text: b[j].into(),
+                                parts,
+                            });
+                        }
+                        None => out.push(line("added", b[j])),
+                    }
+                }
+                for i in removed.into_iter().filter(|i| !paired.contains(i)) {
+                    out.push(line("removed", a[i]));
+                }
+                k = end;
+            }
         }
     }
     out
@@ -1396,6 +1495,25 @@ expect = "run cube cuddle apply"
                 ("added", "d")
             ]
         );
+    }
+
+    #[test]
+    fn a_word_added_to_a_list_is_one_changed_line() {
+        let d = diff(
+            "x = 1\nvocabulary = [\"Triton\"]\n",
+            "x = 1\nvocabulary = [\"Triton\", \"Featherless\"]\n[[soundalike]]",
+        );
+        assert_eq!(d.len(), 3);
+        assert_eq!(d[1].kind, "changed");
+        let marked: Vec<(&str, &str)> = d[1]
+            .parts
+            .iter()
+            .filter(|p| p.kind != "same")
+            .map(|p| (p.kind.as_str(), p.text.as_str()))
+            .collect();
+        assert!(marked.iter().all(|(k, _)| *k == "added"), "{marked:?}");
+        assert!(marked.iter().any(|(_, t)| *t == "Featherless"));
+        assert_eq!(d[2].kind, "added");
     }
 
     #[test]

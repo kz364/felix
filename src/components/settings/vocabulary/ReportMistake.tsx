@@ -195,18 +195,40 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
   );
 };
 
-/** The lines a fix adds to or removes from the rules file. */
+/** The lines a fix adds to or removes from the rules file. A line edited
+ * in place (a word added to a list) is shown once, with only what changed
+ * marked. */
 const Change: React.FC<{ proposal: Proposal }> = ({ proposal }) => (
   <pre className="max-h-64 overflow-auto rounded-md bg-stone/10 p-2 text-xs leading-snug">
     {proposal.diff
       .filter((l) => l.kind !== "same")
-      .map((l, i) => (
-        <div
-          key={i}
-          className={l.kind === "added" ? "text-success" : "text-error"}
-        >
-          {(l.kind === "added" ? "+ " : "- ") + l.text}
-        </div>
-      ))}
+      .map((l, i) =>
+        l.kind === "changed" ? (
+          <div key={i}>
+            {"~ "}
+            {l.parts.map((p, j) => (
+              <span
+                key={j}
+                className={
+                  p.kind === "added"
+                    ? "text-success font-semibold"
+                    : p.kind === "removed"
+                      ? "text-error line-through"
+                      : undefined
+                }
+              >
+                {p.text}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div
+            key={i}
+            className={l.kind === "added" ? "text-success" : "text-error"}
+          >
+            {(l.kind === "added" ? "+ " : "- ") + l.text}
+          </div>
+        ),
+      )}
   </pre>
 );

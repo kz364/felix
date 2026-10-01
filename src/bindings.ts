@@ -2561,9 +2561,20 @@ inserted: InsertedSpan | null }
  */
 export type DiffLine = { 
 /**
- * "same", "added" or "removed".
+ * "same", "added", "removed", or "changed" (a line edited in place,
+ * such as a word added to `vocabulary`).
  */
-kind: string; text: string }
+kind: string; 
+/**
+ * For "changed", the line as it is now.
+ */
+text: string; 
+/**
+ * For "changed": the line's words, each "same", "added" or "removed",
+ * so only what changed is marked.
+ */
+parts: DiffPart[] }
+export type DiffPart = { kind: string; text: string }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
