@@ -800,8 +800,9 @@ impl Default for Grouping {
         Self {
             normalise: true,
             first_pass: 0.7,
-            // Tuned on AMI (notes/benchmarking.md): 0.0–0.05 is best.
-            stop: 0.03,
+            // Tuned on AMI with ERes2Net (notes/benchmarking.md): 0.0 is as
+            // good as 0.03 there and doesn't split a call's voices in two.
+            stop: 0.0,
             min_windows: MIN_WINDOWS_PER_SPEAKER,
         }
     }

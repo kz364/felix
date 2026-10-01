@@ -248,12 +248,19 @@ pub fn run(
     } else {
         None
     };
+    let info = super::manager::read_info(dir);
+    // Headphones keep the call out of the mic: nothing to mask.
+    let headphones = info
+        .as_ref()
+        .and_then(|i| i.output_device.as_deref())
+        .is_some_and(super::echo::is_headphones);
+    // A headset's own mic (AirPods) only hears whoever wears it.
+    let headset_mic = headphones
+        && info
+            .as_ref()
+            .is_some_and(|i| i.output_device.as_deref() == Some(i.mic.as_str()));
     let echo = match (&mic, &system) {
         (Some(m), Some(s)) => {
-            // Headphones keep the call out of the mic: nothing to mask.
-            let headphones = super::manager::read_info(dir)
-                .and_then(|i| i.output_device)
-                .is_some_and(|d| super::echo::is_headphones(&d));
             let report = if headphones {
                 super::echo::EchoReport::none(m.energy.len())
             } else {
@@ -294,8 +301,18 @@ pub fn run(
             (Some(speech), MeetingMode::InPerson) => {
                 diarize(Source::Mic, &mic_wav, speech, voiceprint)
             }
-            (Some(speech), MeetingMode::Call) => diarize(Source::Mic, &mic_wav, speech, None)
-                .map(|labels| super::diarize::others_in_room(&labels)),
+            (Some(speech), MeetingMode::Call) => {
+                diarize(Source::Mic, &mic_wav, speech, None).map(|labels| {
+                    if headset_mic {
+                        labels
+                            .iter()
+                            .map(|l| l.map(|_| super::diarize::ME))
+                            .collect()
+                    } else {
+                        super::diarize::others_in_room(&labels)
+                    }
+                })
+            }
             _ => None,
         };
         let system_speakers = system.as_ref().and_then(|s| {

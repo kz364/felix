@@ -9,6 +9,13 @@ import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Button } from "../ui/Button";
 
+/** How the extension names the call page it's on. */
+const APP_NAMES: Record<string, string> = {
+  meet: "Google Meet",
+  zoom: "Zoom",
+  teams: "Teams",
+};
+
 /** Settings → Meetings → Speakers: the Chrome extension that reads who's
  *  talking on Meet. Loaded unpacked; Felix puts its helper in Chrome's
  *  folder when asked. */
@@ -41,7 +48,9 @@ export const ChromeExtension: React.FC = () => {
   const state = !status?.host_installed
     ? t("meetings.settings.extension.notSetUp")
     : heard
-      ? t("meetings.settings.extension.working", { app: status?.app ?? "" })
+      ? t("meetings.settings.extension.working", {
+          app: APP_NAMES[status?.app ?? ""] ?? status?.app ?? "",
+        })
       : t("meetings.settings.extension.waiting");
 
   return (
