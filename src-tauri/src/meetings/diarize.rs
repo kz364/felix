@@ -6,6 +6,7 @@
 //! result is a speaker number per VAD frame, which the pipeline uses to cut
 //! chunks where the speaker changes, so each transcript segment has one voice.
 
+use super::segment::Turns;
 use super::transcript::{Chunk, FRAME_MS};
 use ndarray::Array3;
 use ort::session::Session;
@@ -197,10 +198,22 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 /// Frame ranges to fingerprint: speech stretches cut into 1.5 s windows.
 pub fn windows(speech: &[bool]) -> Vec<(usize, usize)> {
+    windows_with(speech, None)
+}
+
+/// [`windows`], also cut where the speaker changes and leaving out speech
+/// where two people talk at once.
+pub fn windows_with(speech: &[bool], turns: Option<&super::segment::Turns>) -> Vec<(usize, usize)> {
+    let change = |i: usize| turns.is_some_and(|t| t.change.get(i) == Some(&true));
+    let overlap = |i: usize| turns.is_some_and(|t| t.overlap.get(i) == Some(&true));
     let mut stretches: Vec<(usize, usize)> = Vec::new();
-    for (i, _) in speech.iter().enumerate().filter(|(_, s)| **s) {
+    for (i, _) in speech
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| **s && !overlap(*i))
+    {
         match stretches.last_mut() {
-            Some((_, end)) if i - *end <= JOIN_GAP_FRAMES => *end = i + 1,
+            Some((_, end)) if i - *end <= JOIN_GAP_FRAMES && !change(i) => *end = i + 1,
             _ => stretches.push((i, i + 1)),
         }
     }
@@ -570,27 +583,396 @@ pub fn speakers(
     model: &Path,
     voiceprint: Option<&[f32]>,
 ) -> Result<Vec<Option<u32>>, String> {
-    let wins = windows(speech);
-    if wins.is_empty() {
-        return Ok(vec![None; speech.len()]);
-    }
+    Ok(speakers_with(wav, speech, model, voiceprint, &[])?.labels)
+}
+
+/// Who speaks each frame of a track, and how sure.
+#[derive(Debug, Clone, Default)]
+pub struct Voices {
+    pub labels: Vec<Option<u32>>,
+    /// Per frame: how much closer the frame's window is to its own voice
+    /// than to the next nearest (0 where there's no speech; small or
+    /// negative is unsure).
+    pub margins: Vec<f32>,
+}
+
+/// [`speakers`], with names the call app gave per frame (`hints`, may be
+/// empty): windows under different names are never one voice, and windows
+/// under the same name join more readily.
+pub fn speakers_with(
+    wav: &Path,
+    speech: &[bool],
+    model: &Path,
+    voiceprint: Option<&[f32]>,
+    hints: &[Option<String>],
+) -> Result<Voices, String> {
+    let (wins, embeddings) = fingerprint(wav, speech, model)?;
+    Ok(label_with(speech, &wins, &embeddings, voiceprint, hints))
+}
+
+/// Fingerprint windows (frame ranges) and a fingerprint for each.
+pub type Prints = (Vec<(usize, usize)>, Vec<Vec<f32>>);
+/// [`Prints`] and the turns the windows were cut at.
+pub type PrintsAndTurns = (Vec<(usize, usize)>, Vec<Vec<f32>>, Option<Turns>);
+
+/// The windows of a track's speech and a fingerprint for each.
+pub fn fingerprint(wav: &Path, speech: &[bool], model: &Path) -> Result<Prints, String> {
+    fingerprint_with(wav, speech, model, None).map(|(w, e, _)| (w, e))
+}
+
+/// [`fingerprint`], with windows cut at turns found by the segmentation
+/// model when given (and the turns, for flagging overlaps).
+pub fn fingerprint_with(
+    wav: &Path,
+    speech: &[bool],
+    model: &Path,
+    segmentation: Option<&Path>,
+) -> Result<PrintsAndTurns, String> {
     let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
     let samples: Vec<f32> = reader
         .samples::<i16>()
         .map(|s| s.map(|v| v as f32 / 32768.0))
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
+    let turns = match segmentation {
+        Some(m) => super::segment::turns(&samples, speech.len(), m)
+            .inspect_err(|e| log::warn!("Couldn't find speaker turns: {e}"))
+            .ok(),
+        None => None,
+    };
+    let wins = windows_with(speech, turns.as_ref());
+    if wins.is_empty() {
+        return Ok((wins, Vec::new(), turns));
+    }
     let embeddings = embed_windows(&samples, &wins, model)?;
-    let mut speakers = cluster(&embeddings);
+    Ok((wins, embeddings, turns))
+}
+
+/// A speaker per speech frame from the windows' fingerprints. With the
+/// user's `voiceprint` for this mic, their voice is labelled [`ME`].
+pub fn label(
+    speech: &[bool],
+    wins: &[(usize, usize)],
+    embeddings: &[Vec<f32>],
+    voiceprint: Option<&[f32]>,
+) -> Vec<Option<u32>> {
+    label_with(speech, wins, embeddings, voiceprint, &[]).labels
+}
+
+pub fn label_with(
+    speech: &[bool],
+    wins: &[(usize, usize)],
+    embeddings: &[Vec<f32>],
+    voiceprint: Option<&[f32]>,
+    hints: &[Option<String>],
+) -> Voices {
+    if wins.is_empty() {
+        return Voices {
+            labels: vec![None; speech.len()],
+            margins: vec![0.0; speech.len()],
+        };
+    }
+    let names = window_names(wins, hints);
+    let (mut speakers, window_margins) =
+        group_voices_with(embeddings, &Grouping::default(), &names);
     if let Some(print) = voiceprint {
-        mark_me(&embeddings, &mut speakers, print);
+        mark_me(embeddings, &mut speakers, print);
     }
     log::info!(
-        "Meeting diarization: {} windows, {} speakers",
+        "Meeting diarization: {} windows, {} speakers, {} named windows",
         wins.len(),
-        speakers.iter().max().map_or(0, |m| m + 1)
+        speakers.iter().max().map_or(0, |m| m + 1),
+        names.iter().filter(|n| n.is_some()).count()
     );
-    Ok(frame_labels(speech, &wins, &speakers))
+    let mut margins = vec![0.0f32; speech.len()];
+    for (&(from, to), &m) in wins.iter().zip(&window_margins) {
+        for x in &mut margins[from..to.min(speech.len())] {
+            *x = m;
+        }
+    }
+    Voices {
+        labels: frame_labels(speech, wins, &speakers),
+        margins,
+    }
+}
+
+/// A window's name: the one hint covering most of it (at least
+/// [`HINT_SHARE`]), numbered by first appearance.
+pub fn window_names(wins: &[(usize, usize)], hints: &[Option<String>]) -> Vec<Option<u32>> {
+    let mut known: Vec<&str> = Vec::new();
+    wins.iter()
+        .map(|&(from, to)| {
+            let mut count: Vec<(&str, usize)> = Vec::new();
+            for h in hints
+                .get(from..to.min(hints.len()))
+                .unwrap_or(&[])
+                .iter()
+                .flatten()
+            {
+                match count.iter_mut().find(|(n, _)| *n == h.as_str()) {
+                    Some((_, c)) => *c += 1,
+                    None => count.push((h.as_str(), 1)),
+                }
+            }
+            let (name, n) = count.into_iter().max_by_key(|(_, c)| *c)?;
+            if (n as f32) < HINT_SHARE * (to - from) as f32 {
+                return None;
+            }
+            let i = known.iter().position(|k| *k == name).unwrap_or_else(|| {
+                known.push(name);
+                known.len() - 1
+            });
+            Some(i as u32)
+        })
+        .collect()
+}
+
+/// Share of a window one name must cover to count.
+const HINT_SHARE: f32 = 0.6;
+/// Added to the similarity of two groups under the same name.
+const SAME_NAME_BONUS: f32 = 0.15;
+
+/// Settings for [`group_voices`].
+#[derive(Debug, Clone, Copy)]
+pub struct Grouping {
+    /// Subtract the meeting's mean fingerprint first, so what every window
+    /// shares (the room, the mic, the line) stops making voices look alike.
+    pub normalise: bool,
+    /// First pass: windows at least this similar form a small group.
+    pub first_pass: f32,
+    /// Groups keep merging while the closest two are at least this similar.
+    pub stop: f32,
+    /// A voice heard in fewer windows than this is folded into the nearest.
+    pub min_windows: usize,
+}
+
+impl Default for Grouping {
+    fn default() -> Self {
+        Self {
+            normalise: true,
+            first_pass: 0.7,
+            // Tuned on AMI (notes/benchmarking.md): 0.0–0.05 is best.
+            stop: 0.03,
+            min_windows: MIN_WINDOWS_PER_SPEAKER,
+        }
+    }
+}
+
+/// Group fingerprints into voices over the whole meeting: an online pass
+/// with a strict threshold makes small, surely-one-voice groups, then the
+/// most similar groups merge (average similarity of their windows, kept as
+/// sums so each merge is cheap) until none are similar enough; voices heard
+/// in too few windows join the nearest. Numbered in order of first word.
+pub fn group_voices(embeddings: &[Vec<f32>], g: &Grouping) -> Vec<u32> {
+    group_voices_with(embeddings, g, &[]).0
+}
+
+/// [`group_voices`] with a name per window where the call app gave one
+/// (`names`, may be empty), and each window's margin: its similarity to its
+/// own voice minus to the nearest other.
+pub fn group_voices_with(
+    embeddings: &[Vec<f32>],
+    g: &Grouping,
+    names: &[Option<u32>],
+) -> (Vec<u32>, Vec<f32>) {
+    if embeddings.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let name_of = |i: usize| names.get(i).copied().flatten();
+    let dim = embeddings[0].len();
+    let embs: Vec<Vec<f32>> = if g.normalise && embeddings.len() > 1 {
+        let mut mean = vec![0.0f32; dim];
+        for e in embeddings {
+            for (m, x) in mean.iter_mut().zip(e) {
+                *m += x / embeddings.len() as f32;
+            }
+        }
+        embeddings
+            .iter()
+            .map(|e| unit(e.iter().zip(&mean).map(|(x, m)| x - m).collect()))
+            .collect()
+    } else {
+        embeddings.to_vec()
+    };
+
+    // First pass: small groups of near-identical windows.
+    let mut sums: Vec<Vec<f32>> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    let mut gname: Vec<Option<u32>> = Vec::new();
+    let mut labels: Vec<usize> = Vec::with_capacity(embs.len());
+    for (i, e) in embs.iter().enumerate() {
+        let n = name_of(i);
+        let best = sums
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| n.is_none() || gname[*k].is_none() || gname[*k] == n)
+            .map(|(k, s)| (k, cosine(e, s) / norm(s).max(1e-9)))
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        match best {
+            Some((k, sim)) if sim >= g.first_pass => {
+                for (a, x) in sums[k].iter_mut().zip(e) {
+                    *a += x;
+                }
+                counts[k] += 1;
+                gname[k] = gname[k].or(n);
+                labels.push(k);
+            }
+            _ => {
+                sums.push(e.clone());
+                counts.push(1);
+                gname.push(n);
+                labels.push(sums.len() - 1);
+            }
+        }
+    }
+
+    // Merge: average similarity between two groups is the dot product of
+    // their sums over the product of their sizes (windows are unit length).
+    let k = sums.len();
+    let mut alive = vec![true; k];
+    let mut parent: Vec<usize> = (0..k).collect();
+    // Average similarity, kept apart under different names and pulled
+    // together under the same one.
+    let avg = |sums: &[Vec<f32>], counts: &[usize], gname: &[Option<u32>], a: usize, b: usize| {
+        let s = cosine(&sums[a], &sums[b]) / (counts[a] * counts[b]) as f32;
+        match (gname[a], gname[b]) {
+            (Some(x), Some(y)) if x != y => f32::NEG_INFINITY,
+            (Some(_), Some(_)) => s + SAME_NAME_BONUS,
+            _ => s,
+        }
+    };
+    let mut sim = vec![vec![f32::NEG_INFINITY; k]; k];
+    #[allow(clippy::needless_range_loop)]
+    for a in 0..k {
+        for b in a + 1..k {
+            let s = avg(&sums, &counts, &gname, a, b);
+            sim[a][b] = s;
+            sim[b][a] = s;
+        }
+    }
+    // Nearest-neighbour chain: follow each group to its most similar one
+    // until two point at each other, and merge those. For average
+    // similarity this gives the same groups as always merging the closest
+    // pair first, without searching every pair each time. A group whose
+    // best match is below `stop` can never reach it later (merging others
+    // only averages similarities), so it's set aside.
+    let mut open = alive.clone();
+    let mut chain: Vec<usize> = Vec::new();
+    loop {
+        if chain.is_empty() {
+            match (0..k).find(|&c| open[c]) {
+                Some(c) => chain.push(c),
+                None => break,
+            }
+        }
+        let a = *chain.last().unwrap();
+        let prev = chain.len().checked_sub(2).map(|i| chain[i]);
+        let mut best: Option<(usize, f32)> = None;
+        for c in (0..k).filter(|&c| open[c] && c != a) {
+            let better = match best {
+                None => true,
+                Some((_, s)) => sim[a][c] > s || (sim[a][c] == s && Some(c) == prev),
+            };
+            if better {
+                best = Some((c, sim[a][c]));
+            }
+        }
+        match best {
+            Some((b, s)) if s >= g.stop => {
+                if Some(b) == prev {
+                    chain.pop();
+                    chain.pop();
+                    let moved = std::mem::take(&mut sums[b]);
+                    for (x, y) in sums[a].iter_mut().zip(&moved) {
+                        *x += y;
+                    }
+                    counts[a] += counts[b];
+                    gname[a] = gname[a].or(gname[b]);
+                    alive[b] = false;
+                    open[b] = false;
+                    parent[b] = a;
+                    for c in (0..k).filter(|&c| alive[c] && c != a) {
+                        let s = avg(&sums, &counts, &gname, a, c);
+                        sim[a][c] = s;
+                        sim[c][a] = s;
+                    }
+                } else {
+                    chain.push(b);
+                }
+            }
+            _ => {
+                open[a] = false;
+                chain.clear();
+            }
+        }
+    }
+    let root = |mut i: usize| {
+        while parent[i] != i {
+            i = parent[i];
+        }
+        i
+    };
+    let mut labels: Vec<usize> = labels.into_iter().map(root).collect();
+
+    // Fold voices heard in too few windows into the nearest real one.
+    let size = |labels: &[usize], c: usize| labels.iter().filter(|&&l| l == c).count();
+    let big: Vec<usize> = (0..k)
+        .filter(|&c| alive[c] && size(&labels, c) >= g.min_windows)
+        .collect();
+    if !big.is_empty() {
+        for i in 0..labels.len() {
+            if !big.contains(&labels[i]) {
+                labels[i] = *big
+                    .iter()
+                    .max_by(|&&a, &&b| {
+                        (cosine(&embs[i], &sums[a]) / counts[a] as f32)
+                            .total_cmp(&(cosine(&embs[i], &sums[b]) / counts[b] as f32))
+                    })
+                    .unwrap();
+            }
+        }
+    }
+    // Each window's margin over the nearest other voice.
+    let finals: Vec<usize> = {
+        let mut f: Vec<usize> = labels.clone();
+        f.sort_unstable();
+        f.dedup();
+        f
+    };
+    let margins: Vec<f32> = labels
+        .iter()
+        .zip(&embs)
+        .map(|(&l, e)| {
+            let to = |c: usize| cosine(e, &sums[c]) / norm(&sums[c]).max(1e-9);
+            let own = to(l);
+            let other = finals
+                .iter()
+                .filter(|&&c| c != l)
+                .map(|&c| to(c))
+                .fold(f32::NEG_INFINITY, f32::max);
+            if other.is_finite() {
+                own - other
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    let mut order: Vec<usize> = Vec::new();
+    let numbered = labels
+        .iter()
+        .map(|l| {
+            let pos = order.iter().position(|o| o == l).unwrap_or_else(|| {
+                order.push(*l);
+                order.len() - 1
+            });
+            pos as u32
+        })
+        .collect();
+    (numbered, margins)
+}
+
+fn norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
 
 #[cfg(test)]
@@ -782,5 +1164,47 @@ mod tests {
         labels.extend(l(&[1; 8]));
         assert!(others_in_room(&labels).iter().all(|s| *s == Some(ME)));
         assert_eq!(offset(&l(&[0, -1, 2]), 100), l(&[100, -1, 102]));
+    }
+
+    #[test]
+    fn names_keep_alike_voices_apart_and_pull_one_voice_together() {
+        // Two voices so alike that grouping alone makes them one.
+        let a: Vec<f32> = unit((0..32).map(|i| (i as f32).sin()).collect());
+        let b: Vec<f32> = unit(
+            a.iter()
+                .enumerate()
+                .map(|(i, x)| x + 0.05 * (i as f32).cos())
+                .collect(),
+        );
+        let embs: Vec<Vec<f32>> = (0..40u32)
+            .map(|i| around(if i % 2 == 0 { &a } else { &b }, 0.02, i))
+            .collect();
+        let g = Grouping {
+            normalise: false,
+            ..Grouping::default()
+        };
+        let alone = group_voices(&embs, &g);
+        assert!(alone.iter().all(|&l| l == alone[0]));
+        // The call app names them apart.
+        let names: Vec<Option<u32>> = (0..40).map(|i| Some(i % 2)).collect();
+        let (named, margins) = group_voices_with(&embs, &g, &names);
+        assert_ne!(named[0], named[1]);
+        assert!(named.iter().step_by(2).all(|&l| l == named[0]));
+        assert_eq!(margins.len(), 40);
+    }
+
+    #[test]
+    fn a_window_takes_the_name_covering_most_of_it() {
+        let hints: Vec<Option<String>> = (0..100)
+            .map(|i| match i {
+                0..=39 => Some("Sam".to_string()),
+                40..=49 => Some("Priya".to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            window_names(&[(0, 50), (50, 100), (30, 80)], &hints),
+            vec![Some(0), None, None]
+        );
     }
 }

@@ -23,6 +23,7 @@ pub mod manager;
 mod mic;
 pub mod pipeline;
 pub mod remote;
+pub mod segment;
 pub mod speaker_score;
 pub mod speakers;
 pub mod summary;

@@ -62,8 +62,76 @@ fn row(name: &str, s: &Score, secs: f64) {
     );
 }
 
+/// Settings for a run, from the environment: GROUP=old for 1e32bda's
+/// online pass, otherwise the whole-meeting grouping with NORM=0|1,
+/// FIRST=<similarity>, STOP=<similarity>, MINW=<windows>.
+fn grouping_from_env() -> Option<diarize::Grouping> {
+    if std::env::var("GROUP").as_deref() == Ok("old") {
+        return None;
+    }
+    let mut g = diarize::Grouping::default();
+    let num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
+    if let Some(v) = num("FIRST") {
+        g.first_pass = v;
+    }
+    if let Some(v) = num("STOP") {
+        g.stop = v;
+    }
+    if let Some(v) = num("MINW") {
+        g.min_windows = v as usize;
+    }
+    if let Ok(v) = std::env::var("NORM") {
+        g.normalise = v != "0";
+    }
+    Some(g)
+}
+
+/// Fingerprints for a meeting, from the cache when there.
+struct Prints {
+    speech: Vec<bool>,
+    wins: Vec<(usize, usize)>,
+    embs: Vec<Vec<f32>>,
+}
+
+fn cached(path: &Path, make: impl FnOnce() -> Result<Prints, String>) -> Result<Prints, String> {
+    if let Ok(bytes) = std::fs::read(path) {
+        if let Ok((speech, wins, embs)) =
+            serde_json::from_slice::<(Vec<bool>, Vec<(usize, usize)>, Vec<Vec<f32>>)>(&bytes)
+        {
+            return Ok(Prints { speech, wins, embs });
+        }
+    }
+    let p = make()?;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec(&(&p.speech, &p.wins, &p.embs)).unwrap_or_default(),
+    );
+    Ok(p)
+}
+
 fn ami(dir: &Path, model: &Path) -> Result<(), String> {
     let vad = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models/silero_vad_v4.onnx");
+    let grouping = grouping_from_env();
+    let quiet = std::env::var("QUIET").is_ok();
+    // SEG=1: cut fingerprint windows at the segmentation model's turns.
+    let seg_model = std::env::var("SEG").ok().filter(|v| v == "1").map(|_| {
+        app_data()
+            .join("models")
+            .join(handy_app_lib::meetings::segment::MODEL_DIR)
+            .join(handy_app_lib::meetings::segment::MODEL_FILE)
+    });
+    let mut model_name = model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    if seg_model.is_some() {
+        model_name.push_str("+seg");
+    }
+    let cache = dir.join("cache").join(&model_name);
     let mut ids: Vec<String> = std::fs::read_dir(dir.join("rttm"))
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
@@ -74,11 +142,12 @@ fn ami(dir: &Path, model: &Path) -> Result<(), String> {
         })
         .collect();
     ids.sort();
+    if let Ok(only) = std::env::var("ONLY") {
+        ids.retain(|id| only.split(',').any(|o| o == id));
+    }
     let (mut total, mut total_oracle) = (Score::default(), Score::default());
-    let mut audio_secs = 0.0;
     let started = Instant::now();
-    println!("Pipeline (VAD + voices):");
-    let mut oracle_rows = Vec::new();
+    let mut rows = Vec::new();
     for id in &ids {
         let wav = dir.join("audio").join(format!("{id}.Mix-Headset.wav"));
         let (Ok(rttm), Ok(uem)) = (
@@ -88,40 +157,75 @@ fn ami(dir: &Path, model: &Path) -> Result<(), String> {
             continue;
         };
         if !wav.is_file() {
-            eprintln!("{id}: no audio yet, skipped");
             continue;
         }
         let t = Instant::now();
-        let analysis = pipeline::analyze(&wav, &vad, true)?;
-        let frames = analysis.speech.len();
-        audio_secs += frames as f64 * FRAME_MS as f64 / 1000.0;
+        let p = cached(&cache.join(format!("{id}.vad.json")), || {
+            let speech = pipeline::analyze(&wav, &vad, true)?.speech;
+            let (wins, embs, _) =
+                diarize::fingerprint_with(&wav, &speech, model, seg_model.as_deref())?;
+            Ok(Prints { speech, wins, embs })
+        })?;
+        let frames = p.speech.len();
         let reference = from_rttm(&rttm, FRAME_MS, frames);
         let scored = from_uem(&uem, FRAME_MS, frames);
-        let guess = diarize::speakers(&wav, &analysis.speech, model, None)?;
-        let s = score(&reference, &guess, &scored);
-        row(id, &s, t.elapsed().as_secs_f64());
+        // HINTS=<share>: name hints from the reference (one person talking)
+        // on that share of the speech, as the meetings extension would give.
+        let share: f32 = std::env::var("HINTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        let hints: Vec<Option<String>> = reference
+            .iter()
+            .enumerate()
+            .map(|(i, r)| match r.as_slice() {
+                // Whole 3 s stretches on or off, so hints come in runs.
+                [one] if ((i / 100) as f32 * 0.618).fract() < share => Some(format!("p{one}")),
+                _ => None,
+            })
+            .collect();
+        let label = |p: &Prints| -> Vec<Option<u32>> {
+            if p.wins.is_empty() {
+                return vec![None; p.speech.len()];
+            }
+            let speakers = match &grouping {
+                Some(g) => {
+                    let names = diarize::window_names(&p.wins, &hints);
+                    diarize::group_voices_with(&p.embs, g, &names).0
+                }
+                None => diarize::cluster(&p.embs),
+            };
+            diarize::frame_labels(&p.speech, &p.wins, &speakers)
+        };
+        let s = score(&reference, &label(&p), &scored);
+        let secs = t.elapsed().as_secs_f64();
         total.add(&s);
 
-        // The reference's speech instead of the VAD: voices only.
         let t = Instant::now();
-        let speech: Vec<bool> = reference.iter().map(|r| !r.is_empty()).collect();
-        let guess = diarize::speakers(&wav, &speech, model, None)?;
-        let s = score(&reference, &guess, &scored);
-        oracle_rows.push((id.clone(), s, t.elapsed().as_secs_f64()));
-        total_oracle.add(&s);
+        let o = cached(&cache.join(format!("{id}.ref.json")), || {
+            let speech: Vec<bool> = reference.iter().map(|r| !r.is_empty()).collect();
+            let (wins, embs, _) =
+                diarize::fingerprint_with(&wav, &speech, model, seg_model.as_deref())?;
+            Ok(Prints { speech, wins, embs })
+        })?;
+        let so = score(&reference, &label(&o), &scored);
+        total_oracle.add(&so);
+        rows.push((id.clone(), s, secs, so, t.elapsed().as_secs_f64()));
+    }
+    if !quiet {
+        println!("Pipeline (VAD + voices):");
+        for (id, s, secs, _, _) in &rows {
+            row(id, s, *secs);
+        }
     }
     row("all", &total, started.elapsed().as_secs_f64());
-    println!("\nReference speech (voices only):");
-    for (id, s, secs) in &oracle_rows {
-        row(id, s, *secs);
+    if !quiet {
+        println!("\nReference speech (voices only):");
+        for (id, _, _, s, secs) in &rows {
+            row(id, s, *secs);
+        }
     }
-    row("all", &total_oracle, 0.0);
-    println!(
-        "\n{} meetings, {:.1} h of audio, {:.0} s per hour (both runs)",
-        oracle_rows.len(),
-        audio_secs / 3600.0,
-        started.elapsed().as_secs_f64() / (audio_secs / 3600.0).max(1e-9)
-    );
+    row("all ref", &total_oracle, 0.0);
     Ok(())
 }
 

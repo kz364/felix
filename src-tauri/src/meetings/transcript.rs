@@ -44,6 +44,14 @@ impl Source {
             Source::System => "system.wav",
         }
     }
+
+    /// As in paragraph keys ("mic-1200").
+    pub fn key(self) -> &'static str {
+        match self {
+            Source::Mic => "mic",
+            Source::System => "system",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

@@ -12,11 +12,14 @@ use super::level::LevelSettings;
 use super::track::SAMPLE_RATE;
 use super::transcript::{self, Chunk, Segment, Source, Transcript};
 use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Speakers told apart on the system track are numbered from here, so they
 /// never share a number with the voices on the mic.
 pub const SYSTEM_SPEAKERS: u32 = 100;
+/// How sure each chunk's voice is (window margin), by `<track>-<start ms>`.
+pub const VOICES_FILE: &str = "voices.json";
 
 /// Silero's speech threshold for meetings. A little stricter than dictation's
 /// (0.3), since a meeting track has long stretches of room noise.
@@ -271,21 +274,30 @@ pub fn run(
     // Who speaks when. In person: every voice on the mic. On a call: the
     // voices on the system track, and anyone in the room with the user on
     // the mic. If it fails, the transcript goes ahead without speakers.
-    let diarize = |wav: &Path, speech: &[bool], print: Option<&[f32]>| {
-        super::diarize::speakers(wav, speech, speaker_model?, print)
+    let mut margins: Vec<(Source, Vec<f32>)> = Vec::new();
+    let mut diarize = |source: Source, wav: &Path, speech: &[bool], print: Option<&[f32]>| {
+        let hints = match source {
+            Source::System => super::speakers::name_hints(dir, speech.len()),
+            Source::Mic => Vec::new(),
+        };
+        let v = super::diarize::speakers_with(wav, speech, speaker_model?, print, &hints)
             .inspect_err(|e| log::warn!("Couldn't tell the speakers apart: {e}"))
-            .ok()
+            .ok()?;
+        margins.push((source, v.margins));
+        Some(v.labels)
     };
     let (mic_speakers, system_speakers) = if speaker_model.is_some() {
         progress(Step::Identifying);
         let mic_speakers = match (&mic_speech, mode) {
-            (Some(speech), MeetingMode::InPerson) => diarize(&mic_wav, speech, voiceprint),
-            (Some(speech), MeetingMode::Call) => diarize(&mic_wav, speech, None)
+            (Some(speech), MeetingMode::InPerson) => {
+                diarize(Source::Mic, &mic_wav, speech, voiceprint)
+            }
+            (Some(speech), MeetingMode::Call) => diarize(Source::Mic, &mic_wav, speech, None)
                 .map(|labels| super::diarize::others_in_room(&labels)),
             _ => None,
         };
         let system_speakers = system.as_ref().and_then(|s| {
-            diarize(&system_wav, &s.speech, None)
+            diarize(Source::System, &system_wav, &s.speech, None)
                 .map(|labels| super::diarize::offset(&labels, SYSTEM_SPEAKERS))
         });
         (mic_speakers, system_speakers)
@@ -323,6 +335,27 @@ pub fn run(
         add(Source::System, &s.speech, &system_speakers);
     }
     plan.sort_by_key(|(source, c, _)| (c.start_ms, *source == Source::System));
+    // How sure each chunk's voice is, for the transcript's "?" marks.
+    if !margins.is_empty() {
+        let sure: BTreeMap<String, f32> = plan
+            .iter()
+            .filter(|(_, _, s)| s.is_some())
+            .filter_map(|(source, c, _)| {
+                let m = &margins.iter().find(|(s, _)| s == source)?.1;
+                let frames = m.get(
+                    (c.start_ms / transcript::FRAME_MS) as usize
+                        ..((c.end_ms / transcript::FRAME_MS) as usize).min(m.len()),
+                )?;
+                (!frames.is_empty()).then(|| {
+                    (
+                        format!("{}-{}", source.key(), c.start_ms),
+                        frames.iter().sum::<f32>() / frames.len() as f32,
+                    )
+                })
+            })
+            .collect();
+        let _ = super::summary::save_json(dir, VOICES_FILE, &sure);
+    }
 
     let total = plan.len();
     let is_done = |t: &Transcript, source: Source, c: &Chunk| {

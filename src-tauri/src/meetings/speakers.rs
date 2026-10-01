@@ -456,6 +456,47 @@ fn by_clues_and_elimination(
     }
 }
 
+/// The name marked as talking in each frame of the system track, for
+/// telling voices apart: the extension's marks when it was there, otherwise
+/// the call app's. Frames where two names overlap have none.
+pub fn name_hints(dir: &Path, frames: usize) -> Vec<Option<String>> {
+    use super::extension::Message;
+    let frame = super::transcript::FRAME_MS;
+    let mut marks: Vec<(u64, String)> = super::extension::load(dir)
+        .into_iter()
+        .filter_map(|h| match h.message {
+            Message::Speaking { names, .. } if names.len() == 1 => {
+                Some((h.at_ms, names.into_iter().next()?))
+            }
+            _ => None,
+        })
+        .collect();
+    if marks.is_empty() {
+        marks = active_speaker::load(dir)
+            .into_iter()
+            .map(|s| (s.at_ms, s.name))
+            .collect();
+    }
+    let mut out: Vec<Option<String>> = vec![None; frames];
+    let mut clash = vec![false; frames];
+    for (at, name) in marks {
+        let from = (at / frame) as usize;
+        let to = (((at + active_speaker::TTL_MS) / frame) as usize).min(frames);
+        for i in from.min(frames)..to {
+            match &out[i] {
+                Some(n) if *n != name => clash[i] = true,
+                _ => out[i] = Some(name.clone()),
+            }
+        }
+    }
+    for (o, c) in out.iter_mut().zip(clash) {
+        if c {
+            *o = None;
+        }
+    }
+    out
+}
+
 /// Write `evidence.jsonl` again from what the meeting has now (after
 /// transcription, or when the user fixes a speaker).
 pub fn record(dir: &Path, t: &Transcript) -> Vec<Evidence> {
