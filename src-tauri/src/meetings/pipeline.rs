@@ -285,13 +285,47 @@ pub fn run(
         log::info!("Meeting pipeline: {what} in {:.1?}", step_at.elapsed());
         step_at = std::time::Instant::now();
     };
+    // What was heard while recording, carried on from where it got to.
+    let mut heard = super::live::take_heard(dir);
+    let mut caches: Vec<(Source, super::diarize::FingerprintCache)> = Vec::new();
+    let mut hear = |source: Source, wav: &Path, live_gain: bool| -> Result<Analysis, String> {
+        let Some(i) = heard
+            .iter()
+            .position(|h| h.source == source && h.live_gain == live_gain)
+        else {
+            return analyze(wav, vad_model, live_gain);
+        };
+        let mut h = heard.swap_remove(i);
+        let mut reader =
+            hound::WavReader::open(wav).map_err(|e| format!("{}: {e}", wav.display()))?;
+        check_format(&reader, wav)?;
+        if (reader.duration() as u64) < h.heard {
+            return analyze(wav, vad_model, live_gain);
+        }
+        reader.seek(h.heard as u32).map_err(|e| e.to_string())?;
+        let mut samples = Vec::with_capacity(SAMPLE_RATE as usize);
+        for sample in reader.samples::<i16>() {
+            samples.push(sample.map_err(|e| e.to_string())? as f32 / i16::MAX as f32);
+            if samples.len() == samples.capacity() {
+                h.listener.push(&samples)?;
+                samples.clear();
+            }
+        }
+        h.listener.push(&samples)?;
+        log::info!(
+            "Meeting pipeline: carried on from {:.0} s heard while recording ({source:?})",
+            h.heard as f64 / SAMPLE_RATE as f64
+        );
+        caches.push((source, h.cache));
+        Ok(h.listener.analysis)
+    };
     let mic = if mic_wav.is_file() {
-        Some(analyze(&mic_wav, vad_model, lift_mic)?)
+        Some(hear(Source::Mic, &mic_wav, lift_mic)?)
     } else {
         None
     };
     let system = if mode == MeetingMode::Call && system_wav.is_file() {
-        Some(analyze(&system_wav, vad_model, false)?)
+        Some(hear(Source::System, &system_wav, false)?)
     } else {
         None
     };
@@ -336,7 +370,16 @@ pub fn run(
             Source::System => super::speakers::name_hints(dir, speech.len()),
             Source::Mic => Vec::new(),
         };
-        let v = super::diarize::speakers_with(wav, speech, speaker_model?, print, &hints)
+        let model = speaker_model?;
+        let mut cache = caches
+            .iter()
+            .position(|(s, _)| *s == source)
+            .map(|i| caches.swap_remove(i).1)
+            .unwrap_or_default();
+        let v = super::diarize::read_samples(wav)
+            .and_then(|samples| {
+                super::diarize::speakers_cached(&samples, speech, model, print, &hints, &mut cache)
+            })
             .inspect_err(|e| log::warn!("Couldn't tell the speakers apart: {e}"))
             .ok()?;
         margins.push((source, v.margins));

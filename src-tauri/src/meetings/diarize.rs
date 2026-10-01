@@ -683,8 +683,39 @@ pub fn speakers_with(
     voiceprint: Option<&[f32]>,
     hints: &[Option<String>],
 ) -> Result<Voices, String> {
+    let samples = read_samples(wav)?;
+    speakers_cached(
+        &samples,
+        speech,
+        model,
+        voiceprint,
+        hints,
+        &mut FingerprintCache::default(),
+    )
+}
+
+/// A 16 kHz mono WAV's samples, as `i16 / 32768`.
+pub fn read_samples(wav: &Path) -> Result<Vec<f32>, String> {
+    let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
+    reader
+        .samples::<i16>()
+        .map(|s| s.map(|v| v as f32 / 32768.0))
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// [`speakers_with`] on samples already read, reusing and filling `cache`.
+pub fn speakers_cached(
+    samples: &[f32],
+    speech: &[bool],
+    model: &Path,
+    voiceprint: Option<&[f32]>,
+    hints: &[Option<String>],
+    cache: &mut FingerprintCache,
+) -> Result<Voices, String> {
     let seg = super::segment::model_beside(model);
-    let (wins, embeddings, turns) = fingerprint_with(wav, speech, model, seg.as_deref())?;
+    let (wins, embeddings, turns) =
+        fingerprint_cached(samples, speech, model, seg.as_deref(), cache)?;
     let mut voices = label_with(speech, &wins, &embeddings, voiceprint, hints);
     // Two people at once: whoever the frame went to, it's unsure.
     if let Some(t) = turns {
@@ -718,14 +749,45 @@ pub fn fingerprint_with(
     model: &Path,
     segmentation: Option<&Path>,
 ) -> Result<PrintsAndTurns, String> {
-    let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
-    let samples: Vec<f32> = reader
-        .samples::<i16>()
-        .map(|s| s.map(|v| v as f32 / 32768.0))
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
+    fingerprint_samples(&read_samples(wav)?, speech, model, segmentation)
+}
+
+/// [`fingerprint_with`] on samples already read (16 kHz, as `i16 / 32768`).
+pub fn fingerprint_samples(
+    samples: &[f32],
+    speech: &[bool],
+    model: &Path,
+    segmentation: Option<&Path>,
+) -> Result<PrintsAndTurns, String> {
+    fingerprint_cached(
+        samples,
+        speech,
+        model,
+        segmentation,
+        &mut FingerprintCache::default(),
+    )
+}
+
+/// What's been worked out of a track still being recorded (see
+/// [`super::live`]): the segmentation model's answer per chunk and each
+/// window's fingerprint. Both depend only on their own stretch of audio, so
+/// later passes give the same result and only run the models on what's new.
+#[derive(Default)]
+pub struct FingerprintCache {
+    turns: Vec<Option<Vec<usize>>>,
+    prints: std::collections::HashMap<(usize, usize), Vec<f32>>,
+}
+
+/// [`fingerprint_samples`], reusing and filling `cache`.
+pub fn fingerprint_cached(
+    samples: &[f32],
+    speech: &[bool],
+    model: &Path,
+    segmentation: Option<&Path>,
+    cache: &mut FingerprintCache,
+) -> Result<PrintsAndTurns, String> {
     let turns = match segmentation {
-        Some(m) => super::segment::turns(&samples, speech.len(), m)
+        Some(m) => super::segment::turns_cached(samples, speech.len(), m, &mut cache.turns)
             .inspect_err(|e| log::warn!("Couldn't find speaker turns: {e}"))
             .ok(),
         None => None,
@@ -734,7 +796,17 @@ pub fn fingerprint_with(
     if wins.is_empty() {
         return Ok((wins, Vec::new(), turns));
     }
-    let embeddings = embed_windows(&samples, &wins, model)?;
+    let missing: Vec<(usize, usize)> = wins
+        .iter()
+        .filter(|w| !cache.prints.contains_key(w))
+        .copied()
+        .collect();
+    let found = embed_windows(samples, &missing, model)?;
+    cache.prints.extend(missing.into_iter().zip(found));
+    // Windows at the end that grew since are dropped.
+    let keep: std::collections::HashSet<&(usize, usize)> = wins.iter().collect();
+    cache.prints.retain(|w, _| keep.contains(w));
+    let embeddings = wins.iter().map(|w| cache.prints[w].clone()).collect();
     Ok((wins, embeddings, turns))
 }
 

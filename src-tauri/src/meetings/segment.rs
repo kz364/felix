@@ -121,6 +121,18 @@ impl Segmenter {
 
 /// Turns and overlaps over a whole track (`frames` frames of 30 ms).
 pub fn turns(samples: &[f32], frames: usize, model: &Path) -> Result<Turns, String> {
+    turns_cached(samples, frames, model, &mut Vec::new())
+}
+
+/// [`turns`], keeping the model's answer for each chunk it heard whole in
+/// `cache` (by chunk), so a track still being recorded only runs the model
+/// on what's new. The same samples give the same turns.
+pub fn turns_cached(
+    samples: &[f32],
+    frames: usize,
+    model: &Path,
+    cache: &mut Vec<Option<Vec<usize>>>,
+) -> Result<Turns, String> {
     let mut out = Turns {
         change: vec![false; frames],
         overlap: vec![false; frames],
@@ -133,35 +145,56 @@ pub fn turns(samples: &[f32], frames: usize, model: &Path) -> Result<Turns, Stri
         .take_while(|&o| o == 0 || o + STEP < samples.len())
         .collect();
     let n = offsets.len();
-    for (b, batch) in offsets.chunks(CHUNKS_PER_THREAD).enumerate() {
-        let classes = std::thread::scope(|scope| {
+    let whole = |o: usize| o + CHUNK <= samples.len();
+    let mut classes: Vec<Option<Vec<usize>>> = (0..n)
+        .map(|i| {
+            cache
+                .get(i)
+                .cloned()
+                .flatten()
+                .filter(|_| whole(offsets[i]))
+        })
+        .collect();
+    let todo: Vec<usize> = (0..n).filter(|&i| classes[i].is_none()).collect();
+    for batch in todo.chunks(CHUNKS_PER_THREAD) {
+        let found = std::thread::scope(|scope| {
             scope
                 .spawn(|| -> Result<Vec<Vec<usize>>, String> {
                     let mut seg = Segmenter::new(model)?;
                     batch
                         .iter()
-                        .map(|&o| seg.classes(&samples[o..(o + CHUNK).min(samples.len())]))
+                        .map(|&i| {
+                            let o = offsets[i];
+                            seg.classes(&samples[o..(o + CHUNK).min(samples.len())])
+                        })
                         .collect()
                 })
                 .join()
                 .map_err(|_| "The segmentation model crashed".to_string())?
         })?;
-        for (j, c) in classes.iter().enumerate() {
-            let i = b * CHUNKS_PER_THREAD + j;
-            let o = offsets[i];
-            // The middle half, or out to the edge for the first and last.
-            let from = if i == 0 {
-                0
-            } else {
-                (o + CHUNK / 4) / FRAME_SAMPLES
-            };
-            let to = if i + 1 == n {
-                frames
-            } else {
-                (o + CHUNK * 3 / 4) / FRAME_SAMPLES
-            };
-            read_chunk(c, o, (from, to), &mut out);
+        for (&i, c) in batch.iter().zip(found) {
+            classes[i] = Some(c);
         }
+    }
+    cache.resize(n.max(cache.len()), None);
+    for (i, c) in classes.iter().enumerate() {
+        let o = offsets[i];
+        if whole(o) {
+            cache[i] = c.clone();
+        }
+        let Some(c) = c else { continue };
+        // The middle half, or out to the edge for the first and last.
+        let from = if i == 0 {
+            0
+        } else {
+            (o + CHUNK / 4) / FRAME_SAMPLES
+        };
+        let to = if i + 1 == n {
+            frames
+        } else {
+            (o + CHUNK * 3 / 4) / FRAME_SAMPLES
+        };
+        read_chunk(c, o, (from, to), &mut out);
     }
     Ok(out)
 }

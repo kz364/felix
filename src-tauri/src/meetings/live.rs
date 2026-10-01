@@ -11,7 +11,17 @@
 //! every chunk that comes out the same, so after the call only chunks split
 //! between speakers (and the mic's, where the call echoed into it) are
 //! transcribed again. Kept in `live.json`, deleted with it.
+//!
+//! With the speaker model, every [`VOICES_EVERY`] the voices so far are told
+//! apart the way the final pass does, from the model's answers kept from
+//! the rounds before ([`diarize::FingerprintCache`]), and the system
+//! track's chunks are cut where the speaker changes before they're
+//! transcribed, so most come out as the final pass cuts them. When the
+//! recording stops, what was heard (the VAD's state and the speaker
+//! models' answers) is handed to the final pass ([`take_heard`]), which
+//! carries on from there instead of starting over.
 
+use super::diarize;
 use super::pipeline;
 use super::remote::Remote;
 use super::track::SAMPLE_RATE;
@@ -21,11 +31,11 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const FILE: &str = "live.json";
@@ -37,6 +47,47 @@ const PIECES_PER_ROUND: usize = 6;
 const READ_SECS: u64 = 60;
 /// Give up after this many failures in a row.
 const MAX_FAILURES: u32 = 3;
+/// How often the voices so far are told apart.
+const VOICES_EVERY: Duration = Duration::from_secs(60);
+/// How long the final pass waits for the live pass to hand over.
+const HANDOVER_WAIT: Duration = Duration::from_secs(30);
+
+/// What the live pass heard of one track, for the final pass to carry on
+/// from: the same audio gives the same answers.
+pub struct Heard {
+    pub source: Source,
+    /// Whether the VAD heard it through the in-person gain.
+    pub live_gain: bool,
+    pub listener: pipeline::Listener,
+    /// Samples the listener has heard.
+    pub heard: u64,
+    pub cache: diarize::FingerprintCache,
+}
+
+/// By meeting folder: `None` while the live pass runs, then what it heard.
+static HEARD: Lazy<Mutex<HashMap<PathBuf, Option<Vec<Heard>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// What the live pass heard of the meeting in `dir`, once it has stopped
+/// (waiting a little for it). Empty if it didn't run in this session.
+pub fn take_heard(dir: &Path) -> Vec<Heard> {
+    let since = Instant::now();
+    loop {
+        {
+            let mut heard = HEARD.lock().unwrap_or_else(|e| e.into_inner());
+            match heard.get(dir) {
+                None => return Vec::new(),
+                Some(Some(_)) => return heard.remove(dir).flatten().unwrap_or_default(),
+                Some(None) if since.elapsed() > HANDOVER_WAIT => {
+                    log::warn!("The live transcript didn't stop in time; starting over");
+                    return Vec::new();
+                }
+                Some(None) => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
 
 /// Chunks transcribed while recording, for the final pass to reuse.
 pub const AHEAD_FILE: &str = "ahead.json";
@@ -317,10 +368,36 @@ fn read_from(path: &Path, from: u64, max: u64) -> Option<Vec<f32>> {
 struct Track {
     source: Source,
     path: PathBuf,
+    live_gain: bool,
     /// Hears the track as the final pass will.
     listener: pipeline::Listener,
     /// Samples heard so far.
     heard: u64,
+    cache: diarize::FingerprintCache,
+    /// Who speaks each frame so far (the system track's), once told apart.
+    labels: Option<Vec<Option<u32>>>,
+    /// How each chunk was cut when it was first ready, by [`chunk_key`]:
+    /// kept, so a chunk isn't transcribed again each time the voices are
+    /// told apart a little differently.
+    cuts: HashMap<String, Vec<Chunk>>,
+}
+
+/// Tell the voices heard so far apart, as the final pass will. Only the
+/// system track's are used now (its chunks are reused as cut); the mic's
+/// answers are kept for the final pass.
+fn tell_voices(dir: &Path, track: &mut Track, model: &Path) -> Result<(), String> {
+    let samples = read_from(&track.path, 0, track.heard)
+        .ok_or_else(|| format!("Couldn't read {}", track.path.display()))?;
+    let speech = &track.listener.analysis.speech;
+    if track.source == Source::Mic {
+        let seg = super::segment::model_beside(model);
+        diarize::fingerprint_cached(&samples, speech, model, seg.as_deref(), &mut track.cache)?;
+        return Ok(());
+    }
+    let hints = super::speakers::name_hints(dir, speech.len());
+    let voices = diarize::speakers_cached(&samples, speech, model, None, &hints, &mut track.cache)?;
+    track.labels = Some(voices.labels);
+    Ok(())
 }
 
 /// What makes the live transcript.
@@ -387,6 +464,13 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
     };
     // As the final pass hears the mic in person (see `pipeline::run`).
     let lift_mic = mode == MeetingMode::InPerson && settings.meeting_auto_gain;
+    // Told apart only with the model already there (the final pass fetches it).
+    let speaker_model = settings
+        .meeting_diarize
+        .then(|| crate::portable::app_data_dir(app).ok())
+        .flatten()
+        .map(|d| d.join("models").join(diarize::MODEL_FILE))
+        .filter(|p| p.is_file());
     let id = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -397,125 +481,231 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
     let _ = std::thread::Builder::new()
         .name("meeting-live".into())
         .spawn(move || {
-            let mut segments = load(&dir);
-            // A resumed meeting keeps what was done, if done the same way.
-            let mut ahead: Ahead = super::summary::load_json(&dir, AHEAD_FILE)
-                .filter(|a: &Ahead| a.engine == engine_name)
-                .unwrap_or(Ahead {
-                    engine: engine_name.clone(),
-                    texts: BTreeMap::new(),
-                });
-            let mut tracks: Vec<Track> = Vec::new();
-            for source in [Source::Mic, Source::System] {
-                if mode != MeetingMode::Call && source == Source::System {
-                    continue;
-                }
-                match pipeline::Listener::new(&vad, lift_mic && source == Source::Mic) {
-                    Ok(listener) => tracks.push(Track {
-                        source,
-                        path: dir.join(source.file()),
-                        listener,
-                        heard: 0,
-                    }),
-                    Err(e) => log::warn!("No live transcript for the {source:?} track: {e}"),
-                }
-            }
-            let mut failures = 0;
-            let wait = |stop: &AtomicBool| {
-                for _ in 0..EVERY.as_secs() {
-                    if stop.load(Ordering::Acquire) {
-                        return false;
-                    }
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-                true
-            };
-            while wait(&stop) {
-                let mut added = false;
-                for track in &mut tracks {
-                    // Hear what's new.
-                    while let Some(audio) =
-                        read_from(&track.path, track.heard, READ_SECS * SAMPLE_RATE as u64)
-                    {
-                        if audio.is_empty() || stop.load(Ordering::Acquire) {
-                            break;
-                        }
-                        track.heard += audio.len() as u64;
-                        if let Err(e) = track.listener.push(&audio) {
-                            log::warn!("Live transcript: {e}");
-                            break;
-                        }
-                    }
-                    // Chunks no more speech can join.
-                    let speech = &track.listener.analysis.speech;
-                    let heard_ms = speech.len() as u64 * transcript::FRAME_MS;
-                    let ready: Vec<Chunk> = transcript::plan_chunks(speech)
-                        .into_iter()
-                        .filter(|c| c.end_ms + transcript::PAUSE_MS <= heard_ms)
-                        .filter(|c| !ahead.texts.contains_key(&chunk_key(track.source, *c)))
-                        .take(PIECES_PER_ROUND)
-                        .collect();
-                    for chunk in ready {
-                        if stop.load(Ordering::Acquire) {
-                            break;
-                        }
-                        let audio = match pipeline::read_chunk(&track.path, chunk, None) {
-                            Ok(a) => a,
-                            Err(e) => {
-                                log::warn!("Live transcript: {e}");
-                                break;
-                            }
-                        };
-                        let Ok(result) = engine.transcribe(&audio) else {
-                            break;
-                        };
-                        match result {
-                            Ok(text) => {
-                                failures = 0;
-                                let text = text.trim().to_string();
-                                ahead
-                                    .texts
-                                    .insert(chunk_key(track.source, chunk), text.clone());
-                                added = true;
-                                if text.is_empty() {
-                                    continue;
-                                }
-                                let segment = Segment {
-                                    source: track.source,
-                                    start_ms: chunk.start_ms,
-                                    end_ms: chunk.end_ms,
-                                    text,
-                                    echo: false,
-                                    speaker: None,
-                                };
-                                note_sign_offs(&id, &segment);
-                                segments.push(segment);
-                            }
-                            Err(e) => {
-                                failures += 1;
-                                log::warn!("Live transcript: {e}");
-                                break;
-                            }
-                        }
-                    }
-                }
-                if failures >= MAX_FAILURES {
-                    log::warn!("Live transcript stopped after {failures} failures");
-                    return;
-                }
-                if added {
-                    if let Err(e) = super::summary::save_json(&dir, AHEAD_FILE, &ahead) {
-                        log::warn!("Couldn't save the transcript so far: {e}");
-                    }
-                    segments.sort_by_key(|s| s.start_ms);
-                    transcript::mark_echo(&mut segments);
-                    if let Err(e) = super::summary::save_json(&dir, FILE, &segments) {
-                        log::warn!("Couldn't save the live transcript: {e}");
-                    }
-                    let _ = app.emit("meeting-live-transcript", &id);
-                }
-            }
+            HEARD
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(dir.clone(), None);
+            let tracks = run(
+                &app,
+                &dir,
+                &id,
+                mode,
+                &vad,
+                lift_mic,
+                speaker_model.as_deref(),
+                engine,
+                engine_name,
+                &stop,
+            );
+            let heard = tracks
+                .into_iter()
+                .map(|t| Heard {
+                    source: t.source,
+                    live_gain: t.live_gain,
+                    listener: t.listener,
+                    heard: t.heard,
+                    cache: t.cache,
+                })
+                .collect();
+            HEARD
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(dir.clone(), Some(heard));
         });
+}
+
+/// The live pass, until `stop` is set. Returns what it heard.
+#[allow(clippy::too_many_arguments)]
+fn run(
+    app: &AppHandle,
+    dir: &Path,
+    id: &str,
+    mode: MeetingMode,
+    vad: &Path,
+    lift_mic: bool,
+    speaker_model: Option<&Path>,
+    engine: Engine,
+    engine_name: String,
+    stop: &AtomicBool,
+) -> Vec<Track> {
+    let mut segments = load(dir);
+    // A resumed meeting keeps what was done, if done the same way.
+    let mut ahead: Ahead = super::summary::load_json(dir, AHEAD_FILE)
+        .filter(|a: &Ahead| a.engine == engine_name)
+        .unwrap_or(Ahead {
+            engine: engine_name.clone(),
+            texts: BTreeMap::new(),
+        });
+    let mut tracks: Vec<Track> = Vec::new();
+    for source in [Source::Mic, Source::System] {
+        if mode != MeetingMode::Call && source == Source::System {
+            continue;
+        }
+        let live_gain = lift_mic && source == Source::Mic;
+        match pipeline::Listener::new(vad, live_gain) {
+            Ok(listener) => tracks.push(Track {
+                source,
+                path: dir.join(source.file()),
+                live_gain,
+                listener,
+                heard: 0,
+                cache: diarize::FingerprintCache::default(),
+                labels: None,
+                cuts: HashMap::new(),
+            }),
+            Err(e) => log::warn!("No live transcript for the {source:?} track: {e}"),
+        }
+    }
+    let mut failures = 0;
+    let mut voices_at: Option<Instant> = None;
+    let mut voices_failed = false;
+    let wait = |stop: &AtomicBool| {
+        for _ in 0..EVERY.as_secs() {
+            if stop.load(Ordering::Acquire) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        true
+    };
+    while wait(stop) && failures < MAX_FAILURES {
+        let mut added = false;
+        // The voices so far, now and then.
+        let tell = speaker_model
+            .filter(|_| !voices_failed && voices_at.is_none_or(|at| at.elapsed() >= VOICES_EVERY));
+        for track in &mut tracks {
+            // Hear what's new.
+            while let Some(audio) =
+                read_from(&track.path, track.heard, READ_SECS * SAMPLE_RATE as u64)
+            {
+                if audio.is_empty() || stop.load(Ordering::Acquire) {
+                    break;
+                }
+                track.heard += audio.len() as u64;
+                if let Err(e) = track.listener.push(&audio) {
+                    log::warn!("Live transcript: {e}");
+                    break;
+                }
+            }
+            if let Some(model) = tell.filter(|_| !stop.load(Ordering::Acquire)) {
+                let started = Instant::now();
+                match tell_voices(dir, track, model) {
+                    Ok(()) => log::debug!(
+                        "Live: told the {:?} voices apart in {:.1?}",
+                        track.source,
+                        started.elapsed()
+                    ),
+                    Err(e) => {
+                        log::warn!("Live: couldn't tell the voices apart: {e}");
+                        voices_failed = true;
+                        track.labels = None;
+                    }
+                }
+            }
+            // Chunks no more speech can join, cut where the speaker
+            // changes once the voices are told apart that far.
+            let speech = &track.listener.analysis.speech;
+            let heard_ms = speech.len() as u64 * transcript::FRAME_MS;
+            let by_voice =
+                track.source == Source::System && speaker_model.is_some() && !voices_failed;
+            let labels = &track.labels;
+            let cuts = &mut track.cuts;
+            let ready: Vec<Chunk> = transcript::plan_chunks(speech)
+                .into_iter()
+                .filter(|c| c.end_ms + transcript::PAUSE_MS <= heard_ms)
+                .flat_map(|c| {
+                    let key = chunk_key(track.source, c);
+                    if let Some(pieces) = cuts.get(&key) {
+                        return pieces.clone();
+                    }
+                    let pieces = match (labels, by_voice) {
+                        (_, false) => vec![c],
+                        (Some(labels), true)
+                            if (c.end_ms / transcript::FRAME_MS) as usize <= labels.len() =>
+                        {
+                            diarize::split_by_speaker(c, labels)
+                                .into_iter()
+                                .map(|(c, _)| c)
+                                .collect()
+                        }
+                        // Not told apart that far yet.
+                        _ => return Vec::new(),
+                    };
+                    cuts.insert(key, pieces.clone());
+                    pieces
+                })
+                .filter(|c| !ahead.texts.contains_key(&chunk_key(track.source, *c)))
+                .take(PIECES_PER_ROUND)
+                .collect();
+            for chunk in ready {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                let audio = match pipeline::read_chunk(&track.path, chunk, None) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        log::warn!("Live transcript: {e}");
+                        break;
+                    }
+                };
+                let Ok(result) = engine.transcribe(&audio) else {
+                    break;
+                };
+                match result {
+                    Ok(text) => {
+                        failures = 0;
+                        let text = text.trim().to_string();
+                        ahead
+                            .texts
+                            .insert(chunk_key(track.source, chunk), text.clone());
+                        added = true;
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let segment = Segment {
+                            source: track.source,
+                            start_ms: chunk.start_ms,
+                            end_ms: chunk.end_ms,
+                            text,
+                            echo: false,
+                            speaker: None,
+                        };
+                        note_sign_offs(id, &segment);
+                        // The same speech cut differently before.
+                        segments.retain(|s| {
+                            s.source != segment.source
+                                || s.end_ms <= segment.start_ms
+                                || s.start_ms >= segment.end_ms
+                        });
+                        segments.push(segment);
+                    }
+                    Err(e) => {
+                        failures += 1;
+                        log::warn!("Live transcript: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+        if tell.is_some() {
+            voices_at = Some(Instant::now());
+        }
+        if failures >= MAX_FAILURES {
+            log::warn!("Live transcript stopped after {failures} failures");
+        }
+        if added {
+            if let Err(e) = super::summary::save_json(dir, AHEAD_FILE, &ahead) {
+                log::warn!("Couldn't save the transcript so far: {e}");
+            }
+            segments.sort_by_key(|s| s.start_ms);
+            transcript::mark_echo(&mut segments);
+            if let Err(e) = super::summary::save_json(dir, FILE, &segments) {
+                log::warn!("Couldn't save the live transcript: {e}");
+            }
+            let _ = app.emit("meeting-live-transcript", id);
+        }
+    }
+    tracks
 }
 
 #[cfg(test)]
