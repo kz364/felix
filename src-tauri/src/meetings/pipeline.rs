@@ -36,41 +36,76 @@ pub struct Analysis {
 /// track through the in-person gain ([`super::level::LiveGain`]), so quiet
 /// and distant voices are found.
 pub fn analyze(wav: &Path, vad_model: &Path, live_gain: bool) -> Result<Analysis, String> {
-    let mut vad = SileroVad::new(vad_model, VAD_THRESHOLD).map_err(|e| e.to_string())?;
-    let mut gain = live_gain.then(super::level::LiveGain::default);
     let mut reader = hound::WavReader::open(wav).map_err(|e| format!("{}: {e}", wav.display()))?;
     check_format(&reader, wav)?;
-    let mut lifted = Vec::with_capacity(FRAME_SAMPLES);
-    let frames = reader.duration() as usize / FRAME_SAMPLES + 1;
-    let mut speech = Vec::with_capacity(frames);
-    let mut energy = Vec::with_capacity(frames);
-    let mut frame = Vec::with_capacity(FRAME_SAMPLES);
+    let mut listener = Listener::new(vad_model, live_gain)?;
+    let mut samples = Vec::with_capacity(SAMPLE_RATE as usize);
     for sample in reader.samples::<i16>() {
-        frame.push(sample.map_err(|e| e.to_string())? as f32 / i16::MAX as f32);
-        if frame.len() == FRAME_SAMPLES {
-            let e = frame.iter().map(|s| s * s).sum::<f32>() / FRAME_SAMPLES as f32;
-            // Digital silence (padding, nothing playing) needs no model.
-            let frame_for_vad = match &mut gain {
-                Some(gain) => {
-                    lifted.clear();
-                    lifted.extend_from_slice(&frame);
-                    gain.process(&mut lifted);
-                    &lifted
-                }
-                None => &frame,
-            };
-            speech.push(
-                e > 0.0
-                    && vad
-                        .push_frame(frame_for_vad)
-                        .map_err(|e| e.to_string())?
-                        .is_speech(),
-            );
-            energy.push(e);
-            frame.clear();
+        samples.push(sample.map_err(|e| e.to_string())? as f32 / i16::MAX as f32);
+        if samples.len() == samples.capacity() {
+            listener.push(&samples)?;
+            samples.clear();
         }
     }
-    Ok(Analysis { speech, energy })
+    listener.push(&samples)?;
+    Ok(listener.analysis)
+}
+
+/// [`analyze`] a piece at a time, for a track still being recorded: the
+/// same audio gives the same answers, so chunks planned while recording
+/// match the ones planned after (see [`super::live`]).
+pub struct Listener {
+    vad: SileroVad,
+    gain: Option<super::level::LiveGain>,
+    frame: Vec<f32>,
+    lifted: Vec<f32>,
+    pub analysis: Analysis,
+}
+
+impl Listener {
+    pub fn new(vad_model: &Path, live_gain: bool) -> Result<Self, String> {
+        Ok(Listener {
+            vad: SileroVad::new(vad_model, VAD_THRESHOLD).map_err(|e| e.to_string())?,
+            gain: live_gain.then(super::level::LiveGain::default),
+            frame: Vec::with_capacity(FRAME_SAMPLES),
+            lifted: Vec::with_capacity(FRAME_SAMPLES),
+            analysis: Analysis {
+                speech: Vec::new(),
+                energy: Vec::new(),
+            },
+        })
+    }
+
+    /// The next samples of the track.
+    pub fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+        for &s in samples {
+            self.frame.push(s);
+            if self.frame.len() < FRAME_SAMPLES {
+                continue;
+            }
+            let e = self.frame.iter().map(|s| s * s).sum::<f32>() / FRAME_SAMPLES as f32;
+            // Digital silence (padding, nothing playing) needs no model.
+            let frame_for_vad = match &mut self.gain {
+                Some(gain) => {
+                    self.lifted.clear();
+                    self.lifted.extend_from_slice(&self.frame);
+                    gain.process(&mut self.lifted);
+                    &self.lifted
+                }
+                None => &self.frame,
+            };
+            let speech = e > 0.0
+                && self
+                    .vad
+                    .push_frame(frame_for_vad)
+                    .map_err(|e| e.to_string())?
+                    .is_speech();
+            self.analysis.speech.push(speech);
+            self.analysis.energy.push(e);
+            self.frame.clear();
+        }
+        Ok(())
+    }
 }
 
 /// How far back to look for the system audio that could be echoing in the
@@ -216,6 +251,12 @@ pub fn run(
     mut transcribe: impl FnMut(Vec<f32>) -> Result<String, Stopped>,
     mut progress: impl FnMut(Step),
 ) -> Result<Transcript, Stopped> {
+    // Chunks transcribed while recording, by the same engine.
+    let ahead: BTreeMap<String, String> =
+        super::summary::load_json::<super::live::Ahead>(dir, super::live::AHEAD_FILE)
+            .filter(|a| a.engine == engine)
+            .map(|a| a.texts)
+            .unwrap_or_default();
     // Resume only work done the same way; otherwise start over.
     let engine = match speaker_model {
         Some(_) => format!("{engine} +speakers eres2net"),
@@ -410,6 +451,7 @@ pub fn run(
             .any(|s| s.source == source && s.start_ms == c.start_ms)
     };
     let mut done = plan.iter().filter(|(s, c, _)| is_done(&t, *s, c)).count();
+    let mut reused = 0;
     progress(Step::Transcribing { done, total });
     for (source, chunk, speaker) in plan {
         if is_done(&t, source, &chunk) {
@@ -420,6 +462,32 @@ pub fn run(
             Source::System => None,
         };
         let in_person_mic = source == Source::Mic && mode == MeetingMode::InPerson;
+        // Transcribed while recording from the same audio: the in-person
+        // mic is levelled here, and the call's echo masked, which the live
+        // pass doesn't do.
+        let frames = (chunk.start_ms / transcript::FRAME_MS) as usize
+            ..(chunk.end_ms / transcript::FRAME_MS) as usize + 1;
+        let echoed = silence.is_some_and(|m| {
+            m.get(frames.start.min(m.len())..frames.end.min(m.len()))
+                .is_some_and(|f| f.iter().any(|&e| e))
+        });
+        if let Some(text) = ahead
+            .get(&super::live::chunk_key(source, chunk))
+            .filter(|_| !in_person_mic && !echoed)
+        {
+            t.segments.push(Segment {
+                source,
+                start_ms: chunk.start_ms,
+                end_ms: chunk.end_ms,
+                text: text.clone(),
+                echo: false,
+                speaker,
+            });
+            done += 1;
+            reused += 1;
+            progress(Step::Transcribing { done, total });
+            continue;
+        }
         let audio = match level {
             Some(settings) if in_person_mic && settings.auto => {
                 // Run the gain over the lead-in too, so it starts settled.
@@ -463,6 +531,9 @@ pub fn run(
         progress(Step::Transcribing { done, total });
     }
 
+    if reused > 0 {
+        log::info!("{reused} of {total} chunks were transcribed while recording");
+    }
     t.segments
         .sort_by_key(|s| (s.start_ms, s.source == Source::System));
     if mode == MeetingMode::Call {

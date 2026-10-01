@@ -18,7 +18,7 @@ pub const VERSION: u32 = 2;
 /// VAD frame length (Silero: 480 samples at 16 kHz).
 pub const FRAME_MS: u64 = 30;
 /// A pause at least this long ends a chunk.
-const PAUSE_MS: u64 = 800;
+pub const PAUSE_MS: u64 = 800;
 /// Chunks never run longer than this: long enough to give the model context,
 /// short enough for useful timestamps and for dictation never to wait long.
 pub const MAX_CHUNK_MS: u64 = 15_000;
