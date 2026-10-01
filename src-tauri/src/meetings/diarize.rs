@@ -414,24 +414,76 @@ pub fn frame_labels(
     labels
 }
 
+/// A voice heard for less than this inside a chunk isn't a turn of its
+/// own: it's the labels flickering (or a "yeah" over someone), and cutting
+/// there left pieces too short to transcribe well (a 23-minute call came
+/// out at a median of 1.8 s a piece, and the live pass's text couldn't be
+/// reused for most of it). It goes to the voice either side.
+const MIN_TURN_MS: u64 = 1_500;
+
 /// Cut a chunk where the speaker changes, so each piece has one voice.
 /// Returns the pieces with their speaker (the one heard most in each).
 pub fn split_by_speaker(chunk: Chunk, labels: &[Option<u32>]) -> Vec<(Chunk, Option<u32>)> {
     let frame = |ms: u64| (ms / FRAME_MS) as usize;
     let (first, last) = (frame(chunk.start_ms), frame(chunk.end_ms).min(labels.len()));
-    // Where the speaker changes: the middle of the gap between two turns.
-    let mut cuts = Vec::new();
-    let mut prev: Option<(usize, u32)> = None;
+    // Turns: (speaker, first frame, last frame, frames heard).
+    let mut turns: Vec<(u32, usize, usize, usize)> = Vec::new();
     for (i, label) in labels.iter().enumerate().take(last).skip(first) {
-        if let Some(s) = *label {
-            if let Some((at, p)) = prev {
-                if p != s {
-                    cuts.push((at + 1 + i) / 2);
-                }
+        let Some(s) = *label else { continue };
+        match turns.last_mut() {
+            Some(t) if t.0 == s => {
+                t.2 = i;
+                t.3 += 1;
             }
-            prev = Some((i, s));
+            _ => turns.push((s, i, i, 1)),
         }
     }
+    // Short turns go to the longer neighbour, shortest first.
+    let min = frame(MIN_TURN_MS);
+    while turns.len() > 1 {
+        let Some((k, _)) = turns
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.3 < min)
+            .min_by_key(|(_, t)| t.3)
+        else {
+            break;
+        };
+        let into = match (k.checked_sub(1), turns.get(k + 1)) {
+            (Some(p), Some(n)) if n.3 > turns[p].3 => k + 1,
+            (Some(p), _) => p,
+            (None, _) => k + 1,
+        };
+        let short = turns.remove(k);
+        let into = if into > k { into - 1 } else { into };
+        let t = &mut turns[into];
+        t.1 = t.1.min(short.1);
+        t.2 = t.2.max(short.2);
+        t.3 += short.3;
+        // Neighbours of one voice become one turn.
+        if into + 1 < turns.len() && turns[into + 1].0 == turns[into].0 {
+            let next = turns.remove(into + 1);
+            turns[into].2 = next.2;
+            turns[into].3 += next.3;
+        }
+        if into > 0 && turns[into - 1].0 == turns[into].0 {
+            let this = turns.remove(into);
+            turns[into - 1].2 = this.2;
+            turns[into - 1].3 += this.3;
+        }
+    }
+    // Where the speaker changes: the middle of the gap between two turns.
+    let cuts: Vec<usize> = turns
+        .windows(2)
+        .map(|w| (w[0].2 + 1 + w[1].1) / 2)
+        .collect();
+    let speaker_of = |from: usize, to: usize| {
+        turns
+            .iter()
+            .filter(|t| t.1 < to && t.2 >= from)
+            .max_by_key(|t| t.2.min(to) - t.1.max(from))
+            .map(|t| t.0)
+    };
     let mut bounds = vec![chunk.start_ms];
     bounds.extend(cuts.iter().map(|&f| f as u64 * FRAME_MS));
     bounds.push(chunk.end_ms);
@@ -442,15 +494,7 @@ pub fn split_by_speaker(chunk: Chunk, labels: &[Option<u32>]) -> Vec<(Chunk, Opt
                 start_ms: w[0],
                 end_ms: w[1],
             };
-            let mut counts = std::collections::BTreeMap::<u32, usize>::new();
-            for s in labels[frame(w[0]).min(labels.len())..frame(w[1]).min(labels.len())]
-                .iter()
-                .flatten()
-            {
-                *counts.entry(*s).or_default() += 1;
-            }
-            let speaker = counts.into_iter().max_by_key(|&(_, n)| n).map(|(s, _)| s);
-            (piece, speaker)
+            (piece, speaker_of(frame(w[0]), frame(w[1])))
         })
         .collect()
 }
@@ -1118,6 +1162,32 @@ mod tests {
         let labels = frame_labels(&speech, &[(0, 100), (100, 200)], &[0, 1]);
         assert_eq!(labels[99], Some(0));
         assert_eq!(labels[100], Some(1));
+    }
+
+    #[test]
+    fn a_flicker_of_another_voice_doesnt_cut_the_chunk() {
+        // Speaker 0 for 6 s, with 0.6 s of speaker 1 in the middle.
+        let mut labels = vec![Some(0); 200];
+        for l in &mut labels[90..110] {
+            *l = Some(1);
+        }
+        let pieces = split_by_speaker(
+            Chunk {
+                start_ms: 0,
+                end_ms: 6000,
+            },
+            &labels,
+        );
+        assert_eq!(
+            pieces,
+            vec![(
+                Chunk {
+                    start_ms: 0,
+                    end_ms: 6000
+                },
+                Some(0)
+            )]
+        );
     }
 
     #[test]

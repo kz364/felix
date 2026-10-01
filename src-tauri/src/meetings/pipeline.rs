@@ -279,6 +279,12 @@ pub fn run(
     let mic_wav = dir.join(Source::Mic.file());
     let system_wav = dir.join(Source::System.file());
     let lift_mic = mode == MeetingMode::InPerson && level.is_some_and(|l| l.auto);
+    let started = std::time::Instant::now();
+    let mut step_at = started;
+    let mut lap = |what: &str| {
+        log::info!("Meeting pipeline: {what} in {:.1?}", step_at.elapsed());
+        step_at = std::time::Instant::now();
+    };
     let mic = if mic_wav.is_file() {
         Some(analyze(&mic_wav, vad_model, lift_mic)?)
     } else {
@@ -300,6 +306,7 @@ pub fn run(
         && info
             .as_ref()
             .is_some_and(|i| i.output_device.as_deref() == Some(i.mic.as_str()));
+    lap("found the speech");
     let echo = match (&mic, &system) {
         (Some(m), Some(s)) => {
             let report = if headphones {
@@ -337,6 +344,7 @@ pub fn run(
         Some(v.labels)
     };
     let (mic_speakers, system_speakers) = if speaker_model.is_some() {
+        lap("masked the echo");
         progress(Step::Identifying);
         let mic_speakers = match (&mic_speech, mode) {
             (Some(speech), MeetingMode::InPerson) => {
@@ -444,6 +452,7 @@ pub fn run(
         let _ = super::summary::save_json(dir, VOICES_FILE, &sure);
     }
 
+    lap("told the voices apart");
     let total = plan.len();
     let is_done = |t: &Transcript, source: Source, c: &Chunk| {
         t.segments
@@ -531,6 +540,7 @@ pub fn run(
         progress(Step::Transcribing { done, total });
     }
 
+    lap("transcribed");
     if reused > 0 {
         log::info!("{reused} of {total} chunks were transcribed while recording");
     }
