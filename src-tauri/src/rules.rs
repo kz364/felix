@@ -571,6 +571,9 @@ pub struct Proposal {
     pub needs_code_change: bool,
     /// The whole new file.
     pub rules: String,
+    /// The file it was written from. Applying it later goes through
+    /// [`save_proposal`], which keeps anything taught since.
+    pub based_on: String,
     pub diff: Vec<DiffLine>,
     pub tests: Vec<TestResult>,
     /// The new file doesn't parse.
@@ -811,6 +814,7 @@ pub(crate) async fn draft_with(
             needs_code_change: add.needs_code_change,
             diff: diff(old, &new),
             rules: new,
+            based_on: old.to_string(),
             tests,
             error,
         };
@@ -1388,6 +1392,76 @@ pub(crate) fn take_from_settings(mut settings: AppSettings) -> Result<Option<App
 }
 
 /// Save a new rules file (the old one is kept as `rules.toml.bak`).
+/// Apply a proposal. Writing its whole file would drop anything taught
+/// while it was being written (a word added, another report's fix), so if
+/// the file changed since, only what the proposal adds goes into the file
+/// as it is now.
+pub fn save_proposal(rules: &str, based_on: &str) -> Result<(), String> {
+    let path = path().ok_or("The rules file isn't set up")?;
+    let now = std::fs::read_to_string(path).unwrap_or_else(|_| STARTER.to_string());
+    save(&rebase(rules, based_on, &now)?)
+}
+
+fn rebase(rules: &str, based_on: &str, now: &str) -> Result<String, String> {
+    if now == based_on {
+        return Ok(rules.to_string());
+    }
+    let (before, after) = (parse(based_on)?, parse(rules)?);
+    let add = Additions {
+        vocabulary: after
+            .vocabulary
+            .into_iter()
+            .filter(|w| !before.vocabulary.contains(w))
+            .collect(),
+        replace: after
+            .replace
+            .into_iter()
+            .filter(|r| !before.replace.contains(r))
+            .collect(),
+        soundalike: after
+            .soundalike
+            .into_iter()
+            .filter(|s| !before.soundalike.contains(s))
+            .collect(),
+        tests: after
+            .test
+            .into_iter()
+            .filter(|t| !before.test.contains(t))
+            .map(|t| AddedTest {
+                said: t.said,
+                expect: t.expect,
+                app: t.app.unwrap_or_default(),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let now_rules = parse(now)?;
+    let add = Additions {
+        replace: add
+            .replace
+            .into_iter()
+            .filter(|r| !now_rules.replace.contains(r))
+            .collect(),
+        soundalike: add
+            .soundalike
+            .into_iter()
+            .filter(|s| !now_rules.soundalike.contains(s))
+            .collect(),
+        tests: add
+            .tests
+            .into_iter()
+            .filter(|t| {
+                !now_rules
+                    .test
+                    .iter()
+                    .any(|n| n.said == t.said && n.expect == t.expect)
+            })
+            .collect(),
+        ..add
+    };
+    render(now, &add)
+}
+
 pub fn save(text: &str) -> Result<(), String> {
     parse(text)?;
     let path = path().ok_or("The rules file isn't set up")?;
@@ -1495,6 +1569,20 @@ expect = "run cube cuddle apply"
                 ("added", "d")
             ]
         );
+    }
+
+    #[test]
+    fn applying_a_proposal_keeps_what_was_taught_meanwhile() {
+        let base = "vocabulary = [\"Triton\"]\n";
+        let proposal =
+            "vocabulary = [\"Triton\", \"Featherless\"]\n\n[[replace]]\nfrom = \"a\"\nto = \"b\"\n";
+        // While it was written, the user added a word.
+        let now = "vocabulary = [\"Triton\", \"Kaspar\"]\n";
+        let out = parse(&rebase(proposal, base, now).unwrap()).unwrap();
+        assert_eq!(out.vocabulary, ["Triton", "Kaspar", "Featherless"]);
+        assert_eq!(out.replace.len(), 1);
+        // Nothing changed meanwhile: the proposal as it is.
+        assert_eq!(rebase(proposal, base, base).unwrap(), proposal);
     }
 
     #[test]

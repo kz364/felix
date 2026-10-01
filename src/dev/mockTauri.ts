@@ -192,6 +192,7 @@ const RESPONSES: Record<string, unknown> = {
         "It heard “cube cuddle” for kubectl. Added a replacement and kubectl to the vocabulary.",
       needs_code_change: false,
       rules: "",
+      based_on: "",
       diff: [
         { kind: "added", text: 'vocabulary = ["kubectl"]', parts: [] },
         { kind: "added", text: "[[replace]]", parts: [] },

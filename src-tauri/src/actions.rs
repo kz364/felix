@@ -1026,13 +1026,15 @@ fn fix_reported_mistake(app: &AppHandle, report: String) {
         let settings = get_settings(&app);
         let (title, text) = match crate::rules::propose(&settings, &report, &recent, "voice").await
         {
-            Ok(p) if crate::rules::safe_to_apply(&p) => match crate::rules::save(&p.rules) {
-                Ok(()) => {
-                    crate::rules::log_applied(Some(&p.id), "applied");
-                    (format!("{name} fixed it"), p.explanation)
+            Ok(p) if crate::rules::safe_to_apply(&p) => {
+                match crate::rules::save_proposal(&p.rules, &p.based_on) {
+                    Ok(()) => {
+                        crate::rules::log_applied(Some(&p.id), "applied");
+                        (format!("{name} fixed it"), p.explanation)
+                    }
+                    Err(e) => (format!("{name} couldn't save the fix"), e),
                 }
-                Err(e) => (format!("{name} couldn't save the fix"), e),
-            },
+            }
             Ok(p) => {
                 let why = if p.needs_code_change {
                     "Rules alone can't fix this; Felix itself needs a change."

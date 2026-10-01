@@ -74,7 +74,7 @@ pub async fn report_mistake(
     let settings = get_settings(&app);
     let proposal = crate::rules::propose(&settings, &report, &recent, "typed").await?;
     let applied = crate::rules::safe_to_apply(&proposal)
-        && match crate::rules::save(&proposal.rules) {
+        && match crate::rules::save_proposal(&proposal.rules, &proposal.based_on) {
             Ok(()) => {
                 crate::rules::log_applied(Some(&proposal.id), "applied");
                 true
@@ -90,11 +90,19 @@ pub async fn report_mistake(
     Ok(ReportOutcome { proposal, applied })
 }
 
-/// Save a new rules file; it's used from the next dictation.
+/// Save a new rules file; it's used from the next dictation. With
+/// `based_on` (a proposal's), anything taught since is kept.
 #[tauri::command]
 #[specta::specta]
-pub fn save_rules(rules: String, report_id: Option<String>) -> Result<(), String> {
-    crate::rules::save(&rules)?;
+pub fn save_rules(
+    rules: String,
+    report_id: Option<String>,
+    based_on: Option<String>,
+) -> Result<(), String> {
+    match based_on {
+        Some(base) => crate::rules::save_proposal(&rules, &base)?,
+        None => crate::rules::save(&rules)?,
+    }
     crate::rules::log_applied(report_id.as_deref(), "applied");
     Ok(())
 }

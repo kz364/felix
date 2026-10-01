@@ -42,7 +42,11 @@ export const ReportMistake: React.FC<{ onChange?: () => void }> = ({
 
   const save = async () => {
     if (!proposal) return;
-    const result = await commands.saveRules(proposal.rules, proposal.id);
+    const result = await commands.saveRules(
+      proposal.rules,
+      proposal.id,
+      proposal.based_on,
+    );
     if (result.status === "ok") {
       setSaved(true);
       setProposal(null);

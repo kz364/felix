@@ -576,11 +576,12 @@ async openRulesFile() : Promise<Result<null, string>> {
 }
 },
 /**
- * Save a new rules file; it's used from the next dictation.
+ * Save a new rules file; it's used from the next dictation. With
+ * `based_on` (a proposal's), anything taught since is kept.
  */
-async saveRules(rules: string, reportId: string | null) : Promise<Result<null, string>> {
+async saveRules(rules: string, reportId: string | null, basedOn: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_rules", { rules, reportId }) };
+    return { status: "ok", data: await TAURI_INVOKE("save_rules", { rules, reportId, basedOn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2950,7 +2951,12 @@ needs_code_change: boolean;
 /**
  * The whole new file.
  */
-rules: string; diff: DiffLine[]; tests: TestResult[]; 
+rules: string; 
+/**
+ * The file it was written from. Applying it later goes through
+ * [`save_proposal`], which keeps anything taught since.
+ */
+based_on: string; diff: DiffLine[]; tests: TestResult[]; 
 /**
  * The new file doesn't parse.
  */
