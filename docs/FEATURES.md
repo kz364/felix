@@ -196,6 +196,15 @@ Meetings never interrupt or change dictation.
   the last item in the same menu. Fixes are kept per paragraph
   (`speaker_fixes.json`), survive cleanup and a new summary, and are what
   `examples/speaker_eval` scores the automatic labels against.
+- **Chrome extension for Meet** (Settings → Meetings → Who said what):
+  an unpacked extension (`resources/meet-extension`, ID pinned by its key)
+  watches Meet's tiles for who's talking and the participant list, and,
+  only if turned on in its popup, captions. It reaches Felix through
+  Felix's own binary as Chrome's native host (`com.felix.meetings`, set up
+  from Settings into each Chromium browser's folder, allowed for this
+  extension only) and an owner-only socket; Felix logs it into the meeting
+  being recorded (`extension.jsonl`). Its marks replace the call window's
+  when present; a caption matching a segment's words counts triple.
 - **Your voice in person** (groundwork, not switched on): given a voiceprint
   for the mic, the in-person speaker that clearly matches it becomes "Me".
   Nothing records voiceprints yet; they'll be one per mic, and never made

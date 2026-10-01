@@ -1394,6 +1394,23 @@
       "prompt": {
         "title": "What to put in the notes",
         "description": "Leave empty for the default, shown faded. Your notes and the transcript are always included."
+      },
+      "speakers": {
+        "title": "Who said what",
+        "description": "How Felix tells the people in a meeting apart and puts names to them."
+      },
+      "extension": {
+        "title": "Chrome extension for Google Meet",
+        "description": "Lets Meet itself say who's talking, which names people far more reliably than guessing from voices. Without it, Felix reads the call window instead.",
+        "notSetUp": "Not set up yet.",
+        "waiting": "Set up. Waiting to hear from the extension on a call.",
+        "working": "Working: heard from {{app}} recently.",
+        "step1": "Click Set up, so Chrome can reach Felix.",
+        "step2": "In Chrome, open chrome://extensions, turn on Developer mode, click Load unpacked and choose the folder from Show folder.",
+        "step3": "Join a Meet call. The extension's button shows whether it's connected.",
+        "setUp": "Set up",
+        "setUpAgain": "Set up again",
+        "showFolder": "Show folder"
       }
     },
     "errors": {

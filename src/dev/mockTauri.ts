@@ -329,6 +329,12 @@ const RESPONSES: Record<string, unknown> = {
     ],
   },
   get_meeting_summary: null,
+  extension_status: {
+    host_installed: true,
+    heard_secs_ago: 40,
+    app: "meet",
+    extension_dir: "/Applications/Felix.app/Contents/Resources/resources/meet-extension",
+  },
   get_meetings: [],
   get_available_microphones: [
     { index: "default", name: "MacBook Pro Microphone", is_default: true },

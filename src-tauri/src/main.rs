@@ -12,6 +12,11 @@ fn main() {
         std::process::exit(handy_app_lib::cua_gate::relay(&args[2..]));
     }
 
+    // Chrome starting Felix as the meetings extension's host: relay and exit.
+    if handy_app_lib::meetings::extension::is_host_launch(&args) {
+        std::process::exit(handy_app_lib::meetings::extension::run_host());
+    }
+
     let cli_args = CliArgs::parse();
 
     #[cfg(target_os = "linux")]

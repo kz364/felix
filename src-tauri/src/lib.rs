@@ -272,6 +272,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(meeting_manager.clone());
     meeting_manager.resume_transcriptions();
     meetings::watch::spawn(app_handle);
+    meetings::extension::spawn_listener(app_handle);
 
     // Taught words need results for the current model (it may have changed
     // since they were taught, e.g. by the deleted-model fallback).
@@ -832,6 +833,9 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::meeting_markdown,
             meetings::manager::rename_meeting_speaker,
             meetings::manager::set_paragraph_speaker,
+            meetings::extension::extension_status,
+            meetings::extension::install_extension_host,
+            meetings::extension::reveal_extension_folder,
             meetings::manager::retranscribe_meeting,
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,

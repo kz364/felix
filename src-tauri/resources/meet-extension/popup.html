@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font: 13px -apple-system, system-ui, sans-serif; width: 260px; margin: 12px; }
+      .status { margin-bottom: 10px; }
+      .ok { color: #1a7f37; }
+      .bad { color: #b42318; }
+      label { display: flex; gap: 6px; align-items: flex-start; }
+      small { color: #666; display: block; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="status" id="status">Checking…</div>
+    <label>
+      <input type="checkbox" id="captions" />
+      <span>Read captions too
+        <small>Sharper names when captions are on in the call. Caption text stays on this Mac.</small>
+      </span>
+    </label>
+    <script src="popup.js"></script>
+  </body>
+</html>

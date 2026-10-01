@@ -593,6 +593,11 @@ impl MeetingManager {
         self.with_recording(|r, _| r.elapsed().as_millis() as u64)
     }
 
+    /// The folder of the meeting being recorded and how far in it is.
+    pub fn recording_at(&self) -> Option<(PathBuf, u64)> {
+        self.with_recording(|r, _| (r.dir.clone(), r.elapsed().as_millis() as u64))
+    }
+
     /// Look at the recording in progress.
     pub(super) fn with_recording<R>(
         &self,

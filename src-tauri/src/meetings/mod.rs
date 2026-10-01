@@ -10,6 +10,7 @@ pub mod capture;
 pub mod detect;
 pub mod diarize;
 pub mod echo;
+pub mod extension;
 mod jobs;
 pub use jobs::split_runaways;
 pub mod language;

@@ -980,6 +980,32 @@ async setParagraphSpeaker(id: string, source: Source, startMs: number, speaker: 
     else return { status: "error", error: e  as any };
 }
 },
+async extensionStatus() : Promise<ExtensionStatus> {
+    return await TAURI_INVOKE("extension_status");
+},
+/**
+ * Put the host manifest in each Chromium browser's folder, so the
+ * extension can reach Felix.
+ */
+async installExtensionHost() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_extension_host") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Show the extension's folder in Finder, for "Load unpacked".
+ */
+async revealExtensionFolder() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_extension_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Transcribe a meeting again from scratch, with the engine chosen now (to
  * compare engines, or after changing vocabulary). The summary is rewritten
@@ -1899,6 +1925,23 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type ExtensionStatus = { 
+/**
+ * The host manifest is in at least one browser and points at this app.
+ */
+host_installed: boolean; 
+/**
+ * Seconds since the extension last said anything, this run.
+ */
+heard_secs_ago: number | null; 
+/**
+ * The call page it last spoke from ("meet", "zoom", "teams").
+ */
+app: string | null; 
+/**
+ * The folder to load unpacked in chrome://extensions.
+ */
+extension_dir: string }
 export type ActionItem = { task: string; 
 /**
  * Who does it, if said; empty otherwise.
