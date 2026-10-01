@@ -531,6 +531,7 @@ impl MeetingManager {
             super::detect::start(id);
         }
         let recording = Recording::start(&dir, info.mode, mic, true)?;
+        super::speakers::keep_names(&dir, &info.speakers);
         for file in [
             transcript::FILE,
             summary::CLEANED_FILE,
@@ -1195,6 +1196,7 @@ pub fn set_paragraph_speaker(
     }
     summary::save_json(&dir, SPEAKER_FIXES_FILE, &fixes)?;
     super::speakers::record(&dir, &t);
+    relearn_voices(&dir);
     let _ = app.emit("meetings-changed", ());
     Ok(chosen)
 }
@@ -1289,8 +1291,17 @@ pub fn merge_meeting_voices(
         }
     }
     super::speakers::record(&dir, &t);
+    relearn_voices(&dir);
     let _ = app.emit("meetings-changed", ());
     Ok(())
+}
+
+/// The user said who spoke: the remembered voices (and the user's own
+/// print) are made again from the windows each person actually spoke in.
+fn relearn_voices(dir: &Path) {
+    if let Some(info) = read_info(dir) {
+        super::remembered::apply(dir, &info.speakers, &BTreeMap::new());
+    }
 }
 
 /// Paragraphs whose speaker Felix isn't sure of, by paragraph key, with why:
@@ -1319,6 +1330,9 @@ pub fn retranscribe_meeting(app: AppHandle, id: String) -> Result<(), String> {
         .is_some_and(|p| p.id == id)
     {
         return Err("This meeting is being processed; try again when it's done".into());
+    }
+    if let Some(info) = read_info(&dir) {
+        super::speakers::keep_names(&dir, &info.speakers);
     }
     for file in [transcript::FILE, summary::CLEANED_FILE, super::clues::FILE] {
         match std::fs::remove_file(dir.join(file)) {

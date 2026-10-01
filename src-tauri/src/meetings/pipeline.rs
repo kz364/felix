@@ -345,6 +345,10 @@ pub fn run(
             }
         }
         let _ = super::summary::save_json(dir, super::remembered::PRINTS_FILE, &prints);
+        // Every window too, to make the prints again from the user's fixes.
+        if let Err(e) = super::windows::save(dir, &fingerprints) {
+            log::warn!("{e}");
+        }
     }
 
     // Every chunk of every track, in time order, cut where the speaker changes.

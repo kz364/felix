@@ -9,10 +9,15 @@
 //! on a call the mic's main voice is the user, which is how the print for
 //! that mic is made and kept up to date.
 //!
+//! Each voice keeps what every meeting added to it, so when the user says
+//! who spoke a paragraph the meeting's part is made again from the windows
+//! that person actually spoke in (see [`corrected_prints`]).
+//!
 //! Settings → Meetings → Remembered voices lists them to rename, merge or
 //! delete, and can switch remembering off.
 
 use super::diarize::ME;
+use super::transcript::Source;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,6 +40,9 @@ const MARGIN: f32 = 0.05;
 const MIN_WINDOWS: usize = 10;
 /// A remembered print stops moving much after this many windows.
 const MAX_WEIGHT: usize = 2_000;
+/// Meetings kept apart per voice; older ones are folded into `base` (and
+/// can't be corrected any more).
+const KEEP_MEETINGS: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Print {
@@ -57,6 +65,15 @@ pub struct RememberedVoice {
     pub print: Vec<f32>,
     #[serde(default)]
     pub windows: usize,
+    /// What each meeting added, by meeting id.
+    #[serde(default)]
+    #[specta(skip)]
+    pub from: BTreeMap<String, Print>,
+    /// Added before meetings were kept apart, or by meetings too old to
+    /// keep apart.
+    #[serde(default)]
+    #[specta(skip)]
+    pub base: Option<Print>,
 }
 
 impl RememberedVoice {
@@ -87,10 +104,20 @@ fn store_path(app_data: &Path) -> PathBuf {
 }
 
 pub fn load_store(app_data: &Path) -> Store {
-    std::fs::read(store_path(app_data))
+    let mut store: Store = std::fs::read(store_path(app_data))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Voices remembered before meetings were kept apart.
+    for v in &mut store.voices {
+        if v.from.is_empty() && v.base.is_none() && !v.print.is_empty() {
+            v.base = Some(Print {
+                print: v.print.clone(),
+                windows: v.windows,
+            });
+        }
+    }
+    store
 }
 
 pub fn save_store(app_data: &Path, store: &Store) -> Result<(), String> {
@@ -108,19 +135,58 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-fn blend(into: &mut Vec<f32>, weight: usize, add: &[f32], add_weight: usize) {
-    if into.len() != add.len() {
-        *into = add.to_vec();
-        return;
-    }
-    let (w, a) = (weight.min(MAX_WEIGHT) as f32, add_weight as f32);
-    for (x, y) in into.iter_mut().zip(add) {
-        *x = (*x * w + y * a) / (w + a).max(1.0);
-    }
-    let n = into.iter().map(|x| x * x).sum::<f32>().sqrt();
+fn unit(mut v: Vec<f32>) -> Vec<f32> {
+    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if n > 0.0 {
-        into.iter_mut().for_each(|x| *x /= n);
+        v.iter_mut().for_each(|x| *x /= n);
     }
+    v
+}
+
+/// The windows-weighted mean of prints (each weighing at most
+/// [`MAX_WEIGHT`], so a print keeps moving), unit length, with every
+/// window counted.
+fn mean<'a>(parts: impl IntoIterator<Item = &'a Print>) -> Option<Print> {
+    let mut sum: Vec<f32> = Vec::new();
+    let mut windows = 0;
+    for p in parts {
+        if sum.is_empty() {
+            sum = vec![0.0; p.print.len()];
+        } else if sum.len() != p.print.len() {
+            continue;
+        }
+        let w = p.windows.min(MAX_WEIGHT) as f32;
+        for (a, x) in sum.iter_mut().zip(&p.print) {
+            *a += x * w;
+        }
+        windows += p.windows;
+    }
+    (!sum.is_empty()).then(|| Print {
+        print: unit(sum),
+        windows,
+    })
+}
+
+/// Meetings kept apart, plus what came before: fold the oldest meetings
+/// (ids sort by start time) into `base` past [`KEEP_MEETINGS`], and give
+/// the whole print.
+pub(super) fn combine(base: &mut Option<Print>, from: &mut BTreeMap<String, Print>) -> Print {
+    while from.len() > KEEP_MEETINGS {
+        let Some((_, oldest)) = from.pop_first() else {
+            break;
+        };
+        *base = mean(base.iter().chain([&oldest]));
+    }
+    mean(base.iter().chain(from.values())).unwrap_or(Print {
+        print: Vec::new(),
+        windows: 0,
+    })
+}
+
+fn recompute(v: &mut RememberedVoice) {
+    let p = combine(&mut v.base, &mut v.from);
+    v.print = p.print;
+    v.windows = p.windows;
 }
 
 /// The remembered voice a print belongs to, if one clearly matches.
@@ -147,25 +213,43 @@ fn best_match_with(
     (best >= matching && best - next >= margin).then_some(id)
 }
 
-/// Match a meeting's voices to remembered ones, remembering new ones, once
-/// per meeting (the links are kept with it). Returns voice → remembered id.
+/// Match a meeting's voices to remembered ones, remembering new ones, and
+/// put the meeting's part in each. Again whenever the meeting's prints
+/// change: its old part comes out first. `old` are the links from last
+/// time, kept where they still fit; `user` the names the user gave its
+/// voices, which pick the remembered voice of that name (or one nobody
+/// named). Returns voice → remembered id.
 pub fn link_meeting(
     store: &mut Store,
     prints: &BTreeMap<u32, Print>,
+    meeting: &str,
     now: i64,
+    old: &BTreeMap<u32, u32>,
+    user: &BTreeMap<u32, String>,
 ) -> BTreeMap<u32, u32> {
-    link_meeting_with(store, prints, now, MATCH, MARGIN)
+    link_meeting_with(store, prints, meeting, now, MATCH, MARGIN, old, user)
 }
 
 /// [`link_meeting`] with other thresholds (for `examples/speaker_eval`).
+#[allow(clippy::too_many_arguments)]
 pub fn link_meeting_with(
     store: &mut Store,
     prints: &BTreeMap<u32, Print>,
+    meeting: &str,
     now: i64,
     matching: f32,
     margin: f32,
+    old: &BTreeMap<u32, u32>,
+    user: &BTreeMap<u32, String>,
 ) -> BTreeMap<u32, u32> {
+    for v in &mut store.voices {
+        if v.from.remove(meeting).is_some() {
+            v.meetings = v.meetings.saturating_sub(1);
+            recompute(v);
+        }
+    }
     let mut links = BTreeMap::new();
+    let mut parts: BTreeMap<u32, Vec<&Print>> = BTreeMap::new();
     // Biggest voices first, so they get first pick.
     let mut order: Vec<(&u32, &Print)> = prints.iter().filter(|(v, _)| **v != ME).collect();
     order.sort_by_key(|(_, p)| std::cmp::Reverse(p.windows));
@@ -173,32 +257,65 @@ pub fn link_meeting_with(
         if p.windows < MIN_WINDOWS {
             continue;
         }
+        let name = user.get(&voice).map(|n| n.trim()).filter(|n| !n.is_empty());
+        let named = name.and_then(|n| {
+            store
+                .voices
+                .iter()
+                .find(|v| v.name.as_deref().is_some_and(|m| m.eq_ignore_ascii_case(n)))
+        });
+        // Named by the user: only that name's voice or a nameless one.
+        let fits = |v: &RememberedVoice| name.is_none() || v.name.is_none();
         let taken: Vec<u32> = links.values().copied().collect();
-        let id = match best_match_with(store, &p.print, &taken, matching, margin) {
+        let kept = old.get(&voice).copied().filter(|id| {
+            !taken.contains(id) && store.voices.iter().any(|v| v.id == *id && fits(v))
+        });
+        let id = match named.map(|v| v.id).or(kept) {
             Some(id) => id,
             None => {
-                let id = store.voices.iter().map(|v| v.id + 1).max().unwrap_or(1);
-                let number = store.voices.iter().map(|v| v.number + 1).max().unwrap_or(1);
-                store.voices.push(RememberedVoice {
-                    id,
-                    name: None,
-                    number,
-                    meetings: 0,
-                    last_heard: now,
-                    print: Vec::new(),
-                    windows: 0,
-                });
-                id
+                let exclude: Vec<u32> = store
+                    .voices
+                    .iter()
+                    .filter(|v| !fits(v))
+                    .map(|v| v.id)
+                    .chain(taken)
+                    .collect();
+                match best_match_with(store, &p.print, &exclude, matching, margin) {
+                    Some(id) => id,
+                    None => {
+                        let id = store.voices.iter().map(|v| v.id + 1).max().unwrap_or(1);
+                        let number = store.voices.iter().map(|v| v.number + 1).max().unwrap_or(1);
+                        store.voices.push(RememberedVoice {
+                            id,
+                            name: None,
+                            number,
+                            meetings: 0,
+                            last_heard: now,
+                            print: Vec::new(),
+                            windows: 0,
+                            from: BTreeMap::new(),
+                            base: None,
+                        });
+                        id
+                    }
+                }
             }
         };
-        if let Some(v) = store.voices.iter_mut().find(|v| v.id == id) {
-            blend(&mut v.print, v.windows, &p.print, p.windows);
-            v.windows += p.windows;
+        links.insert(voice, id);
+        parts.entry(id).or_default().push(p);
+    }
+    for (id, ps) in parts {
+        if let (Some(v), Some(p)) = (store.voices.iter_mut().find(|v| v.id == id), mean(ps)) {
+            v.from.insert(meeting.to_string(), p);
             v.meetings += 1;
             v.last_heard = v.last_heard.max(now);
+            recompute(v);
         }
-        links.insert(voice, id);
     }
+    // Voices only this meeting had, and no longer has.
+    store
+        .voices
+        .retain(|v| v.name.is_some() || !v.from.is_empty() || v.base.is_some());
     links
 }
 
@@ -250,33 +367,106 @@ pub fn learn(
 }
 
 /// Keep the user's print for this mic up to date from a call (the mic's
-/// main voice is the user's).
-fn update_my_print(app_data: &Path, mic: &str, prints: &BTreeMap<u32, Print>, now: i64) {
-    let Some(me) = prints.get(&ME).filter(|p| p.windows >= MIN_WINDOWS) else {
-        return;
-    };
+/// main voice is the user's), with this meeting's part made again.
+fn update_my_print(
+    app_data: &Path,
+    mic: &str,
+    meeting: &str,
+    prints: &BTreeMap<u32, Print>,
+    now: i64,
+) {
     if !super::voiceprint::enrolls_from(mic) {
         return;
     }
-    let (mut embedding, windows) = match super::voiceprint::load_full(app_data, mic) {
-        Some(p) => (p.embedding, p.windows),
-        None => (Vec::new(), 0),
-    };
-    blend(&mut embedding, windows, &me.print, me.windows);
-    let _ = super::voiceprint::save(
-        app_data,
-        &super::voiceprint::Voiceprint {
+    let me = prints.get(&ME).filter(|p| p.windows >= MIN_WINDOWS);
+    let mut vp = match super::voiceprint::load_full(app_data, mic) {
+        Some(vp) => vp,
+        None if me.is_some() => super::voiceprint::Voiceprint {
             mic: mic.to_string(),
-            embedding,
-            windows: windows + me.windows,
+            embedding: Vec::new(),
+            windows: 0,
             updated_at: now,
+            from: BTreeMap::new(),
+            base: None,
         },
-    );
+        None => return,
+    };
+    if vp.from.is_empty() && vp.base.is_none() && !vp.embedding.is_empty() {
+        vp.base = Some(Print {
+            print: vp.embedding.clone(),
+            windows: vp.windows,
+        });
+    }
+    let before = vp.from.get(meeting).cloned();
+    match me {
+        Some(p) => vp.from.insert(meeting.to_string(), p.clone()),
+        None => vp.from.remove(meeting),
+    };
+    if vp.from.get(meeting) == before.as_ref() {
+        return;
+    }
+    let p = combine(&mut vp.base, &mut vp.from);
+    vp.embedding = p.print;
+    vp.windows = p.windows;
+    vp.updated_at = now.max(vp.updated_at);
+    let _ = super::voiceprint::save(app_data, &vp);
 }
 
-/// For a transcribed meeting: link its voices (once), learn the names the
-/// user and the call app gave, and say what the remembered voices name.
-/// `seen` are names the call app or extension put on voices.
+/// Each voice's print in a meeting as the transcript now says (with the
+/// user's speaker fixes): every fingerprint window goes to the speaker of
+/// the paragraph its middle falls in. On a call the mic's unlabelled
+/// paragraphs are the user's. None when the meeting has no windows kept
+/// (transcribed before they were).
+pub fn corrected_prints(dir: &Path, call: bool) -> Option<BTreeMap<u32, Print>> {
+    let tracks = super::windows::load(dir)?;
+    let t = super::pipeline::load(dir)?;
+    let paragraphs =
+        super::transcript::fixed_paragraphs(&t.segments, &super::manager::speaker_fixes(dir));
+    let mut sums: BTreeMap<u32, (Vec<f32>, usize)> = BTreeMap::new();
+    for (source, (wins, embs)) in &tracks {
+        let mine: Vec<_> = paragraphs.iter().filter(|p| p.source == *source).collect();
+        for (&(from, to), e) in wins.iter().zip(embs) {
+            let mid = (from + to) as u64 * super::transcript::FRAME_MS / 2;
+            let Some(p) = mine.iter().find(|p| p.start_ms <= mid && mid < p.end_ms) else {
+                continue;
+            };
+            let speaker = match (source, p.speaker) {
+                (Source::Mic, None) if call => ME,
+                (Source::System, Some(ME)) => continue,
+                (_, Some(s)) => s,
+                _ => continue,
+            };
+            let (sum, n) = sums
+                .entry(speaker)
+                .or_insert_with(|| (vec![0.0; e.len()], 0));
+            if sum.len() != e.len() {
+                continue;
+            }
+            for (a, x) in sum.iter_mut().zip(e) {
+                *a += x;
+            }
+            *n += 1;
+        }
+    }
+    Some(
+        sums.into_iter()
+            .map(|(s, (sum, windows))| {
+                (
+                    s,
+                    Print {
+                        print: unit(sum),
+                        windows,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+/// For a transcribed meeting: link its voices (again, as the transcript
+/// now says), learn the names the user and the call app gave, and say what
+/// the remembered voices name. `seen` are names the call app or extension
+/// put on voices.
 pub fn apply(
     dir: &Path,
     user: &BTreeMap<u32, String>,
@@ -285,22 +475,46 @@ pub fn apply(
     let Some(app_data) = dir.parent().and_then(Path::parent) else {
         return Default::default();
     };
+    let Some(meeting) = dir.file_name().and_then(|n| n.to_str()) else {
+        return Default::default();
+    };
     let mut store = load_store(app_data);
     if !store.enabled {
         return Default::default();
     }
-    let links: BTreeMap<u32, u32> = match super::summary::load_json(dir, LINKS_FILE) {
-        Some(l) => l,
-        None => {
-            let Some(prints) = super::summary::load_json::<BTreeMap<u32, Print>>(dir, PRINTS_FILE)
+    let old: Option<BTreeMap<u32, u32>> = super::summary::load_json(dir, LINKS_FILE);
+    // Linked before meetings were kept apart: its part is in the voices'
+    // `base`, and linking again would count it twice.
+    let legacy = old.as_ref().is_some_and(|l| {
+        !store.voices.iter().any(|v| v.from.contains_key(meeting))
+            && store
+                .voices
+                .iter()
+                .any(|v| v.base.is_some() && l.values().any(|id| *id == v.id))
+    });
+    let links = match old {
+        Some(l) if legacy => l,
+        old => {
+            let info = super::manager::read_info(dir);
+            let call = info
+                .as_ref()
+                .is_some_and(|i| i.mode == super::MeetingMode::Call);
+            let Some(prints) =
+                corrected_prints(dir, call).or_else(|| super::summary::load_json(dir, PRINTS_FILE))
             else {
                 return Default::default();
             };
-            let info = super::manager::read_info(dir);
             let now = info.as_ref().map_or(0, |i| i.started_at);
-            let links = link_meeting(&mut store, &prints, now);
-            if let Some(i) = info.filter(|i| i.mode == super::MeetingMode::Call) {
-                update_my_print(app_data, &i.mic, &prints, now);
+            let links = link_meeting(
+                &mut store,
+                &prints,
+                meeting,
+                now,
+                &old.unwrap_or_default(),
+                user,
+            );
+            if let Some(i) = info.filter(|_| call) {
+                update_my_print(app_data, &i.mic, meeting, &prints, now);
             }
             let _ = super::summary::save_json(dir, LINKS_FILE, &links);
             links
@@ -333,6 +547,8 @@ pub fn remembered_voices(app: AppHandle) -> Result<RememberedVoices, String> {
     voices.sort_by_key(|v| std::cmp::Reverse(v.last_heard));
     for v in &mut voices {
         v.print.clear();
+        v.from.clear();
+        v.base = None;
     }
     Ok(RememberedVoices {
         enabled: store.enabled,
@@ -393,9 +609,21 @@ pub fn merge(s: &mut Store, keep: u32, drop: u32) -> Result<(), String> {
         .iter_mut()
         .find(|v| v.id == keep)
         .ok_or("Not found")?;
-    blend(&mut k.print, k.windows, &gone.print, gone.windows);
-    k.windows += gone.windows;
     k.meetings += gone.meetings;
+    for (meeting, p) in gone.from {
+        let both = match k.from.remove(&meeting) {
+            Some(mine) => {
+                k.meetings = k.meetings.saturating_sub(1);
+                mean([&mine, &p])
+            }
+            None => Some(p),
+        };
+        if let Some(both) = both {
+            k.from.insert(meeting, both);
+        }
+    }
+    k.base = mean(k.base.iter().chain(gone.base.iter()));
+    recompute(k);
     k.last_heard = k.last_heard.max(gone.last_heard);
     if k.name.is_none() {
         k.name = gone.name;
@@ -424,6 +652,10 @@ mod tests {
         }
     }
 
+    fn none<K: Ord, V>() -> BTreeMap<K, V> {
+        BTreeMap::new()
+    }
+
     #[test]
     fn a_voice_heard_again_is_the_same_remembered_voice_and_keeps_its_name() {
         let mut store = Store::default();
@@ -432,7 +664,7 @@ mod tests {
             (101, print(&[0.0, 1.0, 0.0], 30)),
             (102, print(&[0.0, 0.0, 1.0], 3)), // too little to remember
         ]);
-        let links = link_meeting(&mut store, &first, 1);
+        let links = link_meeting(&mut store, &first, "m1", 1, &none(), &none());
         assert_eq!(links.len(), 2);
         assert_eq!(store.voices.len(), 2);
         // The user names 100 Sam Rivera.
@@ -444,7 +676,7 @@ mod tests {
             (101, print(&[0.95, 0.05, 0.0], 50)),
             (100, print(&[0.0, 0.1, 1.0], 20)),
         ]);
-        let links2 = link_meeting(&mut store, &second, 2);
+        let links2 = link_meeting(&mut store, &second, "m2", 2, &none(), &none());
         let (named, unknown) = names_for(&store, &links2);
         assert_eq!(named.get(&101).map(String::as_str), Some("Sam Rivera"));
         assert_eq!(store.voices.len(), 3);
@@ -458,12 +690,18 @@ mod tests {
         link_meeting(
             &mut store,
             &BTreeMap::from([(100, print(&[1.0, 0.0], 20))]),
+            "m1",
             1,
+            &none(),
+            &none(),
         );
         link_meeting(
             &mut store,
             &BTreeMap::from([(100, print(&[0.0, 1.0], 20))]),
+            "m2",
             2,
+            &none(),
+            &none(),
         );
         store.voices[1].name = Some("Priya".into());
         let (a, b) = (store.voices[0].id, store.voices[1].id);
@@ -471,5 +709,65 @@ mod tests {
         assert_eq!(store.voices.len(), 1);
         assert_eq!(store.voices[0].name.as_deref(), Some("Priya"));
         assert_eq!(store.voices[0].meetings, 2);
+    }
+
+    #[test]
+    fn linking_a_meeting_again_replaces_its_part() {
+        let mut store = Store::default();
+        let sam = print(&[1.0, 0.0, 0.0], 40);
+        link_meeting(
+            &mut store,
+            &BTreeMap::from([(100, sam.clone())]),
+            "m1",
+            1,
+            &none(),
+            &none(),
+        );
+        // Meeting 2: Sam and someone else, first heard as one voice.
+        let mixed = BTreeMap::from([(100, print(&[0.8, 0.6, 0.0], 60))]);
+        let links = link_meeting(&mut store, &mixed, "m2", 2, &none(), &none());
+        let sam_id = links[&100];
+        // The user split them: 100 is Sam again, 101 someone new.
+        let fixed = BTreeMap::from([
+            (100, print(&[1.0, 0.0, 0.0], 30)),
+            (101, print(&[0.0, 1.0, 0.0], 30)),
+        ]);
+        let links = link_meeting(&mut store, &fixed, "m2", 2, &links, &none());
+        assert_eq!(links[&100], sam_id);
+        let sam_voice = store.voices.iter().find(|v| v.id == sam_id).unwrap();
+        assert_eq!(sam_voice.meetings, 2);
+        assert_eq!(sam_voice.windows, 70);
+        assert!(sam_voice.print[0] > 0.999, "the mixed part is gone");
+        assert_eq!(store.voices.len(), 2);
+    }
+
+    #[test]
+    fn a_name_the_user_gives_picks_that_remembered_voice() {
+        let mut store = Store::default();
+        let first = BTreeMap::from([(100, print(&[1.0, 0.0], 40)), (101, print(&[0.0, 1.0], 40))]);
+        let links = link_meeting(&mut store, &first, "m1", 1, &none(), &none());
+        let names = BTreeMap::from([(100, "Sam".to_string()), (101, "Aditya".to_string())]);
+        learn(&mut store, &links, &names, &none());
+        // Later the user says voice 100 (wrongly linked to Sam) is Aditya.
+        let user = BTreeMap::from([(100, "Aditya".to_string())]);
+        let again = link_meeting(&mut store, &first, "m1", 1, &links, &user);
+        assert_eq!(again[&100], links[&101]);
+        learn(&mut store, &again, &user, &none());
+        assert!(store
+            .voices
+            .iter()
+            .any(|v| v.name.as_deref() == Some("Sam")));
+    }
+
+    #[test]
+    fn old_meetings_fold_into_the_base() {
+        let mut base = None;
+        let mut from: BTreeMap<String, Print> = (0..KEEP_MEETINGS + 2)
+            .map(|i| (format!("m{i:03}"), print(&[1.0, 0.0], 10)))
+            .collect();
+        let all = combine(&mut base, &mut from);
+        assert_eq!(from.len(), KEEP_MEETINGS);
+        assert_eq!(base.map(|b| b.windows), Some(20));
+        assert_eq!(all.windows, (KEEP_MEETINGS + 2) * 10);
     }
 }

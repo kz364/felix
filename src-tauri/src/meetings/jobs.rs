@@ -210,6 +210,18 @@ impl MeetingManager {
     /// The user's word corrections, as dictation applies them: vocabulary
     /// spelling, taught words and replacements ("codecs" → "Codex").
     /// Sound-alikes are left to cleanup, which sees the conversation.
+    /// Transcribed again: the names the user gave go to the new voices.
+    fn carry_names(&self, id: &str) {
+        let Ok(dir) = self.dir_of(id) else { return };
+        let Some(t) = pipeline::load(&dir) else {
+            return;
+        };
+        if let Some(names) = super::speakers::carry_names(&dir, &t) {
+            log::info!("Meeting {id}: {} names carried over", names.len());
+            self.update_info(id, |i| i.speakers = names);
+        }
+    }
+
     fn apply_corrections(&self, id: &str) {
         let Ok(dir) = self.dir_of(id) else { return };
         let Some(mut t) = pipeline::load(&dir) else {
@@ -241,6 +253,7 @@ impl MeetingManager {
             Ok(()) => {
                 log::info!("Meeting {id} transcribed");
                 self.apply_corrections(id);
+                self.carry_names(id);
                 let names = self
                     .dir_of(id)
                     .map(|dir| super::speakers::apply(&dir))

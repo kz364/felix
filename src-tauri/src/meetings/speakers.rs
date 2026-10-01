@@ -630,6 +630,85 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
     names
 }
 
+/// The names the user gave, by stretch of a track, kept while a meeting is
+/// transcribed again: the new transcript numbers its voices afresh, so
+/// names kept by number would land on the wrong people.
+const NAMES_BEFORE_FILE: &str = "names_before.json";
+
+#[derive(Serialize, Deserialize)]
+struct NamedStretch {
+    source: Source,
+    start_ms: u64,
+    end_ms: u64,
+    name: String,
+}
+
+/// Before transcribing a meeting again: keep who the user said spoke when,
+/// and drop what's tied to the old voice numbers (the user's fixes and
+/// the links to remembered voices).
+pub fn keep_names(dir: &Path, names: &BTreeMap<u32, String>) {
+    if let Some(t) = super::pipeline::load(dir) {
+        let stretches: Vec<NamedStretch> =
+            super::transcript::fixed_paragraphs(&t.segments, &super::manager::speaker_fixes(dir))
+                .into_iter()
+                .filter_map(|p| {
+                    let name = names.get(&p.speaker?)?.clone();
+                    Some(NamedStretch {
+                        source: p.source,
+                        start_ms: p.start_ms,
+                        end_ms: p.end_ms,
+                        name,
+                    })
+                })
+                .collect();
+        if let Err(e) = super::summary::save_json(dir, NAMES_BEFORE_FILE, &stretches) {
+            log::warn!("{e}");
+            return;
+        }
+    }
+    for file in [
+        super::manager::SPEAKER_FIXES_FILE,
+        super::remembered::LINKS_FILE,
+    ] {
+        let _ = std::fs::remove_file(dir.join(file));
+    }
+}
+
+/// After transcribing again: the names for the new voices, each the name
+/// over more than half of that voice's talk, or None if nothing was kept.
+pub fn carry_names(dir: &Path, t: &Transcript) -> Option<BTreeMap<u32, String>> {
+    let stretches: Vec<NamedStretch> = super::summary::load_json(dir, NAMES_BEFORE_FILE)?;
+    let _ = std::fs::remove_file(dir.join(NAMES_BEFORE_FILE));
+    Some(names_by_overlap(&t.segments, &stretches))
+}
+
+fn names_by_overlap(segments: &[Segment], stretches: &[NamedStretch]) -> BTreeMap<u32, String> {
+    let mut total: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut by_name: BTreeMap<u32, BTreeMap<&str, u64>> = BTreeMap::new();
+    for s in segments.iter().filter(|s| !s.echo) {
+        let Some(v) = s.speaker.filter(|v| *v != super::diarize::ME) else {
+            continue;
+        };
+        *total.entry(v).or_default() += s.end_ms.saturating_sub(s.start_ms);
+        for n in stretches.iter().filter(|n| n.source == s.source) {
+            let both = s
+                .end_ms
+                .min(n.end_ms)
+                .saturating_sub(s.start_ms.max(n.start_ms));
+            if both > 0 {
+                *by_name.entry(v).or_default().entry(&n.name).or_default() += both;
+            }
+        }
+    }
+    by_name
+        .into_iter()
+        .filter_map(|(v, names)| {
+            let (name, ms) = names.into_iter().max_by_key(|(_, ms)| *ms)?;
+            (ms * 2 > total.get(&v).copied().unwrap_or(0)).then(|| (v, name.to_string()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,5 +916,32 @@ mod tests {
         let user = BTreeMap::from([(102, "Sam Rivera".to_string())]);
         let names = resolve(&mut t.segments, &evidence, &user);
         assert_eq!(names.get(&101).map(String::as_str), Some("Jo Park"));
+    }
+
+    #[test]
+    fn names_follow_the_talk_to_the_new_voice_numbers() {
+        let stretches = vec![
+            NamedStretch {
+                source: Source::System,
+                start_ms: 0,
+                end_ms: 10_000,
+                name: "Aditya".into(),
+            },
+            NamedStretch {
+                source: Source::System,
+                start_ms: 10_000,
+                end_ms: 14_000,
+                name: "Sam Rivera".into(),
+            },
+        ];
+        // Retranscribed: Aditya is 105 now; 106 is mostly unnamed talk.
+        let segments = vec![
+            seg(0, 9, Some(105)),
+            seg(10, 12, Some(106)),
+            seg(12, 20, Some(106)),
+        ];
+        let names = names_by_overlap(&segments, &stretches);
+        assert_eq!(names.get(&105).map(String::as_str), Some("Aditya"));
+        assert_eq!(names.get(&106), None);
     }
 }

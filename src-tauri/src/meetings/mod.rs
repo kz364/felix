@@ -34,6 +34,7 @@ pub mod track;
 pub mod transcript;
 pub mod voiceprint;
 pub mod watch;
+pub mod windows;
 
 pub use capture::{MeetingMode, Recording};
 

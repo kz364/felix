@@ -334,7 +334,16 @@ fn remember(dir: &Path, model: &Path) -> Result<(), String> {
             };
             let known: Vec<String> = first_heard.values().cloned().collect();
             let before = store.voices.len();
-            let links = link_meeting_with(&mut store, &prints, 0, matching, margin);
+            let links = link_meeting_with(
+                &mut store,
+                &prints,
+                &id,
+                0,
+                matching,
+                margin,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+            );
             for (v, rid) in &links {
                 let Some(p) = person(*v) else { continue };
                 match first_heard.get(rid) {

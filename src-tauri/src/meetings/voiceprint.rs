@@ -7,7 +7,9 @@
 //! [`super::remembered`]). With no file for a mic, meetings number every
 //! voice as before.
 
+use super::remembered::Print;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const DIR: &str = "voiceprints";
@@ -22,6 +24,13 @@ pub struct Voiceprint {
     pub windows: usize,
     /// Unix milliseconds.
     pub updated_at: i64,
+    /// What each call added, by meeting id, to make again when the user
+    /// says who spoke what.
+    #[serde(default)]
+    pub from: BTreeMap<String, Print>,
+    /// Added before calls were kept apart, or by calls too old to keep.
+    #[serde(default)]
+    pub base: Option<Print>,
 }
 
 /// Mics made for dictation (clip-on and wireless lav receivers) aren't
@@ -95,6 +104,8 @@ mod tests {
             embedding: vec![0.6, 0.8],
             windows: 40,
             updated_at: 0,
+            from: BTreeMap::new(),
+            base: None,
         };
         save(&dir, &print).unwrap();
         assert_eq!(load(&dir, "MacBook Pro Microphone"), Some(vec![0.6, 0.8]));
