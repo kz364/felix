@@ -67,6 +67,14 @@ pub fn save_json<T: Serialize>(dir: &Path, file: &str, value: &T) -> Result<(), 
         .map_err(|e| format!("Couldn't save {file}: {e}"))
 }
 
+/// A transcript's text with the user's word corrections, as dictation
+/// makes them: vocabulary spellings, taught words, replacements.
+pub fn corrected(text: &str, settings: &crate::settings::AppSettings) -> String {
+    let text = crate::vocabulary::apply_canonical_forms(text, &settings.custom_words);
+    let text = crate::vocab_teach::apply_taught_rules(&text, settings);
+    crate::scratchpad::apply_text_replacements(&text, &settings.text_replacements)
+}
+
 fn word_count(text: &str) -> usize {
     text.split_whitespace().count()
 }

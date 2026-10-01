@@ -230,10 +230,7 @@ impl MeetingManager {
         let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
         let mut changed = 0;
         for seg in &mut t.segments {
-            let text = crate::vocabulary::apply_canonical_forms(&seg.text, &settings.custom_words);
-            let text = crate::vocab_teach::apply_taught_rules(&text, &settings);
-            let text =
-                crate::scratchpad::apply_text_replacements(&text, &settings.text_replacements);
+            let text = summary::corrected(&seg.text, &settings);
             if text != seg.text {
                 seg.text = text;
                 changed += 1;
@@ -673,6 +670,10 @@ impl MeetingManager {
             );
             let mut cleaned: Cleaned =
                 summary::load_json(&dir, summary::CLEANED_FILE).unwrap_or_default();
+            let reused = super::live::reuse_cleaned(&dir, &transcript.segments, &raw, &mut cleaned);
+            if reused > 0 {
+                log::info!("Meeting {id}: {reused} paragraphs were tidied while recording");
+            }
             let label = |p: &super::transcript::Paragraph| {
                 info.speaker_label(p).unwrap_or_else(|| "Speaker".into())
             };
