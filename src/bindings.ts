@@ -656,33 +656,11 @@ async liveDraftStatus() : Promise<LiveDraftStatus> {
     return await TAURI_INVOKE("live_draft_status");
 },
 /**
- * Turn the live draft on or off; turning it on installs Felix Draft.
+ * Turn the live draft on or off.
  */
 async setLiveDraft(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_live_draft", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Open System Settings → Keyboard, where input sources are added.
- */
-async openInputSources() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("open_input_sources") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Choose where the draft shows; the in-field draft needs Felix Draft.
- */
-async setLiveDraftStyle(style: LiveDraftStyle) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_live_draft_style", { style }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2337,11 +2315,6 @@ agent_fast_mode?: boolean;
  */
 live_draft?: boolean; 
 /**
- * Where the live draft shows: a bubble by the cursor, or in the field
- * itself through the Felix Draft input method.
- */
-live_draft_style?: LiveDraftStyle; 
-/**
  * After a paste, follow the field; when you correct a word Felix
  * misheard, add the right spelling to the vocabulary (`edit_learning`).
  */
@@ -2694,26 +2667,7 @@ error: string | null }
 /**
  * What the Dictation page shows about the live draft.
  */
-export type LiveDraftStatus = { model_ready: boolean; 
-/**
- * Felix Draft is in ~/Library/Input Methods and macOS knows it.
- */
-installed: boolean; 
-/**
- * Added in System Settings → Keyboard → Input Sources (only the user
- * can do this).
- */
-enabled: boolean }
-export type LiveDraftStyle = 
-/**
- * A see-through bubble by the text cursor (or above the recording
- * pill), drawn by Felix; nothing touches the field.
- */
-"bubble" | 
-/**
- * Underlined text in the field, through the Felix Draft input method.
- */
-"inline"
+export type LiveDraftStatus = { model_ready: boolean }
 export type LiveQuestion = 
 /**
  * What was said lately, for someone who drifted off.

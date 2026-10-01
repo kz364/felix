@@ -544,17 +544,6 @@ pub enum OrtAcceleratorSetting {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum LiveDraftStyle {
-    /// A see-through bubble by the text cursor (or above the recording
-    /// pill), drawn by Felix; nothing touches the field.
-    #[default]
-    Bubble,
-    /// Underlined text in the field, through the Felix Draft input method.
-    Inline,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum VadBackend {
     #[default]
     Silero,
@@ -825,10 +814,6 @@ pub struct AppSettings {
     /// off by default.
     #[serde(default)]
     pub live_draft: bool,
-    /// Where the live draft shows: a bubble by the cursor, or in the field
-    /// itself through the Felix Draft input method.
-    #[serde(default)]
-    pub live_draft_style: LiveDraftStyle,
     /// After a paste, follow the field; when you correct a word Felix
     /// misheard, add the right spelling to the vocabulary (`edit_learning`).
     #[serde(default = "default_true")]
@@ -1569,7 +1554,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_auto_send: default_agent_auto_send(),
         agent_fast_mode: false,
         live_draft: false,
-        live_draft_style: LiveDraftStyle::default(),
         learn_from_edits: true,
         stacked_messages: false,
         tag_agent_files: true,

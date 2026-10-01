@@ -797,8 +797,6 @@ pub fn run(cli_args: CliArgs) {
             commands::rules::report_mistake,
             draft::live_draft_status,
             draft::set_live_draft,
-            draft::open_input_sources,
-            draft::set_live_draft_style,
             meeting_panel::get_meeting_panel_state,
             meeting_panel::set_meeting_panel_expanded,
             meeting_panel::meeting_level,
@@ -1211,14 +1209,9 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
             agent_run::init(&app_handle);
-            let startup = settings::get_settings(&app_handle);
-            if startup.live_draft && startup.live_draft_style == settings::LiveDraftStyle::Inline {
+            {
                 let app = app_handle.clone();
-                std::thread::spawn(move || {
-                    if let Err(e) = draft::install(&app) {
-                        log::warn!("Felix Draft: {e}");
-                    }
-                });
+                std::thread::spawn(move || draft::remove_old_input_method(&app));
             }
             local_llm::sync_with_settings(&settings::get_settings(&app_handle));
 

@@ -1130,20 +1130,11 @@
       },
       "liveDraft": {
         "label": "Live draft (experimental)",
-        "description": "Experimental, off by default. Shows a rough draft while you talk, from a small fast model; when you stop, the real text lands in the field. Skipped in password fields and when text is selected. Uses a little extra processing power while you dictate.",
+        "description": "Experimental, off by default. Shows a rough draft in a see-through bubble by the text cursor while you talk, from a small fast model; when you stop, the real text lands in the field. Skipped in password fields. Uses a little extra processing power while you dictate.",
         "needsModel": "Download the small draft model (Moonshine Streaming Tiny, 50 MB).",
         "download": "Download",
-        "needsInputSource": "Add Felix Draft as an input source: System Settings → Keyboard → Input Sources → Edit → + → English → Felix Draft.",
-        "openKeyboard": "Open Keyboard settings",
         "downloading": "Downloading…",
-        "modelReady": "Draft model downloaded",
-        "inputSourceReady": "Felix Draft added as an input source",
-        "style": {
-          "title": "Show the draft",
-          "description": "A see-through bubble by the text cursor (or above the recording pill) that you can click through, or underlined in the text field itself (needs the Felix Draft input source, and not every app shows it).",
-          "bubble": "In a bubble",
-          "inline": "In the text field"
-        }
+        "modelReady": "Draft model downloaded"
       }
     },
     "writing": {

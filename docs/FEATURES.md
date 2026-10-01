@@ -58,20 +58,15 @@ staging pipeline first:
 **Live draft** (experimental, off by default; the second model costs a
 little extra processing): while you talk, Moonshine Streaming Tiny
 transcribes alongside the main model and its rough text is shown, then the
-main model's text is pasted as usual. Two styles:
-
-- **Bubble** (`draft_bubble.rs`): a click-through bubble styled like the
-  recording pill that follows the text cursor, or rests on the pill.
-- **Inline**: underlined marked text in the focused field, through Felix
-  Draft, a small input method (`src-tauri/draft-ime/`, built by
-  `scripts/build-draft-ime.sh`; you add it once under Keyboard → Input
-  Sources). Some apps, such as WhatsApp, show it in a floating box instead.
+main model's text is pasted as usual. It shows in a click-through bubble
+(`draft_bubble.rs`) styled like the recording pill that follows the text
+cursor, or rests on the pill. (An in-field style through a Felix Draft
+input method was removed; Felix deletes that input method on launch.)
 
 The draft only shows words two guesses in a row agree on, so a word the
 model is still unsure of doesn't flicker in and out; shown words stay until
 two guesses agree on something else. When the draft model gets stuck
-repeating a word or phrase, the repeat is shown once until it recovers. Skipped with secure input on (and, inline,
-when text is selected).
+repeating a word or phrase, the repeat is shown once until it recovers. Skipped with secure input on.
 
 ## Vocabulary
 

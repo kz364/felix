@@ -2,15 +2,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Check } from "lucide-react";
-import {
-  commands,
-  type LiveDraftStatus,
-  type LiveDraftStyle,
-} from "@/bindings";
+import { commands, type LiveDraftStatus } from "@/bindings";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { Button } from "../ui/Button";
-import { Dropdown } from "../ui/Dropdown";
-import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 
 const DRAFT_MODEL = "moonshine-streaming-tiny-Q8_0";
@@ -20,9 +14,8 @@ interface LiveDraftProps {
   grouped?: boolean;
 }
 
-/** A rough live draft while you talk, in a bubble by the cursor or in the
- *  field, plus what it still needs (the small model, and for the field,
- *  Felix Draft added as an input source). */
+/** A rough live draft while you talk, in a bubble by the cursor, plus what
+ *  it still needs (the small model). */
 export const LiveDraft: React.FC<LiveDraftProps> = ({
   descriptionMode = "tooltip",
   grouped = false,
@@ -30,20 +23,11 @@ export const LiveDraft: React.FC<LiveDraftProps> = ({
   const { t } = useTranslation();
   const { getSetting, refreshSettings } = useSettings();
   const enabled = getSetting("live_draft") ?? false;
-  const style = getSetting("live_draft_style") ?? "bubble";
   const [busy, setBusy] = useState(false);
 
   const toggle = async (on: boolean) => {
     setBusy(true);
     const result = await commands.setLiveDraft(on);
-    setBusy(false);
-    if (result.status === "error") toast.error(result.error);
-    await refreshSettings();
-  };
-
-  const chooseStyle = async (value: string) => {
-    setBusy(true);
-    const result = await commands.setLiveDraftStyle(value as LiveDraftStyle);
     setBusy(false);
     if (result.status === "error") toast.error(result.error);
     await refreshSettings();
@@ -60,24 +44,6 @@ export const LiveDraft: React.FC<LiveDraftProps> = ({
         descriptionMode={descriptionMode}
         grouped={grouped}
       />
-      {enabled && (
-        <SettingContainer
-          title={t("settings.dictation.liveDraft.style.title")}
-          description={t("settings.dictation.liveDraft.style.description")}
-          descriptionMode={descriptionMode}
-          grouped={grouped}
-        >
-          <Dropdown
-            options={(["bubble", "inline"] as const).map((value) => ({
-              value,
-              label: t(`settings.dictation.liveDraft.style.${value}`),
-            }))}
-            selectedValue={style}
-            onSelect={chooseStyle}
-            disabled={busy}
-          />
-        </SettingContainer>
-      )}
       {enabled && <LiveDraftSetup className="px-4 pb-3" />}
     </>
   );
@@ -90,8 +56,6 @@ export const LiveDraftSetup: React.FC<{
   showReady?: boolean;
 }> = ({ className = "", showReady = false }) => {
   const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const inField = getSetting("live_draft_style") === "inline";
   const [status, setStatus] = useState<LiveDraftStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -100,11 +64,8 @@ export const LiveDraftSetup: React.FC<{
     [],
   );
 
-  // Adding the input source happens in System Settings; notice when it's done.
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
   }, [refresh]);
 
   const download = async () => {
@@ -116,7 +77,7 @@ export const LiveDraftSetup: React.FC<{
   };
 
   if (!status) return null;
-  const ready = status.model_ready && (status.enabled || !inField);
+  const ready = status.model_ready;
   if (ready && !showReady) return null;
   const done = (text: string) => (
     <div className="flex items-center gap-1.5 text-success">
@@ -135,20 +96,6 @@ export const LiveDraftSetup: React.FC<{
             {busy
               ? t("settings.dictation.liveDraft.downloading")
               : t("settings.dictation.liveDraft.download")}
-          </Button>
-        </div>
-      )}
-      {!inField ? null : status.enabled ? (
-        done(t("settings.dictation.liveDraft.inputSourceReady"))
-      ) : (
-        <div className="flex items-center justify-between gap-3">
-          <span>{t("settings.dictation.liveDraft.needsInputSource")}</span>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => commands.openInputSources()}
-          >
-            {t("settings.dictation.liveDraft.openKeyboard")}
           </Button>
         </div>
       )}
