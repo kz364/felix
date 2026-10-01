@@ -188,7 +188,7 @@ impl MeetingManager {
                 log::info!("Meeting {id} transcribed");
                 let names = self
                     .dir_of(id)
-                    .map(|dir| super::active_speaker::apply(&dir))
+                    .map(|dir| super::speakers::apply(&dir))
                     .unwrap_or_default();
                 self.update_info(id, |i| {
                     i.transcript = Some(TranscriptStatus::Done);
@@ -560,7 +560,10 @@ impl MeetingManager {
             .ok_or("The meeting isn't transcribed yet")?;
 
         if settings.meeting_cleanup {
-            let raw = super::transcript::paragraphs(&transcript.segments);
+            let raw = super::manager::apply_speaker_fixes(
+                super::transcript::paragraphs(&transcript.segments),
+                &super::manager::speaker_fixes(&dir),
+            );
             let mut cleaned: Cleaned =
                 summary::load_json(&dir, summary::CLEANED_FILE).unwrap_or_default();
             let label = |p: &super::transcript::Paragraph| {

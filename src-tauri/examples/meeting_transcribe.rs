@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if mode == MeetingMode::Call {
-        let names = handy_app_lib::meetings::active_speaker::apply(Path::new(&dir));
+        let names = handy_app_lib::meetings::speakers::apply(Path::new(&dir));
         eprintln!("names from the call app: {names:?}");
         std::fs::write(
             Path::new(&dir).join("app_speakers.json"),

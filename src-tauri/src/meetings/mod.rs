@@ -20,6 +20,8 @@ pub mod manager;
 mod mic;
 pub mod pipeline;
 pub mod remote;
+pub mod speaker_score;
+pub mod speakers;
 pub mod summary;
 #[cfg(target_os = "macos")]
 mod system_audio;

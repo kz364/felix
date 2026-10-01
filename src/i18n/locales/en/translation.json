@@ -1451,7 +1451,10 @@
       "them": "Them",
       "numbered": "Speaker {{n}}",
       "themNumbered": "Them {{n}}",
-      "rename": "Rename this speaker everywhere"
+      "whoSaid": "Who said this?",
+      "someoneElse": "Someone else…",
+      "namePlaceholder": "Their name",
+      "renameEverywhere": "Rename {{name}} everywhere"
     },
     "actions": {
       "resume": "Resume recording",

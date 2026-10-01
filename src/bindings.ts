@@ -967,6 +967,20 @@ async renameMeetingSpeaker(id: string, speaker: number, name: string) : Promise<
 }
 },
 /**
+ * Say who spoke one paragraph, leaving the rest of that voice as it is:
+ * `speaker` is someone already in the meeting, or `name` a person (reused
+ * if a voice already has that name, otherwise added). Setting it back to
+ * what transcription found removes the fix. Returns the speaker's number.
+ */
+async setParagraphSpeaker(id: string, source: Source, startMs: number, speaker: number | null, name: string | null) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_paragraph_speaker", { id, source, startMs, speaker, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Transcribe a meeting again from scratch, with the engine chosen now (to
  * compare engines, or after changing vocabulary). The summary is rewritten
  * afterwards; the user's notes are kept.

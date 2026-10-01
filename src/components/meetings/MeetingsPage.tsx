@@ -216,54 +216,202 @@ const useWho = () => {
         : null;
 };
 
-/** A told-apart voice's name; click to rename it everywhere. */
-const SpeakerName: React.FC<{ meeting: MeetingInfo; n: number }> = ({
-  meeting,
-  n,
-}) => {
-  const { t } = useTranslation();
-  const nameOf = useSpeakerName();
-  const [editing, setEditing] = useState<string | null>(null);
-  const colors = [
-    "text-accent",
-    "text-accent",
-    "text-success",
-    "text-warning",
-    "text-violet-500",
-  ];
-  const color = colors[n % colors.length];
+/** Someone in the meeting a paragraph can be given to. */
+type Person = { n: number; label: string };
 
-  const save = async () => {
-    const name = editing?.trim();
-    setEditing(null);
-    if (name === undefined || name === nameOf(meeting, n)) return;
-    const result = await commands.renameMeetingSpeaker(meeting.id, n, name);
-    if (result.status === "error") toast.error(result.error);
+/** Everyone the transcript names, in order of first word, plus "Me". */
+const usePeople = () => {
+  const nameOf = useSpeakerName();
+  return (meeting: MeetingInfo, paragraphs: Paragraph[]): Person[] => {
+    const out: Person[] = [];
+    const add = (n: number) => {
+      const label = nameOf(meeting, n);
+      if (!out.some((p) => p.n === n || p.label === label)) {
+        out.push({ n, label });
+      }
+    };
+    if (meeting.mode === "call") add(ME);
+    for (const p of paragraphs) if (p.speaker !== null) add(p.speaker);
+    for (const k of Object.keys(meeting.speakers ?? {})) add(Number(k));
+    return out;
+  };
+};
+
+const SPEAKER_COLORS = [
+  "text-accent",
+  "text-accent",
+  "text-success",
+  "text-warning",
+  "text-violet-500",
+];
+
+/** Who said a paragraph. Click to give just this paragraph to someone
+ * else, or to rename the voice everywhere. */
+const SpeakerLabel: React.FC<{
+  meeting: MeetingInfo;
+  p: Paragraph;
+  label: string;
+  people: Person[];
+  editable: boolean;
+  onChanged: () => void;
+}> = ({ meeting, p, label, people, editable, onChanged }) => {
+  const { t } = useTranslation();
+  // Where the menu opens: fixed to the window, so the transcript's
+  // scrolling box can't cut it off; above the name near the bottom edge.
+  const [open, setOpen] = useState<React.CSSProperties | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [someoneElse, setSomeoneElse] = useState<string | null>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
+  const color =
+    p.speaker !== null && p.speaker !== ME
+      ? SPEAKER_COLORS[p.speaker % SPEAKER_COLORS.length]
+      : p.source === "mic"
+        ? "text-text"
+        : "text-accent";
+  const numbered = p.speaker !== null && p.speaker !== ME;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e.type === "scroll" || !menuRef.current?.contains(e.target as Node)) {
+        setOpen(null);
+        setSomeoneElse(null);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  const toggle = (button: HTMLElement) => {
+    if (open) {
+      setOpen(null);
+      return;
+    }
+    const r = button.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom > 260;
+    setOpen(
+      below
+        ? { left: r.left, top: r.bottom + 4 }
+        : { left: r.left, bottom: window.innerHeight - r.top + 4 },
+    );
   };
 
-  if (editing !== null) {
+  const assign = async (speaker: number | null, name: string | null) => {
+    setOpen(null);
+    setSomeoneElse(null);
+    const result = await commands.setParagraphSpeaker(
+      meeting.id,
+      p.source,
+      p.start_ms,
+      speaker,
+      name,
+    );
+    if (result.status === "error") toast.error(result.error);
+    onChanged();
+  };
+
+  const rename = async () => {
+    const name = renaming?.trim();
+    setRenaming(null);
+    if (!numbered || name === undefined || name === label) return;
+    const result = await commands.renameMeetingSpeaker(
+      meeting.id,
+      p.speaker as number,
+      name,
+    );
+    if (result.status === "error") toast.error(result.error);
+    onChanged();
+  };
+
+  if (renaming !== null) {
     return (
       <input
         autoFocus
-        value={editing}
-        onChange={(e) => setEditing(e.target.value)}
-        onBlur={save}
+        value={renaming}
+        onChange={(e) => setRenaming(e.target.value)}
+        onBlur={rename}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setEditing(null);
+          if (e.key === "Escape") setRenaming(null);
         }}
         className={`me-1.5 w-32 bg-transparent border-b border-accent/60 outline-none font-medium ${color}`}
       />
     );
   }
+  if (!editable) {
+    return <span className={`me-1.5 font-medium ${color}`}>{label}</span>;
+  }
   return (
-    <button
-      onClick={() => setEditing(nameOf(meeting, n))}
-      title={t("meetings.speaker.rename")}
-      className={`me-1.5 font-medium cursor-text hover:underline decoration-dotted ${color}`}
-    >
-      {nameOf(meeting, n)}
-    </button>
+    <span ref={menuRef}>
+      <button
+        onClick={(e) => toggle(e.currentTarget)}
+        title={t("meetings.speaker.whoSaid")}
+        className={`me-1.5 font-medium cursor-pointer hover:underline decoration-dotted ${color}`}
+      >
+        {label}
+      </button>
+      {open && (
+        <span
+          style={open}
+          className="fixed z-50 flex w-56 flex-col rounded-lg border border-stone/20 bg-background p-1 text-sm shadow-lg"
+        >
+          <span className="px-2 py-1 text-xs text-text/50">
+            {t("meetings.speaker.whoSaid")}
+          </span>
+          {people
+            .filter((person) => person.label !== label)
+            .map((person) => (
+              <button
+                key={person.n}
+                onClick={() => assign(person.n, null)}
+                className="rounded px-2 py-1 text-start hover:bg-stone/10 cursor-pointer"
+              >
+                {person.label}
+              </button>
+            ))}
+          {someoneElse === null ? (
+            <button
+              onClick={() => setSomeoneElse("")}
+              className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
+            >
+              {t("meetings.speaker.someoneElse")}
+            </button>
+          ) : (
+            <input
+              autoFocus
+              value={someoneElse}
+              placeholder={t("meetings.speaker.namePlaceholder")}
+              onChange={(e) => setSomeoneElse(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && someoneElse.trim()) {
+                  assign(null, someoneElse.trim());
+                }
+                if (e.key === "Escape") setSomeoneElse(null);
+              }}
+              className="mx-1 my-0.5 rounded border border-accent/50 bg-background px-1.5 py-0.5 outline-none"
+            />
+          )}
+          {numbered && (
+            <>
+              <span className="my-1 h-px bg-stone/20" />
+              <button
+                onClick={() => {
+                  setOpen(null);
+                  setRenaming(label);
+                }}
+                className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
+              >
+                {t("meetings.speaker.renameEverywhere", { name: label })}
+              </button>
+            </>
+          )}
+        </span>
+      )}
+    </span>
   );
 };
 
@@ -273,16 +421,23 @@ const TranscriptParagraph: React.FC<{
   showOriginal: boolean;
   active: boolean;
   editable: boolean;
+  people: Person[];
   onPlay: () => void;
-}> = ({ p, meeting, showOriginal, active, editable, onPlay }) => {
+  onChanged: () => void;
+}> = ({
+  p,
+  meeting,
+  showOriginal,
+  active,
+  editable,
+  people,
+  onPlay,
+  onChanged,
+}) => {
   const { t } = useTranslation();
   const [editing, setEditing] = useState<string | null>(null);
-  const speaker =
-    p.speaker === null && meeting.mode === "call"
-      ? p.source === "mic"
-        ? t("meetings.speaker.me")
-        : t("meetings.speaker.them")
-      : null;
+  const who = useWho();
+  const speaker = who(meeting, p);
   const text = showOriginal && p.raw ? p.raw : p.text;
 
   const save = async () => {
@@ -296,6 +451,7 @@ const TranscriptParagraph: React.FC<{
       edited,
     );
     if (result.status === "error") toast.error(result.error);
+    onChanged();
   };
 
   return (
@@ -313,15 +469,15 @@ const TranscriptParagraph: React.FC<{
       </button>
       <p className="text-sm leading-relaxed">
         {speaker && (
-          <span
-            className={`me-1.5 font-medium ${
-              p.source === "mic" ? "text-text" : "text-accent"
-            }`}
-          >
-            {speaker}
-          </span>
+          <SpeakerLabel
+            meeting={meeting}
+            p={p}
+            label={speaker}
+            people={people}
+            editable={editable}
+            onChanged={onChanged}
+          />
         )}
-        {p.speaker !== null && <SpeakerName meeting={meeting} n={p.speaker} />}
         {editing !== null ? (
           <textarea
             autoFocus
@@ -364,6 +520,9 @@ const TranscriptSection: React.FC<{
   const [showOriginal, setShowOriginal] = useState(false);
   const [confirmAgain, setConfirmAgain] = useState(false);
   const who = useWho();
+  const peopleOf = usePeople();
+  const [version, setVersion] = useState(0);
+  const reload = useCallback(() => setVersion((v) => v + 1), []);
   const done = progress?.done;
   const stage = progress?.stage;
 
@@ -375,7 +534,7 @@ const TranscriptSection: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [meeting.id, meeting.transcript, meeting.summary, done, stage]);
+  }, [meeting.id, meeting.transcript, meeting.summary, done, stage, version]);
 
   const retry = async () => {
     const result = await commands.transcribeMeeting(meeting.id);
@@ -400,6 +559,7 @@ const TranscriptSection: React.FC<{
 
   const status = meeting.transcript;
   const paragraphs = transcript?.paragraphs ?? [];
+  const people = peopleOf(meeting, paragraphs);
   const nowMs = player.time * 1000;
   const activeIndex = player.playing
     ? paragraphs.findIndex((p) => nowMs >= p.start_ms && nowMs < p.end_ms)
@@ -549,7 +709,9 @@ const TranscriptSection: React.FC<{
                   showOriginal={showOriginal}
                   active={i === activeIndex}
                   editable={status === "done" && !showOriginal}
+                  people={people}
                   onPlay={() => player.playFrom(p.start_ms / 1000)}
+                  onChanged={reload}
                 />
               </React.Fragment>
             );

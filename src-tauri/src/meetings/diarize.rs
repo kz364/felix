@@ -524,6 +524,44 @@ pub fn mark_me(embeddings: &[Vec<f32>], speakers: &mut [u32], voiceprint: &[f32]
     }
 }
 
+/// Windows fingerprinted on one thread before it's replaced (see
+/// [`embed_windows`]).
+const WINDOWS_PER_THREAD: usize = 64;
+
+/// A fingerprint per window. ONNX Runtime's KleidiAI convolutions (Apple
+/// silicon) keep a per-thread cache entry for every new input, about 8 MB
+/// a window, freed only when the thread ends: one thread for a whole
+/// meeting grew to over 10 GB and ran the Mac out of memory. So the windows
+/// are done in batches, each on a fresh thread with its own session, which
+/// keeps memory under about a gigabyte however long the meeting.
+fn embed_windows(
+    samples: &[f32],
+    wins: &[(usize, usize)],
+    model: &Path,
+) -> Result<Vec<Vec<f32>>, String> {
+    let mut embeddings = Vec::with_capacity(wins.len());
+    for batch in wins.chunks(WINDOWS_PER_THREAD) {
+        let done = std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> Result<Vec<Vec<f32>>, String> {
+                    let mut embedder = Embedder::new(model)?;
+                    batch
+                        .iter()
+                        .map(|&(from, to)| {
+                            let a = (from * FRAME_SAMPLES).min(samples.len());
+                            let b = (to * FRAME_SAMPLES).min(samples.len());
+                            embedder.embed(&samples[a..b])
+                        })
+                        .collect()
+                })
+                .join()
+                .map_err(|_| "The speaker model crashed".to_string())?
+        })?;
+        embeddings.extend(done);
+    }
+    Ok(embeddings)
+}
+
 /// Label every speech frame of a mic track with a speaker. With the user's
 /// `voiceprint` for this mic, their voice is labelled [`ME`].
 pub fn speakers(
@@ -536,19 +574,13 @@ pub fn speakers(
     if wins.is_empty() {
         return Ok(vec![None; speech.len()]);
     }
-    let mut embedder = Embedder::new(model)?;
     let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
     let samples: Vec<f32> = reader
         .samples::<i16>()
         .map(|s| s.map(|v| v as f32 / 32768.0))
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
-    let mut embeddings = Vec::with_capacity(wins.len());
-    for &(from, to) in &wins {
-        let a = (from * FRAME_SAMPLES).min(samples.len());
-        let b = (to * FRAME_SAMPLES).min(samples.len());
-        embeddings.push(embedder.embed(&samples[a..b])?);
-    }
+    let embeddings = embed_windows(&samples, &wins, model)?;
     let mut speakers = cluster(&embeddings);
     if let Some(print) = voiceprint {
         mark_me(&embeddings, &mut speakers, print);

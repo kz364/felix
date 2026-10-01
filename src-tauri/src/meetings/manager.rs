@@ -246,7 +246,7 @@ fn write_info(dir: &Path, info: &MeetingInfo) {
     }
 }
 
-pub(super) fn read_info(dir: &Path) -> Option<MeetingInfo> {
+pub fn read_info(dir: &Path) -> Option<MeetingInfo> {
     serde_json::from_slice(&std::fs::read(dir.join(META_FILE)).ok()?).ok()
 }
 
@@ -861,13 +861,59 @@ pub(super) const EDITS_FILE: &str = "edits.json";
 
 /// A transcript's paragraphs, with the cleaned-up text where there is one
 /// and the user's edits over that.
-pub(super) fn paragraphs_of(dir: &Path, t: &transcript::Transcript) -> Vec<Paragraph> {
+pub fn paragraphs_of(dir: &Path, t: &transcript::Transcript) -> Vec<Paragraph> {
     let cleaned: Option<summary::Cleaned> = summary::load_json(dir, summary::CLEANED_FILE);
     let edits: BTreeMap<String, String> = summary::load_json(dir, EDITS_FILE).unwrap_or_default();
-    apply_edits(
-        summary::apply_cleaned(transcript::paragraphs(&t.segments), cleaned.as_ref()),
-        &edits,
+    apply_speaker_fixes(
+        apply_edits(
+            summary::apply_cleaned(transcript::paragraphs(&t.segments), cleaned.as_ref()),
+            &edits,
+        ),
+        &speaker_fixes(dir),
     )
+}
+
+/// Who the user said spoke single paragraphs, by paragraph key. A fix only
+/// relabels its paragraph, so paragraph keys (and the cleaned text and
+/// edits kept by them) stay the same.
+pub(super) const SPEAKER_FIXES_FILE: &str = "speaker_fixes.json";
+
+pub fn speaker_fixes(dir: &Path) -> BTreeMap<String, u32> {
+    summary::load_json(dir, SPEAKER_FIXES_FILE).unwrap_or_default()
+}
+
+pub fn apply_speaker_fixes(
+    mut paragraphs: Vec<Paragraph>,
+    fixes: &BTreeMap<String, u32>,
+) -> Vec<Paragraph> {
+    for p in &mut paragraphs {
+        if let Some(&s) = fixes.get(&summary::paragraph_key(p)) {
+            p.speaker = Some(s);
+        }
+    }
+    paragraphs
+}
+
+/// A number for a new person heard on `source`: after every voice already
+/// used there (the other side of a call from
+/// [`super::pipeline::SYSTEM_SPEAKERS`]).
+fn new_speaker(source: Source, used: impl Iterator<Item = u32>) -> u32 {
+    let system = super::pipeline::SYSTEM_SPEAKERS;
+    let used: Vec<u32> = used.filter(|&n| n != super::diarize::ME).collect();
+    match source {
+        Source::System => used
+            .iter()
+            .copied()
+            .filter(|&n| n >= system)
+            .max()
+            .map_or(system, |n| n + 1),
+        Source::Mic => used
+            .iter()
+            .copied()
+            .filter(|&n| n < system)
+            .max()
+            .map_or(0, |n| n + 1),
+    }
 }
 
 fn apply_edits(mut paragraphs: Vec<Paragraph>, edits: &BTreeMap<String, String>) -> Vec<Paragraph> {
@@ -1060,6 +1106,80 @@ pub fn rename_meeting_speaker(
         .ok_or_else(|| "The meeting isn't there any more".into())
 }
 
+/// Say who spoke one paragraph, leaving the rest of that voice as it is:
+/// `speaker` is someone already in the meeting, or `name` a person (reused
+/// if a voice already has that name, otherwise added). Setting it back to
+/// what transcription found removes the fix. Returns the speaker's number.
+#[tauri::command]
+#[specta::specta]
+pub fn set_paragraph_speaker(
+    app: AppHandle,
+    id: String,
+    source: Source,
+    start_ms: u64,
+    speaker: Option<u32>,
+    name: Option<String>,
+) -> Result<u32, String> {
+    let dir = meeting_dir(&app, &id)?;
+    let t = pipeline::load(&dir).ok_or("The meeting isn't transcribed yet")?;
+    let found = transcript::paragraphs(&t.segments)
+        .into_iter()
+        .find(|p| p.source == source && p.start_ms == start_ms)
+        .ok_or("That part of the transcript isn't there any more")?;
+    let key = summary::paragraph_key(&found);
+    let mut fixes = speaker_fixes(&dir);
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let chosen = match (speaker, name) {
+        (Some(s), _) => s,
+        (None, Some(name)) => {
+            let manager = app.state::<Arc<MeetingManager>>();
+            let info = read_info(&dir).ok_or("The meeting isn't there any more")?;
+            let existing = if name.eq_ignore_ascii_case("me") {
+                Some(super::diarize::ME)
+            } else {
+                info.speakers
+                    .iter()
+                    .chain(
+                        info.app_speakers
+                            .iter()
+                            .filter(|(k, _)| !info.speakers.contains_key(k)),
+                    )
+                    .find(|(_, n)| n.eq_ignore_ascii_case(&name))
+                    .map(|(&k, _)| k)
+            };
+            match existing {
+                Some(s) => s,
+                None => {
+                    let used = t
+                        .segments
+                        .iter()
+                        .filter_map(|s| s.speaker)
+                        .chain(info.speakers.keys().copied())
+                        .chain(info.app_speakers.keys().copied())
+                        .chain(fixes.values().copied());
+                    let s = new_speaker(source, used);
+                    manager
+                        .update_info(&id, |i| {
+                            i.speakers.insert(s, name);
+                        })
+                        .ok_or("The meeting isn't there any more")?;
+                    s
+                }
+            }
+        }
+        (None, None) => return Err("Choose who spoke it".into()),
+    };
+    if found.speaker == Some(chosen) {
+        fixes.remove(&key);
+    } else {
+        fixes.insert(key, chosen);
+    }
+    summary::save_json(&dir, SPEAKER_FIXES_FILE, &fixes)?;
+    super::speakers::record(&dir, &t);
+    let _ = app.emit("meetings-changed", ());
+    Ok(chosen)
+}
+
 /// Transcribe a meeting again from scratch, with the engine chosen now (to
 /// compare engines, or after changing vocabulary). The summary is rewritten
 /// afterwards; the user's notes are kept.
@@ -1233,6 +1353,31 @@ pub fn open_meeting_folder(app: AppHandle, id: Option<String>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_speaker_fix_relabels_only_its_paragraph() {
+        let p = |source, start_ms, speaker| Paragraph {
+            source,
+            start_ms,
+            end_ms: start_ms + 1000,
+            text: "Hi".into(),
+            raw: None,
+            speaker,
+        };
+        let paragraphs = vec![
+            p(Source::System, 0, Some(100)),
+            p(Source::System, 5000, Some(100)),
+        ];
+        let fixes = BTreeMap::from([("system-5000".to_string(), 101)]);
+        let fixed = apply_speaker_fixes(paragraphs, &fixes);
+        assert_eq!(fixed[0].speaker, Some(100));
+        assert_eq!(fixed[1].speaker, Some(101));
+        // New people go after the voices already used on their track.
+        let used = [100, 101, 0, super::super::diarize::ME];
+        assert_eq!(new_speaker(Source::System, used.into_iter()), 102);
+        assert_eq!(new_speaker(Source::Mic, used.into_iter()), 1);
+        assert_eq!(new_speaker(Source::System, [].into_iter()), 100);
+    }
 
     #[test]
     fn elapsed_is_formatted_like_a_clock() {

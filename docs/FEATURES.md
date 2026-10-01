@@ -190,6 +190,12 @@ Meetings never interrupt or change dictation.
   on the other side (a muddy line) but the call app showed several names,
   the names split it instead. Names are read from the call window, not the
   app's menus.
+- **Fixing who said what**: clicking a speaker's name in a transcript
+  asks "Who said this?" and gives just that paragraph to someone else in
+  the meeting, or to a new person by name; renaming a voice everywhere is
+  the last item in the same menu. Fixes are kept per paragraph
+  (`speaker_fixes.json`), survive cleanup and a new summary, and are what
+  `examples/speaker_eval` scores the automatic labels against.
 - **Your voice in person** (groundwork, not switched on): given a voiceprint
   for the mic, the in-person speaker that clearly matches it becomes "Me".
   Nothing records voiceprints yet; they'll be one per mic, and never made

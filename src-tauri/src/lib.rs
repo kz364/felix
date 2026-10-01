@@ -831,6 +831,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::summarize_meeting,
             meetings::manager::meeting_markdown,
             meetings::manager::rename_meeting_speaker,
+            meetings::manager::set_paragraph_speaker,
             meetings::manager::retranscribe_meeting,
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,

@@ -21,7 +21,7 @@ pub const FILE: &str = "speakers_seen.jsonl";
 /// How often the call app is read.
 const POLL: Duration = Duration::from_secs(1);
 /// A sighting names whoever talks up to this long after it.
-const TTL_MS: u64 = 1_500;
+pub(super) const TTL_MS: u64 = 1_500;
 /// A voice is named only with this many sightings…
 const MIN_VOTES: usize = 3;
 /// …and when this share of its sightings agree.
@@ -252,46 +252,29 @@ pub fn split_by_name(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, S
     ids.into_iter().map(|(name, id)| (id, name)).collect()
 }
 
-/// After transcription: the names the call app gave, by speaker id. Writes
-/// the transcript back when it had to split the system track by name.
-pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
-    let seen = load(dir);
+/// The names the call app gave, by speaker id. Without voices on the system
+/// track, or with one voice but several names (a muddy line), the names
+/// split the track instead, setting the segments' speakers.
+pub fn names_for(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
     if seen.is_empty() {
         return BTreeMap::new();
     }
-    let Some(mut transcript) = super::pipeline::load(dir) else {
-        return BTreeMap::new();
-    };
-    let voices: std::collections::BTreeSet<u32> = transcript
-        .segments
+    let voices: std::collections::BTreeSet<u32> = segments
         .iter()
         .filter(|s| s.source == Source::System)
         .filter_map(|s| s.speaker)
         .collect();
     let names_seen: std::collections::BTreeSet<&str> =
         seen.iter().map(|s| s.name.as_str()).collect();
-    // One voice but several names: the voices couldn't be told apart (a
-    // muddy line), so the names split the track instead.
     if !voices.is_empty() && !(voices.len() == 1 && names_seen.len() >= 2) {
-        return name_voices(&transcript.segments, &seen);
+        return name_voices(segments, seen);
     }
     if voices.len() == 1 {
-        for s in transcript
-            .segments
-            .iter_mut()
-            .filter(|s| s.source == Source::System)
-        {
+        for s in segments.iter_mut().filter(|s| s.source == Source::System) {
             s.speaker = None;
         }
     }
-    let names = split_by_name(&mut transcript.segments, &seen);
-    if !names.is_empty() {
-        if let Err(e) = super::pipeline::save(dir, &transcript) {
-            log::warn!("Couldn't save the transcript with names: {e}");
-            return BTreeMap::new();
-        }
-    }
-    names
+    split_by_name(segments, seen)
 }
 
 /// While a call records: read who's talking in the call app about once a
