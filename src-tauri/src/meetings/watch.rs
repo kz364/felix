@@ -372,7 +372,14 @@ impl Watcher {
                         }
                     });
                 }))
-                .nudge(Duration::ZERO)
+                // Not a muteable tip: turning it off is the setting, which
+                // Settings → Meetings shows (a mute there was invisible).
+                .action(Action::new("Stop asking", |app| {
+                    let mut settings = get_settings(app);
+                    settings.meeting_detect_calls = false;
+                    crate::settings::write_settings(app, settings);
+                    log::info!("Call detection turned off from the notice");
+                }))
                 .seconds(20),
         );
     }
@@ -395,6 +402,14 @@ pub fn spawn(app: &AppHandle) {
         .spawn(move || {
             // Windows made after setup (the overlay) pick up the setting here.
             std::thread::sleep(Duration::from_secs(3));
+            // "Record this call?" could be muted once, which turned call
+            // detection off while Settings still showed it on.
+            let mut settings = get_settings(&watcher.app);
+            if settings.muted_notices.iter().any(|k| k == "record_call") {
+                settings.muted_notices.retain(|k| k != "record_call");
+                crate::settings::write_settings(&watcher.app, settings);
+                log::info!("\"Record this call?\" is shown again");
+            }
             if get_settings(&watcher.app).hide_from_screen_share {
                 hide_from_screen_share(&watcher.app, true);
             }
