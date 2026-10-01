@@ -496,7 +496,7 @@ const SpeakerLabel: React.FC<{
                   className="mx-1 my-0.5 rounded border border-accent/50 bg-background px-1.5 py-0.5 outline-none"
                 />
               )}
-              {numbered && (
+              {numbered && splitAt === null && (
                 <>
                   <span className="my-1 h-px bg-stone/20" />
                   <button
