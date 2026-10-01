@@ -1411,6 +1411,14 @@
         "setUp": "Set up",
         "setUpAgain": "Set up again",
         "showFolder": "Show folder"
+      },
+      "calendar": {
+        "title": "Calendar invites",
+        "description": "Names the voices nobody else named from who was invited to the event (Calendar, including accounts under Internet Accounts). Read only, on this Mac.",
+        "on": "On",
+        "off": "Off",
+        "denied": "Not allowed. Turn it on in System Settings → Privacy & Security → Calendars.",
+        "allow": "Allow Calendar access"
       }
     },
     "errors": {

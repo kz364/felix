@@ -43,6 +43,15 @@ pub enum Kind {
     Extension,
     /// A caption line (extension, captions on) matched this segment's words.
     Caption,
+    /// Something said points at (or, `NotClue`, away from) this person.
+    Clue,
+    NotClue,
+    /// On the call (the extension's participant list), not necessarily talking.
+    Participant,
+    /// Invited to the calendar event.
+    Invited,
+    /// The user's own name (on the invite); never one of the voices.
+    Myself,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,14 +79,44 @@ const CAPTION_LAG_MS: u64 = 10_000;
 /// Votes one caption is worth against single sightings.
 const CAPTION_VOTES: usize = 3;
 
-/// The evidence for a transcribed meeting: its voices, the call app's marks,
-/// what the extension heard and the user's fixes (`fixes`, by paragraph key).
-pub fn gather(
-    t: &Transcript,
-    seen: &[Seen],
-    heard: &[super::extension::Logged],
-    fixes: &BTreeMap<String, u32>,
-) -> Vec<Evidence> {
+/// Everything known about a meeting that hints at who spoke.
+#[derive(Default)]
+pub struct Sources {
+    /// The call app's active-speaker marks (accessibility tree).
+    pub seen: Vec<Seen>,
+    /// What the meetings extension heard.
+    pub heard: Vec<super::extension::Logged>,
+    pub clues: Vec<super::clues::Clue>,
+    pub invite: Option<super::calendar::Invite>,
+    /// The user's fixes, by paragraph key.
+    pub fixes: BTreeMap<String, u32>,
+}
+
+impl Sources {
+    pub fn load(dir: &Path) -> Self {
+        Sources {
+            seen: active_speaker::load(dir),
+            heard: super::extension::load(dir),
+            clues: super::summary::load_json(dir, super::clues::FILE).unwrap_or_default(),
+            invite: super::calendar::load(dir),
+            fixes: super::manager::speaker_fixes(dir),
+        }
+    }
+}
+
+fn name_evidence(name: &str, from: Kind) -> Evidence {
+    Evidence {
+        track: Source::System,
+        start_ms: 0,
+        end_ms: 0,
+        who: Who::Name(name.to_string()),
+        strength: 0.0,
+        from,
+    }
+}
+
+/// The evidence for a transcribed meeting.
+pub fn gather(t: &Transcript, src: &Sources) -> Vec<Evidence> {
     let mut out: Vec<Evidence> = t
         .segments
         .iter()
@@ -93,7 +132,7 @@ pub fn gather(
             })
         })
         .collect();
-    out.extend(seen.iter().map(|s| Evidence {
+    out.extend(src.seen.iter().map(|s| Evidence {
         track: Source::System,
         start_ms: s.at_ms,
         end_ms: s.at_ms + active_speaker::TTL_MS,
@@ -101,9 +140,26 @@ pub fn gather(
         strength: ACTIVE_SPEAKER,
         from: Kind::ActiveSpeaker,
     }));
-    out.extend(from_extension(&t.segments, heard));
+    out.extend(from_extension(&t.segments, &src.heard));
+    out.extend(src.clues.iter().map(|c| Evidence {
+        track: c.source,
+        start_ms: c.start_ms,
+        end_ms: c.end_ms,
+        who: Who::Name(c.name.clone()),
+        strength: c.strength,
+        from: if c.is { Kind::Clue } else { Kind::NotClue },
+    }));
+    if let Some(invite) = &src.invite {
+        out.extend(
+            invite
+                .attendees
+                .iter()
+                .map(|n| name_evidence(n, Kind::Invited)),
+        );
+        out.extend(invite.me.iter().map(|n| name_evidence(n, Kind::Myself)));
+    }
     for p in super::transcript::paragraphs(&t.segments) {
-        if let Some(&s) = fixes.get(&super::summary::paragraph_key(&p)) {
+        if let Some(&s) = src.fixes.get(&super::summary::paragraph_key(&p)) {
             out.push(Evidence {
                 track: p.source,
                 start_ms: p.start_ms,
@@ -148,6 +204,15 @@ fn from_extension(segments: &[Segment], heard: &[super::extension::Logged]) -> V
                     strength: EXTENSION_SPEAKING,
                     from: Kind::Extension,
                 }));
+            }
+            Message::Participants { names, .. } => {
+                for n in names {
+                    if !out.iter().any(|e: &Evidence| {
+                        e.from == Kind::Participant && e.who == Who::Name(n.clone())
+                    }) {
+                        out.push(name_evidence(n, Kind::Participant));
+                    }
+                }
             }
             Message::Caption { name, text, .. } => {
                 let best = segments
@@ -194,10 +259,20 @@ pub fn load(dir: &Path) -> Vec<Evidence> {
         .collect()
 }
 
+/// A voice is named from clues alone once they add up to this.
+const CLUES_NAME: f32 = 0.6;
+/// Only voices that talk this long are named by elimination.
+const ELIMINATE_MS: u64 = 20_000;
+
 /// Names for the voices, by speaker number. May give the system track's
 /// segments their speakers (when the call app's names have to split it),
-/// in which case the transcript needs saving.
-pub fn resolve(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeMap<u32, String> {
+/// in which case the transcript needs saving. `user` are the names the user
+/// gave voices; they're kept and their names aren't given to anyone else.
+pub fn resolve(
+    segments: &mut [Segment],
+    evidence: &[Evidence],
+    user: &BTreeMap<u32, String>,
+) -> BTreeMap<u32, String> {
     // The extension sees the page itself; when it was there, the
     // accessibility tree's guesses are left out.
     let has_extension = evidence
@@ -206,7 +281,7 @@ pub fn resolve(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeMap<u32,
     let marks = |e: &&Evidence| match e.from {
         Kind::ActiveSpeaker => !has_extension,
         Kind::Extension | Kind::Caption => true,
-        Kind::Cluster | Kind::User => false,
+        _ => false,
     };
     let mut seen: Vec<Seen> = Vec::new();
     for e in evidence.iter().filter(marks) {
@@ -224,33 +299,189 @@ pub fn resolve(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeMap<u32,
         }
     }
     seen.sort_by_key(|s| s.at_ms);
-    active_speaker::names_for(segments, &seen)
+    let mut names = active_speaker::names_for(segments, &seen);
+    by_clues_and_elimination(segments, evidence, user, &mut names);
+    names
+}
+
+fn same_name(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// A clue's name as the meeting knows it: "Sam" is "Sam Rivera" when he's
+/// the only Sam on the call or the invite.
+fn full_name(name: &str, known: &[String]) -> String {
+    let first = |n: &str| n.split_whitespace().next().unwrap_or("").to_lowercase();
+    let matches: Vec<&String> = known
+        .iter()
+        .filter(|k| {
+            same_name(k, name) || (!name.contains(' ') && first(k) == name.trim().to_lowercase())
+        })
+        .collect();
+    match matches.as_slice() {
+        [one] => (*one).clone(),
+        _ => name.trim().to_string(),
+    }
+}
+
+/// The voice that talks most in a stretch of a track.
+fn voice_at(segments: &[Segment], track: Source, start_ms: u64, end_ms: u64) -> Option<u32> {
+    let mut overlap: BTreeMap<u32, u64> = BTreeMap::new();
+    for s in segments.iter().filter(|s| s.source == track && !s.echo) {
+        let Some(v) = s.speaker else { continue };
+        let o = s
+            .end_ms
+            .min(end_ms)
+            .saturating_sub(s.start_ms.max(start_ms));
+        if o > 0 {
+            *overlap.entry(v).or_default() += o;
+        }
+    }
+    overlap.into_iter().max_by_key(|(_, o)| *o).map(|(v, _)| v)
+}
+
+/// Voices still without a name: first from what was said ("I'm Priya"),
+/// then by elimination when one voice and one person are left over.
+fn by_clues_and_elimination(
+    segments: &[Segment],
+    evidence: &[Evidence],
+    user: &BTreeMap<u32, String>,
+    names: &mut BTreeMap<u32, String>,
+) {
+    let name_of = |e: &Evidence| match &e.who {
+        Who::Name(n) => Some(n.clone()),
+        Who::Voice(_) => None,
+    };
+    let of_kind = |kinds: &[Kind]| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for n in evidence
+            .iter()
+            .filter(|e| kinds.contains(&e.from))
+            .filter_map(name_of)
+        {
+            if !out.iter().any(|o| same_name(o, &n)) {
+                out.push(n);
+            }
+        }
+        out
+    };
+    let known = of_kind(&[
+        Kind::Participant,
+        Kind::Invited,
+        Kind::Extension,
+        Kind::Caption,
+        Kind::ActiveSpeaker,
+    ]);
+    let me = of_kind(&[Kind::Myself]);
+
+    let mut talk: BTreeMap<u32, u64> = BTreeMap::new();
+    for s in segments.iter().filter(|s| !s.echo) {
+        if let Some(v) = s.speaker.filter(|&v| v != super::diarize::ME) {
+            *talk.entry(v).or_default() += s.end_ms.saturating_sub(s.start_ms);
+        }
+    }
+    let mut taken: Vec<String> = names
+        .values()
+        .chain(user.values())
+        .cloned()
+        .chain(me.iter().cloned())
+        .collect();
+    let is_taken = |taken: &[String], n: &str| taken.iter().any(|t| same_name(t, n));
+    let named =
+        |names: &BTreeMap<u32, String>, v: &u32| names.contains_key(v) || user.contains_key(v);
+
+    // Clues, per voice.
+    let mut score: BTreeMap<u32, BTreeMap<String, f32>> = BTreeMap::new();
+    let mut not: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for e in evidence
+        .iter()
+        .filter(|e| matches!(e.from, Kind::Clue | Kind::NotClue))
+    {
+        let (Some(n), Some(v)) = (
+            name_of(e),
+            voice_at(segments, e.track, e.start_ms, e.end_ms),
+        ) else {
+            continue;
+        };
+        let n = full_name(&n, &known);
+        let entry = score.entry(v).or_default().entry(n.clone()).or_default();
+        if e.from == Kind::Clue {
+            *entry += e.strength;
+        } else {
+            *entry -= e.strength;
+            not.entry(v).or_default().push(n);
+        }
+    }
+    let mut best: Vec<(u32, String, f32)> = score
+        .iter()
+        .filter_map(|(v, s)| {
+            let (n, w) = s.iter().max_by(|a, b| a.1.total_cmp(b.1))?;
+            Some((*v, n.clone(), *w))
+        })
+        .collect();
+    best.sort_by(|a, b| b.2.total_cmp(&a.2));
+    for (v, n, w) in best {
+        if w >= CLUES_NAME && !named(names, &v) && !is_taken(&taken, &n) {
+            taken.push(n.clone());
+            names.insert(v, n);
+        }
+    }
+
+    // Elimination: one voice that talks and one person left.
+    let mut candidates: Vec<String> = known.clone();
+    for s in score.values() {
+        for n in s.keys() {
+            if !candidates.iter().any(|c| same_name(c, n)) {
+                candidates.push(n.clone());
+            }
+        }
+    }
+    let open: Vec<u32> = talk
+        .iter()
+        .filter(|(v, ms)| **ms >= ELIMINATE_MS && !named(names, v))
+        .map(|(v, _)| *v)
+        .collect();
+    if let [v] = open.as_slice() {
+        let left: Vec<&String> = candidates
+            .iter()
+            .filter(|c| !is_taken(&taken, c))
+            .filter(|c| {
+                !not.get(v)
+                    .is_some_and(|n| n.iter().any(|x| same_name(x, c)))
+            })
+            .collect();
+        if let [only] = left.as_slice() {
+            names.insert(*v, (*only).clone());
+        }
+    }
 }
 
 /// Write `evidence.jsonl` again from what the meeting has now (after
 /// transcription, or when the user fixes a speaker).
 pub fn record(dir: &Path, t: &Transcript) -> Vec<Evidence> {
-    let evidence = gather(
-        t,
-        &active_speaker::load(dir),
-        &super::extension::load(dir),
-        &super::manager::speaker_fixes(dir),
-    );
+    let evidence = gather(t, &Sources::load(dir));
     if let Err(e) = save(dir, &evidence) {
         log::warn!("{e}");
     }
     evidence
 }
 
-/// After transcription: record the evidence and work out the names. Writes
-/// the transcript back if the names split the system track.
+/// After transcription (and again once clues are found): record the
+/// evidence and work out the names. Writes the transcript back if the
+/// names split the system track.
 pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
     let Some(mut t) = super::pipeline::load(dir) else {
         return BTreeMap::new();
     };
+    let info = super::manager::read_info(dir);
+    if let Some(i) = &info {
+        let end = i.ended_at.unwrap_or(i.started_at + 60 * 60 * 1000);
+        super::calendar::for_meeting(dir, i.started_at, end);
+    }
+    let user = info.map(|i| i.speakers).unwrap_or_default();
     let evidence = record(dir, &t);
     let before = t.segments.clone();
-    let names = resolve(&mut t.segments, &evidence);
+    let names = resolve(&mut t.segments, &evidence, &user);
     // Saved only when the names took over the track, as before.
     if !names.is_empty() && t.segments != before {
         if let Err(e) = super::pipeline::save(dir, &t) {
@@ -301,16 +532,22 @@ mod tests {
             segments: segments.clone(),
             ..Default::default()
         };
-        let evidence = gather(&t, &sightings, &[], &BTreeMap::new());
+        let evidence = gather(
+            &t,
+            &Sources {
+                seen: sightings.clone(),
+                ..Default::default()
+            },
+        );
         let mut via_evidence = segments.clone();
         let mut direct = segments.clone();
         assert_eq!(
-            resolve(&mut via_evidence, &evidence),
+            resolve(&mut via_evidence, &evidence, &BTreeMap::new()),
             active_speaker::names_for(&mut direct, &sightings)
         );
         assert_eq!(via_evidence, direct);
         assert_eq!(
-            resolve(&mut via_evidence, &evidence)
+            resolve(&mut via_evidence, &evidence, &BTreeMap::new())
                 .get(&100)
                 .map(String::as_str),
             Some("Sam Rivera")
@@ -325,10 +562,16 @@ mod tests {
             segments: one.clone(),
             ..Default::default()
         };
-        let evidence = gather(&t, &sightings, &[], &BTreeMap::new());
+        let evidence = gather(
+            &t,
+            &Sources {
+                seen: sightings.clone(),
+                ..Default::default()
+            },
+        );
         let (mut a, mut b) = (one.clone(), one);
         assert_eq!(
-            resolve(&mut a, &evidence),
+            resolve(&mut a, &evidence, &BTreeMap::new()),
             active_speaker::names_for(&mut b, &sightings)
         );
         assert_eq!(a, b);
@@ -341,7 +584,14 @@ mod tests {
             ..Default::default()
         };
         let fixes = BTreeMap::from([("system-10000".to_string(), 101)]);
-        let evidence = gather(&t, &[seen(1, "Sam Rivera")], &[], &fixes);
+        let evidence = gather(
+            &t,
+            &Sources {
+                seen: vec![seen(1, "Sam Rivera")],
+                fixes,
+                ..Default::default()
+            },
+        );
         assert_eq!(
             evidence.iter().filter(|e| e.from == Kind::Cluster).count(),
             2
@@ -383,12 +633,71 @@ mod tests {
                 text: "Shall we look at the pricing table?".into(),
             },
         });
-        let evidence = gather(&t, &wrong, &heard, &BTreeMap::new());
+        let evidence = gather(
+            &t,
+            &Sources {
+                seen: wrong,
+                heard,
+                ..Default::default()
+            },
+        );
         assert!(evidence
             .iter()
             .any(|e| e.from == Kind::Caption && e.start_ms == 10_000));
-        let names = resolve(&mut t.segments, &evidence);
+        let names = resolve(&mut t.segments, &evidence, &BTreeMap::new());
         assert_eq!(names.get(&100).map(String::as_str), Some("Sam Rivera"));
         assert_eq!(names.get(&101).map(String::as_str), Some("Priya"));
+    }
+
+    #[test]
+    fn clues_name_voices_and_the_last_one_goes_by_elimination() {
+        use crate::meetings::calendar::Invite;
+        use crate::meetings::clues::Clue;
+        // Three voices on the call, each talking 30 s; nobody marked by the
+        // call app. Priya introduces herself; Sam and Jo are invited.
+        let mut t = Transcript {
+            segments: vec![
+                seg(0, 30, Some(100)),
+                seg(30, 60, Some(101)),
+                seg(60, 90, Some(102)),
+            ],
+            ..Default::default()
+        };
+        let clue = |start_s: u64, name: &str, is: bool, strength: f32| Clue {
+            source: Source::System,
+            start_ms: start_s * 1000,
+            end_ms: (start_s + 5) * 1000,
+            name: name.into(),
+            is,
+            strength,
+            quote: String::new(),
+        };
+        let src = Sources {
+            clues: vec![
+                clue(0, "Priya", true, 0.6),
+                // "Sam, what do you think?" from 101 → 101 isn't Sam, 102 is.
+                clue(30, "Sam", false, 0.5),
+                clue(60, "Sam", true, 0.4),
+            ],
+            invite: Some(Invite {
+                title: "Pricing review".into(),
+                attendees: vec!["Sam Rivera".into(), "Jo Park".into(), "Priya".into()],
+                me: Some("Kaspar".into()),
+            }),
+            ..Default::default()
+        };
+        let evidence = gather(&t, &src);
+        let names = resolve(&mut t.segments, &evidence, &BTreeMap::new());
+        assert_eq!(names.get(&100).map(String::as_str), Some("Priya"));
+        // One clue at 0.4 isn't enough alone…
+        assert_eq!(names.get(&102), None);
+        // …so two voices are open and nothing is eliminated.
+        assert_eq!(names.get(&101), None);
+
+        // With 102 named by the user, 101 is the one voice left and Jo Park
+        // the one invitee left (101 isn't Sam).
+        let user = BTreeMap::from([(102, "Sam Rivera".to_string())]);
+        let names = resolve(&mut t.segments, &evidence, &user);
+        assert_eq!(names.get(&101).map(String::as_str), Some("Jo Park"));
     }
 }

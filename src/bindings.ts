@@ -1006,6 +1006,16 @@ async revealExtensionFolder() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async calendarAccess() : Promise<string> {
+    return await TAURI_INVOKE("calendar_access");
+},
+/**
+ * Ask macOS for Calendar access (shows its prompt the first time) and say
+ * what the user chose.
+ */
+async requestCalendarAccess() : Promise<string> {
+    return await TAURI_INVOKE("request_calendar_access");
+},
 /**
  * Transcribe a meeting again from scratch, with the engine chosen now (to
  * compare engines, or after changing vocabulary). The summary is rewritten

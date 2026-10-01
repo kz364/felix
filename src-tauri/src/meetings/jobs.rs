@@ -586,6 +586,13 @@ impl MeetingManager {
             let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
         }
 
+        // Clues to who's who in what was said, once per transcript; then the
+        // names are worked out again with them.
+        let info = &match self.find_clues(id, &dir, &llm, &transcript, info).await {
+            Some(updated) => updated,
+            None => info.clone(),
+        };
+
         let lines: Vec<String> = paragraphs_of(&dir, &transcript)
             .iter()
             .map(|p| {
@@ -622,6 +629,39 @@ impl MeetingManager {
 }
 
 impl MeetingManager {
+    /// Find clues (if not found yet) and name voices again with them. The
+    /// meeting as it is after, if anything changed.
+    async fn find_clues(
+        &self,
+        id: &str,
+        dir: &std::path::Path,
+        llm: &Llm,
+        transcript: &super::transcript::Transcript,
+        info: &MeetingInfo,
+    ) -> Option<MeetingInfo> {
+        if dir.join(super::clues::FILE).exists() {
+            return None;
+        }
+        let paragraphs = paragraphs_of(dir, transcript);
+        let label = |p: &Paragraph| info.speaker_label(p).unwrap_or_else(|| "Speaker".into());
+        let clues = match super::clues::find(llm, &paragraphs, &label).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Meeting {id}: couldn't look for speaker clues: {e}");
+                return None;
+            }
+        };
+        log::info!("Meeting {id}: {} speaker clues", clues.len());
+        summary::save_json(dir, super::clues::FILE, &clues).ok()?;
+        let names = super::speakers::apply(dir);
+        if names == info.app_speakers {
+            return None;
+        }
+        self.update_info(id, |i| i.app_speakers = names.clone());
+        let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
+        super::manager::read_info(dir)
+    }
+
     /// The last summarised meeting the user gave the same title, as context
     /// for a recurring meeting.
     fn previous_in_series(&self, info: &MeetingInfo) -> Option<String> {

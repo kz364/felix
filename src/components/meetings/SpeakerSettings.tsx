@@ -73,3 +73,41 @@ export const ChromeExtension: React.FC = () => {
     </SettingContainer>
   );
 };
+
+/** Calendar access, so the people invited to a meeting's event can name
+ *  the voices nobody else did. Felix asks only from this button. */
+export const CalendarAccess: React.FC = () => {
+  const { t } = useTranslation();
+  const [access, setAccess] = useState<string | null>(null);
+  useEffect(() => {
+    commands.calendarAccess().then(setAccess);
+  }, []);
+  const ask = async () => setAccess(await commands.requestCalendarAccess());
+  const state =
+    access === "full"
+      ? t("meetings.settings.calendar.on")
+      : access === "denied" || access === "restricted"
+        ? t("meetings.settings.calendar.denied")
+        : t("meetings.settings.calendar.off");
+  return (
+    <SettingContainer
+      title={t("meetings.settings.calendar.title")}
+      description={t("meetings.settings.calendar.description")}
+      descriptionMode="inline"
+      grouped
+    >
+      <div className="flex items-center gap-3 text-sm">
+        <span className={access === "full" ? "text-green-600" : "text-text/70"}>
+          {state}
+        </span>
+        {access !== "full" &&
+          access !== "denied" &&
+          access !== "restricted" && (
+            <Button size="sm" onClick={ask}>
+              {t("meetings.settings.calendar.allow")}
+            </Button>
+          )}
+      </div>
+    </SettingContainer>
+  );
+};

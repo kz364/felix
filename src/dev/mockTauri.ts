@@ -329,6 +329,7 @@ const RESPONSES: Record<string, unknown> = {
     ],
   },
   get_meeting_summary: null,
+  calendar_access: "not_determined",
   extension_status: {
     host_installed: true,
     heard_secs_ago: 40,

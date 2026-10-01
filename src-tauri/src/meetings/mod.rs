@@ -5,8 +5,10 @@
 pub mod active_speaker;
 pub mod ask;
 mod awake;
+pub mod calendar;
 pub mod call_apps;
 pub mod capture;
+pub mod clues;
 pub mod detect;
 pub mod diarize;
 pub mod echo;

@@ -531,7 +531,12 @@ impl MeetingManager {
             super::detect::start(id);
         }
         let recording = Recording::start(&dir, info.mode, mic, true)?;
-        for file in [transcript::FILE, summary::CLEANED_FILE, super::live::FILE] {
+        for file in [
+            transcript::FILE,
+            summary::CLEANED_FILE,
+            super::live::FILE,
+            super::clues::FILE,
+        ] {
             let _ = std::fs::remove_file(dir.join(file));
         }
         info.resumed_at_ms
@@ -1202,7 +1207,7 @@ pub fn retranscribe_meeting(app: AppHandle, id: String) -> Result<(), String> {
     {
         return Err("This meeting is being processed; try again when it's done".into());
     }
-    for file in [transcript::FILE, summary::CLEANED_FILE] {
+    for file in [transcript::FILE, summary::CLEANED_FILE, super::clues::FILE] {
         match std::fs::remove_file(dir.join(file)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

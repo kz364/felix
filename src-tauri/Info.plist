@@ -6,6 +6,10 @@
   <string>Request microphone access to transcribe audio locally</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>Felix records the other people on a call (the audio your Mac plays) when you record a meeting. It stays on your Mac.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Felix reads who's invited to the event a meeting is recorded in, to put names to the voices. It only reads, and nothing leaves your Mac.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Felix reads who's invited to the event a meeting is recorded in, to put names to the voices. It only reads, and nothing leaves your Mac.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Felix reads the address of your browser's active tab so dictation can use the style you chose for that website.</string>
 </dict>

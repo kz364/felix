@@ -836,6 +836,8 @@ pub fn run(cli_args: CliArgs) {
             meetings::extension::extension_status,
             meetings::extension::install_extension_host,
             meetings::extension::reveal_extension_folder,
+            meetings::calendar::calendar_access,
+            meetings::calendar::request_calendar_access,
             meetings::manager::retranscribe_meeting,
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,

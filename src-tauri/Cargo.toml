@@ -178,6 +178,9 @@ objc2-core-foundation = "0.3"
 # Accessibility (AXUIElement) reads of the focused text field.
 core-foundation = "0.10"
 objc2-service-management = "0.3.2"
+# Meeting speaker names: who's invited to the calendar event a call is in.
+objc2-event-kit = { version = "0.3", features = ["EKEventStore", "EKEvent", "EKCalendar", "EKCalendarItem", "EKParticipant", "EKObject", "EKTypes", "block2"] }
+block2 = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }

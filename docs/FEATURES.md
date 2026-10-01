@@ -205,6 +205,17 @@ Meetings never interrupt or change dictation.
   extension only) and an owner-only socket; Felix logs it into the meeting
   being recorded (`extension.jsonl`). Its marks replace the call window's
   when present; a caption matching a segment's words counts triple.
+- **Clues and elimination**: with the summary, the meeting's model looks for
+  names said out loud ("I'm Priya", "Sam, what do you think?", "thanks,
+  Sam", "as Sam said"); each must quote its paragraph with the name in it.
+  Clues name a voice once they add up (`clues.json`); "Sam" becomes "Sam
+  Rivera" when he's the only Sam known. When exactly one voice that talks
+  20 s or more is left and exactly one person (call participants, people
+  the call app or extension saw, invitees) is left, it's theirs.
+- **Calendar invites** (Settings → Meetings → Who said what): once Calendar
+  access is allowed there, the event a meeting overlapped most gives its
+  attendees as candidates and the user's own name, which no voice gets
+  (`calendar.json`). Read only via EventKit; Felix never asks on its own.
 - **Your voice in person** (groundwork, not switched on): given a voiceprint
   for the mic, the in-person speaker that clearly matches it becomes "Me".
   Nothing records voiceprints yet; they'll be one per mic, and never made
