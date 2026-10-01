@@ -1,5 +1,5 @@
-// Watches a call page for who's talking and sends it to Felix (through the
-// background worker). Reads names only: no audio, no video, and caption
+// Watches a call page (Google Meet, and the Zoom and Teams web clients) for
+// who's talking and sends it to Felix (through the background worker). Reads names only: no audio, no video, and caption
 // text only when the user turns captions on in the extension's popup.
 //
 // Talking is read from the page itself. Each participant's tile animates
@@ -60,7 +60,9 @@
     }
     changes.clear();
     busy.sort((a, b) => b[0] - a[0]);
-    const names = [...new Set(busy.map((b) => b[1]))];
+    // Pages that say it outright ("Sam Lee, speaking") are believed first.
+    const said = site.speaking ? site.speaking() : [];
+    const names = [...new Set(said.length ? said : busy.map((b) => b[1]))];
     if (names.length > 0 && names.length <= MAX_SPEAKING) {
       send({ type: "speaking", names });
     }
@@ -149,6 +151,83 @@
         },
       };
     }
+    if (host === "app.zoom.us" || host.endsWith(".zoom.us")) {
+      if (!location.pathname.includes("/wc/")) return null;
+      return {
+        app: "zoom",
+        tile: '[class*="video-frame"], [class*="avatar__avatar"]',
+        isSelf: () => false,
+        nameOf: (tile) =>
+          clean(
+            textOf(tile.querySelector('[class*="avatar-name"], [class*="footer"] span')) ||
+              tile.getAttribute("aria-label"),
+          ),
+        speaking: () => {
+          const out = labelled();
+          for (const el of document.querySelectorAll(
+            '[class*="active-speaker"] [class*="avatar-name"], [class*="video-frame--active"] [class*="avatar-name"]',
+          )) {
+            const n = clean(textOf(el));
+            if (n) out.push(n);
+          }
+          return out;
+        },
+        participants: () =>
+          names('[class*="participants-item__display-name"], [class*="participants-item__name"]'),
+        captionLines: () => [],
+      };
+    }
+    if (host === "teams.microsoft.com" || host === "teams.live.com" || host === "teams.cloud.microsoft") {
+      return {
+        app: "teams",
+        tile: '[data-tid*="video-tile"], [data-cid*="participant"], [data-stream-type]',
+        isSelf: (tile) => /\(you\)|\(me\)/i.test(tile.getAttribute("aria-label") || ""),
+        nameOf: (tile) =>
+          clean(
+            textOf(tile.querySelector('[data-tid*="display-name"], [data-tid*="name"]')) ||
+              (tile.getAttribute("aria-label") || "").split(",")[0],
+          ),
+        speaking: () => labelled(),
+        participants: () => names('[data-tid*="roster"] [data-tid*="name"], [data-tid*="participant-name"]'),
+        captionLines: () => {
+          const out = [];
+          for (const item of document.querySelectorAll('[data-tid="closed-caption-text"]')) {
+            const block = item.closest('[data-tid*="caption"], li, div');
+            const nameEl = block && block.querySelector('[data-tid="author"], [class*="author"]');
+            const name = clean(textOf(nameEl));
+            const text = textOf(item).trim();
+            if (name && text) out.push({ el: item, name, text });
+          }
+          return out;
+        },
+      };
+    }
     return null;
+  }
+
+  function textOf(el) {
+    return el ? el.textContent || "" : "";
+  }
+
+  function names(selector) {
+    const out = new Set();
+    for (const el of document.querySelectorAll(selector)) {
+      const n = clean(textOf(el));
+      if (n) out.add(n);
+    }
+    return [...out].sort();
+  }
+
+  // "Sam Lee, speaking" / "Sam Lee is speaking" in an aria-label.
+  function labelled() {
+    const out = [];
+    for (const el of document.querySelectorAll('[aria-label*="speaking" i]')) {
+      const label = el.getAttribute("aria-label") || "";
+      if (/you are speaking|\(you\)|no one is speaking|not speaking/i.test(label)) continue;
+      const m = label.match(/^(.+?)(?:,\s*|\s+is\s+)(?:currently\s+)?speaking/i);
+      const n = m && clean(m[1]);
+      if (n && !out.includes(n)) out.push(n);
+    }
+    return out;
   }
 })();
