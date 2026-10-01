@@ -218,7 +218,7 @@ pub fn run(
 ) -> Result<Transcript, Stopped> {
     // Resume only work done the same way; otherwise start over.
     let engine = match speaker_model {
-        Some(_) => format!("{engine} +speakers"),
+        Some(_) => format!("{engine} +speakers eres2net"),
         None => engine.to_string(),
     };
     let engine = engine.as_str();
@@ -275,6 +275,7 @@ pub fn run(
     // voices on the system track, and anyone in the room with the user on
     // the mic. If it fails, the transcript goes ahead without speakers.
     let mut margins: Vec<(Source, Vec<f32>)> = Vec::new();
+    let mut fingerprints: Vec<(Source, super::diarize::Prints)> = Vec::new();
     let mut diarize = |source: Source, wav: &Path, speech: &[bool], print: Option<&[f32]>| {
         let hints = match source {
             Source::System => super::speakers::name_hints(dir, speech.len()),
@@ -284,6 +285,7 @@ pub fn run(
             .inspect_err(|e| log::warn!("Couldn't tell the speakers apart: {e}"))
             .ok()?;
         margins.push((source, v.margins));
+        fingerprints.push((source, (v.windows, v.embeddings)));
         Some(v.labels)
     };
     let (mic_speakers, system_speakers) = if speaker_model.is_some() {
@@ -304,6 +306,29 @@ pub fn run(
     } else {
         (None, None)
     };
+
+    // Each voice's fingerprint, for remembering voices across meetings.
+    if !fingerprints.is_empty() {
+        let mut prints = BTreeMap::new();
+        for (source, (wins, embs)) in &fingerprints {
+            let labels = match source {
+                Source::Mic => &mic_speakers,
+                Source::System => &system_speakers,
+            };
+            if let Some(labels) = labels {
+                for (v, (print, windows)) in super::diarize::voice_prints(labels, wins, embs) {
+                    // On a call the user is the mic's unlabelled voice.
+                    let v = if *source == Source::Mic && v == super::diarize::ME {
+                        super::diarize::ME
+                    } else {
+                        v
+                    };
+                    prints.insert(v, super::remembered::Print { print, windows });
+                }
+            }
+        }
+        let _ = super::summary::save_json(dir, super::remembered::PRINTS_FILE, &prints);
+    }
 
     // Every chunk of every track, in time order, cut where the speaker changes.
     let mut plan: Vec<(Source, Chunk, Option<u32>)> = Vec::new();

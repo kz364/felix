@@ -231,33 +231,77 @@ const PARAGRAPH_MAX_MS: u64 = 60_000;
 /// from the same source join unless there's a long pause or the paragraph is
 /// already long. Echo and empty segments are left out.
 pub fn paragraphs(segments: &[Segment]) -> Vec<Paragraph> {
+    fixed_paragraphs(segments, &std::collections::BTreeMap::new())
+}
+
+/// A segment's key, as paragraph keys are made ("system-5000").
+pub fn segment_key(s: &Segment) -> String {
+    format!("{}-{}", s.source.key(), s.start_ms)
+}
+
+/// Paragraphs with the user's speaker fixes, keyed by the segment they
+/// start at. A fix holds from its segment to the end of the paragraph it
+/// falls in: at a paragraph's start it relabels the paragraph, further in
+/// it splits the paragraph there. Paragraphs never merge across a fix, so
+/// the others keep their keys.
+pub fn fixed_paragraphs(
+    segments: &[Segment],
+    fixes: &std::collections::BTreeMap<String, u32>,
+) -> Vec<Paragraph> {
     let mut segs: Vec<&Segment> = segments
         .iter()
         .filter(|s| !s.echo && !s.text.trim().is_empty())
         .collect();
     segs.sort_by_key(|s| (s.start_ms, s.source == Source::System));
+    // Paragraphs as transcribed: (source, speaker, start, end) per group.
+    let mut groups: Vec<(Source, Option<u32>, u64, u64)> = Vec::new();
+    let mut group_of: Vec<usize> = Vec::with_capacity(segs.len());
+    for s in &segs {
+        // Only the paragraph just before can take it.
+        let joins = groups.len().checked_sub(1).filter(|&i| {
+            let g = &groups[i];
+            g.0 == s.source
+                && g.1 == s.speaker
+                && s.start_ms < g.3 + PARAGRAPH_PAUSE_MS
+                && s.end_ms - g.2 <= PARAGRAPH_MAX_MS
+        });
+        match joins {
+            Some(i) => {
+                groups[i].3 = groups[i].3.max(s.end_ms);
+                group_of.push(i);
+            }
+            None => {
+                groups.push((s.source, s.speaker, s.start_ms, s.end_ms));
+                group_of.push(groups.len() - 1);
+            }
+        }
+    }
     let mut out: Vec<Paragraph> = Vec::new();
-    for s in segs {
+    // Per group: the paragraph being built (index in `out`) and the fix in force.
+    let mut open: Vec<Option<(usize, Option<u32>)>> = vec![None; groups.len()];
+    for (s, &g) in segs.iter().zip(&group_of) {
         let text = s.text.trim();
-        match out.last_mut() {
-            Some(p)
-                if p.source == s.source
-                    && p.speaker == s.speaker
-                    && s.start_ms < p.end_ms + PARAGRAPH_PAUSE_MS
-                    && s.end_ms - p.start_ms <= PARAGRAPH_MAX_MS =>
-            {
+        let fix = fixes.get(&segment_key(s)).copied();
+        match (&mut open[g], fix) {
+            (Some((i, _)), None) => {
+                let p = &mut out[*i];
                 p.text.push(' ');
                 p.text.push_str(text);
                 p.end_ms = p.end_ms.max(s.end_ms);
             }
-            _ => out.push(Paragraph {
-                source: s.source,
-                start_ms: s.start_ms,
-                end_ms: s.end_ms,
-                text: text.to_string(),
-                raw: None,
-                speaker: s.speaker,
-            }),
+            (slot, _) => {
+                let carried = slot.and_then(|(_, f)| f);
+                let speaker = fix.or(carried).or(s.speaker);
+                out.push(Paragraph {
+                    source: s.source,
+                    start_ms: s.start_ms,
+                    end_ms: s.end_ms,
+                    text: text.to_string(),
+                    raw: None,
+                    speaker,
+                });
+                *slot = Some((out.len() - 1, fix.or(carried)));
+            }
         }
     }
     out
@@ -417,5 +461,52 @@ mod tests {
             text,
             "[0:00] Me: Hi everyone. Let's start.\n[0:09] Them: Sounds good.\n[0:20] Me: Next item."
         );
+    }
+
+    #[test]
+    fn a_fix_relabels_its_paragraph_or_splits_it_from_there() {
+        let seg = |start_s: u64, speaker: u32| Segment {
+            source: Source::System,
+            start_ms: start_s * 1000,
+            end_ms: start_s * 1000 + 900,
+            text: format!("w{start_s}"),
+            echo: false,
+            speaker: Some(speaker),
+        };
+        // Two paragraphs: 0–2 s and (after a pause) 10–12 s, both voice 100.
+        let segs = vec![
+            seg(0, 100),
+            seg(1, 100),
+            seg(2, 100),
+            seg(10, 100),
+            seg(11, 100),
+        ];
+        assert_eq!(paragraphs(&segs).len(), 2);
+        let fixes = |k: &[(&str, u32)]| {
+            k.iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        // At a paragraph's start: the whole paragraph, nothing else.
+        let p = fixed_paragraphs(&segs, &fixes(&[("system-10000", 101)]));
+        assert_eq!(p.len(), 2);
+        assert_eq!((p[0].speaker, p[1].speaker), (Some(100), Some(101)));
+        // Further in: split there, the rest of that paragraph only.
+        let p = fixed_paragraphs(&segs, &fixes(&[("system-1000", 101)]));
+        let got: Vec<(u64, Option<u32>, &str)> = p
+            .iter()
+            .map(|p| (p.start_ms, p.speaker, p.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (0, Some(100), "w0"),
+                (1000, Some(101), "w1 w2"),
+                (10_000, Some(100), "w10 w11")
+            ]
+        );
+        // A split given back to the first voice doesn't merge into it.
+        let p = fixed_paragraphs(&segs, &fixes(&[("system-1000", 100)]));
+        assert_eq!(p.len(), 3);
     }
 }

@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands, type ExtensionStatus } from "@/bindings";
+import {
+  commands,
+  type ExtensionStatus,
+  type RememberedVoices as Remembered,
+} from "@/bindings";
+import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Button } from "../ui/Button";
 
@@ -109,5 +114,144 @@ export const CalendarAccess: React.FC = () => {
           )}
       </div>
     </SettingContainer>
+  );
+};
+
+/** Voices remembered across meetings: rename, merge two that are one
+ *  person, forget one, or stop remembering. Stored on this Mac only. */
+export const RememberedVoices: React.FC = () => {
+  const { t } = useTranslation();
+  const [data, setData] = useState<Remembered | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [merging, setMerging] = useState<number | null>(null);
+
+  const load = useCallback(() => {
+    commands.rememberedVoices().then((r) => {
+      if (r.status === "ok") setData(r.data);
+    });
+  }, []);
+  useEffect(load, [load]);
+
+  const label = (v: Remembered["voices"][number]) =>
+    v.name ?? t("meetings.settings.remembered.unknown", { n: v.number });
+
+  const save = async (id: number) => {
+    await commands.renameRememberedVoice(id, draft);
+    setEditing(null);
+    load();
+  };
+
+  return (
+    <>
+      <ToggleSwitch
+        checked={data?.enabled ?? true}
+        onChange={async (on) => {
+          await commands.setRememberVoices(on);
+          load();
+        }}
+        isUpdating={data === null}
+        label={t("meetings.settings.remembered.title")}
+        description={t("meetings.settings.remembered.description")}
+        descriptionMode="inline"
+        grouped
+      />
+      {data?.enabled && data.voices.length > 0 && (
+        <SettingContainer
+          title={t("meetings.settings.remembered.listTitle", {
+            count: data.voices.length,
+          })}
+          description={t("meetings.settings.remembered.listDescription")}
+          descriptionMode="inline"
+          layout="stacked"
+          grouped
+        >
+          <ul className="divide-y divide-stone/15 text-sm">
+            {data.voices.map((v) => (
+              <li key={v.id} className="flex items-center gap-2 py-1.5">
+                {editing === v.id ? (
+                  <input
+                    autoFocus
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") save(v.id);
+                      if (e.key === "Escape") setEditing(null);
+                    }}
+                    onBlur={() => save(v.id)}
+                    placeholder={t(
+                      "meetings.settings.remembered.namePlaceholder",
+                    )}
+                    className="flex-1 rounded border border-stone/25 bg-surface px-2 py-0.5 outline-none focus:border-accent/60"
+                  />
+                ) : (
+                  <span
+                    className={`flex-1 ${v.name ? "" : "text-text/55 italic"}`}
+                  >
+                    {label(v)}
+                  </span>
+                )}
+                <span className="text-text/45 text-xs whitespace-nowrap">
+                  {t("meetings.settings.remembered.meetings", {
+                    count: v.meetings,
+                  })}
+                </span>
+                {merging !== null && merging !== v.id ? (
+                  <Button
+                    size="sm"
+                    variant="primary-soft"
+                    onClick={async () => {
+                      await commands.mergeRememberedVoices(v.id, merging);
+                      setMerging(null);
+                      load();
+                    }}
+                  >
+                    {t("meetings.settings.remembered.mergeInto")}
+                  </Button>
+                ) : merging === v.id ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setMerging(null)}
+                  >
+                    {t("meetings.settings.remembered.cancel")}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setDraft(v.name ?? "");
+                        setEditing(v.id);
+                      }}
+                    >
+                      {t("meetings.settings.remembered.rename")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setMerging(v.id)}
+                    >
+                      {t("meetings.settings.remembered.merge")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger-ghost"
+                      onClick={async () => {
+                        await commands.deleteRememberedVoice(v.id);
+                        load();
+                      }}
+                    >
+                      {t("meetings.settings.remembered.forget")}
+                    </Button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </SettingContainer>
+      )}
+    </>
   );
 };

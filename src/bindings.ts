@@ -1016,6 +1016,82 @@ async calendarAccess() : Promise<string> {
 async requestCalendarAccess() : Promise<string> {
     return await TAURI_INVOKE("request_calendar_access");
 },
+async rememberedVoices() : Promise<Result<RememberedVoices, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remembered_voices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setRememberVoices(on: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_remember_voices", { on }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameRememberedVoice(id: number, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_remembered_voice", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Two remembered voices are one person: `drop` goes into `keep`.
+ */
+async mergeRememberedVoices(keep: number, drop: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("merge_remembered_voices", { keep, drop }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteRememberedVoice(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_remembered_voice", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The transcribed pieces a paragraph is made of, to pick where to split it.
+ */
+async paragraphParts(id: string, source: Source, startMs: number) : Promise<Result<ParagraphPart[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("paragraph_parts", { id, source, startMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Two voices in a meeting are one person.
+ */
+async mergeMeetingVoices(id: string, from: number, into: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("merge_meeting_voices", { id, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Paragraphs whose speaker Felix isn't sure of, by paragraph key, with why.
+ */
+async speakerDoubts(id: string) : Promise<Result<Partial<{ [key in string]: string }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speaker_doubts", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Transcribe a meeting again from scratch, with the engine chosen now (to
  * compare engines, or after changing vocabulary). The summary is rewritten
@@ -1935,6 +2011,24 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+/**
+ * One part of a paragraph as transcribed, for splitting it.
+ */
+export type ParagraphPart = { start_ms: number; text: string }
+export type RememberedVoice = { id: number; 
+/**
+ * None until someone names them.
+ */
+name: string | null; 
+/**
+ * For "Unknown voice N".
+ */
+number: number; meetings: number; 
+/**
+ * Unix ms.
+ */
+last_heard: number; windows: number }
+export type RememberedVoices = { enabled: boolean; voices: RememberedVoice[] }
 export type ExtensionStatus = { 
 /**
  * The host manifest is in at least one browser and points at this app.

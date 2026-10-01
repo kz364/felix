@@ -18,6 +18,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const FILE: &str = "evidence.jsonl";
+/// Paragraphs whose speaker is unsure, by paragraph key, with why.
+pub const DOUBTS_FILE: &str = "speakers.json";
+/// A chunk's voice margin below this is "close" (see `diarize::Voices`).
+const CLOSE_MARGIN: f32 = 0.05;
+/// …and at or below this, two people talked at once.
+const OVERLAP_MARGIN: f32 = -0.1;
 
 /// Who a piece of evidence points at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -158,7 +164,7 @@ pub fn gather(t: &Transcript, src: &Sources) -> Vec<Evidence> {
         );
         out.extend(invite.me.iter().map(|n| name_evidence(n, Kind::Myself)));
     }
-    for p in super::transcript::paragraphs(&t.segments) {
+    for p in super::transcript::fixed_paragraphs(&t.segments, &src.fixes) {
         if let Some(&s) = src.fixes.get(&super::summary::paragraph_key(&p)) {
             out.push(Evidence {
                 track: p.source,
@@ -273,6 +279,22 @@ pub fn resolve(
     evidence: &[Evidence],
     user: &BTreeMap<u32, String>,
 ) -> BTreeMap<u32, String> {
+    let mut names = call_app_names(segments, evidence);
+    finish(segments, evidence, user, &mut names, &Remembered::default());
+    names
+}
+
+/// What remembered voices say about a meeting's voices.
+#[derive(Default)]
+pub struct Remembered {
+    /// Voices matching a remembered voice someone named.
+    pub named: BTreeMap<u32, String>,
+    /// "Unknown voice N" for voices heard before but never named.
+    pub unknown: BTreeMap<u32, String>,
+}
+
+/// The names the call app (or the extension) put on voices.
+pub fn call_app_names(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeMap<u32, String> {
     // The extension sees the page itself; when it was there, the
     // accessibility tree's guesses are left out.
     let has_extension = evidence
@@ -299,9 +321,37 @@ pub fn resolve(
         }
     }
     seen.sort_by_key(|s| s.at_ms);
-    let mut names = active_speaker::names_for(segments, &seen);
-    by_clues_and_elimination(segments, evidence, user, &mut names);
-    names
+    active_speaker::names_for(segments, &seen)
+}
+
+/// After the call app: remembered voices, then clues and elimination, then
+/// "Unknown voice N" for the rest that were heard before.
+fn finish(
+    segments: &[Segment],
+    evidence: &[Evidence],
+    user: &BTreeMap<u32, String>,
+    names: &mut BTreeMap<u32, String>,
+    remembered: &Remembered,
+) -> Vec<u32> {
+    for (v, n) in &remembered.named {
+        let taken = names.values().chain(user.values()).any(|t| same_name(t, n));
+        if !names.contains_key(v) && !user.contains_key(v) && !taken {
+            names.insert(*v, n.clone());
+        }
+    }
+    let before: Vec<u32> = names.keys().copied().collect();
+    by_clues_and_elimination(segments, evidence, user, names);
+    let guessed: Vec<u32> = names
+        .keys()
+        .filter(|v| !before.contains(v))
+        .copied()
+        .collect();
+    for (v, n) in &remembered.unknown {
+        if !names.contains_key(v) && !user.contains_key(v) {
+            names.insert(*v, n.clone());
+        }
+    }
+    guessed
 }
 
 fn same_name(a: &str, b: &str) -> bool {
@@ -497,6 +547,43 @@ pub fn name_hints(dir: &Path, frames: usize) -> Vec<Option<String>> {
     out
 }
 
+/// Which paragraphs' speakers are unsure, and why. Paragraphs the user
+/// fixed and voices the user named aren't.
+pub fn doubts(
+    dir: &Path,
+    segments: &[Segment],
+    user: &BTreeMap<u32, String>,
+    guessed: &[u32],
+) -> BTreeMap<String, String> {
+    let margins: BTreeMap<String, f32> =
+        super::summary::load_json(dir, super::pipeline::VOICES_FILE).unwrap_or_default();
+    let fixes = super::manager::speaker_fixes(dir);
+    let mut out = BTreeMap::new();
+    for p in super::transcript::fixed_paragraphs(segments, &fixes) {
+        let key = super::summary::paragraph_key(&p);
+        let Some(v) = p.speaker else { continue };
+        if fixes.contains_key(&key) || user.contains_key(&v) {
+            continue;
+        }
+        let worst = segments
+            .iter()
+            .filter(|s| s.source == p.source && s.start_ms >= p.start_ms && s.start_ms < p.end_ms)
+            .filter_map(|s| margins.get(&super::transcript::segment_key(s)))
+            .fold(f32::INFINITY, |a, &b| a.min(b));
+        let why = if worst <= OVERLAP_MARGIN {
+            "overlap"
+        } else if worst < CLOSE_MARGIN {
+            "close"
+        } else if guessed.contains(&v) {
+            "guessed"
+        } else {
+            continue;
+        };
+        out.insert(key, why.to_string());
+    }
+    out
+}
+
 /// Write `evidence.jsonl` again from what the meeting has now (after
 /// transcription, or when the user fixes a speaker).
 pub fn record(dir: &Path, t: &Transcript) -> Vec<Evidence> {
@@ -522,7 +609,17 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
     let user = info.map(|i| i.speakers).unwrap_or_default();
     let evidence = record(dir, &t);
     let before = t.segments.clone();
-    let names = resolve(&mut t.segments, &evidence, &user);
+    let mut names = call_app_names(&mut t.segments, &evidence);
+    let (named, unknown) = super::remembered::apply(dir, &user, &names);
+    let guessed = finish(
+        &t.segments,
+        &evidence,
+        &user,
+        &mut names,
+        &Remembered { named, unknown },
+    );
+    let doubts = doubts(dir, &t.segments, &user, &guessed);
+    let _ = super::summary::save_json(dir, DOUBTS_FILE, &doubts);
     // Saved only when the names took over the track, as before.
     if !names.is_empty() && t.segments != before {
         if let Err(e) = super::pipeline::save(dir, &t) {

@@ -196,9 +196,9 @@ Meetings never interrupt or change dictation.
   the last item in the same menu. Fixes are kept per paragraph
   (`speaker_fixes.json`), survive cleanup and a new summary, and are what
   `examples/speaker_eval` scores the automatic labels against.
-- **Chrome extension for Meet** (Settings → Meetings → Who said what):
+- **Chrome extension for calls** (Settings → Meetings → Who said what):
   an unpacked extension (`resources/meet-extension`, ID pinned by its key)
-  watches Meet's tiles for who's talking and the participant list, and,
+  watches Meet's tiles (and the Zoom and Teams web clients' speaking marks) for who's talking and the participant list, and,
   only if turned on in its popup, captions. It reaches Felix through
   Felix's own binary as Chrome's native host (`com.felix.meetings`, set up
   from Settings into each Chromium browser's folder, allowed for this
@@ -216,6 +216,25 @@ Meetings never interrupt or change dictation.
   access is allowed there, the event a meeting overlapped most gives its
   attendees as candidates and the user's own name, which no voice gets
   (`calendar.json`). Read only via EventKit; Felix never asks on its own.
+- **Telling voices apart**: 3D-Speaker ERes2Net fingerprints (40 MB, downloaded
+  with "Tell speakers apart"), grouped over the whole meeting after
+  subtracting its mean, with windows under different call-app names never
+  merged. pyannote's segmentation model (6 MB) cuts windows where the
+  speaker changes and leaves out overlapped speech. AMI DER went from 58%
+  to about 37% (notes/benchmarking.md).
+- **Remembered voices** (Settings → Meetings → Who said what): every voice
+  heard for 15 s or more is kept as a fingerprint on this Mac
+  (`voices/remembered.json`); a voice that clearly matches one in a later
+  meeting gets its name, and unnamed ones heard twice show as "Unknown
+  voice N". Names come from the user (always) or the call app (when none
+  yet). Rename, merge, forget, or switch remembering off. On calls the
+  mic's main voice keeps the user's print for that mic up to date (not
+  dictation mics).
+- **Splitting and merging in the transcript**: "Split this paragraph…" picks
+  the piece a new person starts at, then who; "… is someone else here…"
+  gives every paragraph of a voice to another. A "?" after a name says why
+  it may be wrong (two people at once, a voice hard to tell apart, or named
+  by clue or elimination); `speakers.json`.
 - **Your voice in person** (groundwork, not switched on): given a voiceprint
   for the mic, the in-person speaker that clearly matches it becomes "Me".
   Nothing records voiceprints yet; they'll be one per mic, and never made

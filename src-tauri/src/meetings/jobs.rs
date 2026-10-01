@@ -136,40 +136,67 @@ impl MeetingManager {
         self.set_progress(None);
     }
 
-    /// The speaker model, downloaded (26.5 MB) the first time it's needed.
+    /// The speaker model, downloaded (39.6 MB) the first time it's needed,
+    /// and the segmentation model (6 MB) next to it for turns and overlaps;
+    /// without that one, speakers are still told apart, just less sharply.
     fn speaker_model(&self, id: &str) -> Result<std::path::PathBuf, String> {
         use super::diarize::{MODEL_BYTES, MODEL_FILE, MODEL_URL};
-        use futures_util::StreamExt;
-        use std::io::Write;
         let dir = crate::portable::app_data_dir(&self.app)
             .map_err(|e| e.to_string())?
             .join("models");
         let path = dir.join(MODEL_FILE);
-        if std::fs::metadata(&path).is_ok_and(|m| m.len() == MODEL_BYTES) {
-            return Ok(path);
+        self.download(id, MODEL_URL, &path, MODEL_BYTES, "speaker model")?;
+        let seg = dir
+            .join(super::segment::MODEL_DIR)
+            .join(super::segment::MODEL_FILE);
+        if let Err(e) = self.download(
+            id,
+            super::segment::MODEL_URL,
+            &seg,
+            super::segment::MODEL_BYTES,
+            "segmentation model",
+        ) {
+            log::warn!("{e}");
         }
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        log::info!("Downloading the speaker model from {MODEL_URL}");
-        let partial = dir.join(format!("{MODEL_FILE}.partial"));
+        Ok(path)
+    }
+
+    /// Download `url` to `path` unless it's there with the right size.
+    fn download(
+        &self,
+        id: &str,
+        url: &str,
+        path: &std::path::Path,
+        bytes: u64,
+        what: &str,
+    ) -> Result<(), String> {
+        use futures_util::StreamExt;
+        use std::io::Write;
+        if std::fs::metadata(path).is_ok_and(|m| m.len() == bytes) {
+            return Ok(());
+        }
+        let dir = path.parent().ok_or("No models folder")?;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        log::info!("Downloading the {what} from {url}");
+        let partial = path.with_extension("partial");
         tauri::async_runtime::block_on(async {
-            let response = reqwest::get(MODEL_URL)
+            let response = reqwest::get(url)
                 .await
                 .and_then(|r| r.error_for_status())
-                .map_err(|e| format!("Couldn't download the speaker model: {e}"))?;
+                .map_err(|e| format!("Couldn't download the {what}: {e}"))?;
             let mut file = std::fs::File::create(&partial).map_err(|e| e.to_string())?;
             let mut stream = response.bytes_stream();
             let mut got = 0usize;
-            while let Some(bytes) = stream.next().await {
-                let bytes =
-                    bytes.map_err(|e| format!("The speaker model download stopped: {e}"))?;
-                file.write_all(&bytes).map_err(|e| e.to_string())?;
-                got += bytes.len();
-                self.progress_to(id, Stage::Identifying, got, MODEL_BYTES as usize);
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| format!("The {what} download stopped: {e}"))?;
+                file.write_all(&chunk).map_err(|e| e.to_string())?;
+                got += chunk.len();
+                self.progress_to(id, Stage::Identifying, got, bytes as usize);
             }
             file.flush().map_err(|e| e.to_string())?;
-            if got as u64 != MODEL_BYTES {
+            if got as u64 != bytes {
                 return Err(format!(
-                    "The speaker model download was {got} bytes, expected {MODEL_BYTES}"
+                    "The {what} download was {got} bytes, expected {bytes}"
                 ));
             }
             Ok::<(), String>(())
@@ -177,8 +204,7 @@ impl MeetingManager {
         .inspect_err(|_| {
             let _ = std::fs::remove_file(&partial);
         })?;
-        std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;
-        Ok(path)
+        std::fs::rename(&partial, path).map_err(|e| e.to_string())
     }
 
     /// Transcribe one meeting. True if it's done and can be summarised.
@@ -560,8 +586,8 @@ impl MeetingManager {
             .ok_or("The meeting isn't transcribed yet")?;
 
         if settings.meeting_cleanup {
-            let raw = super::manager::apply_speaker_fixes(
-                super::transcript::paragraphs(&transcript.segments),
+            let raw = super::transcript::fixed_paragraphs(
+                &transcript.segments,
                 &super::manager::speaker_fixes(&dir),
             );
             let mut cleaned: Cleaned =

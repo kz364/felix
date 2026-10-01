@@ -4,7 +4,11 @@ import { PageHeader } from "../ui/PageHeader";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { ShortcutInput } from "../settings/ShortcutInput";
 import { MeetingSettings } from "./MeetingSettings";
-import { CalendarAccess, ChromeExtension } from "./SpeakerSettings";
+import {
+  CalendarAccess,
+  ChromeExtension,
+  RememberedVoices,
+} from "./SpeakerSettings";
 
 /** Settings → Meetings: how meetings are recorded, transcribed and summed up. */
 export const MeetingSettingsPage: React.FC = () => {
@@ -25,6 +29,7 @@ export const MeetingSettingsPage: React.FC = () => {
       >
         <ChromeExtension />
         <CalendarAccess />
+        <RememberedVoices />
       </SettingsGroup>
     </div>
   );

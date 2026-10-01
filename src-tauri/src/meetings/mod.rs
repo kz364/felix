@@ -22,6 +22,7 @@ pub mod llm;
 pub mod manager;
 mod mic;
 pub mod pipeline;
+pub mod remembered;
 pub mod remote;
 pub mod segment;
 pub mod speaker_score;

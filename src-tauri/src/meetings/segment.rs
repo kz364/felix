@@ -13,6 +13,17 @@ use std::path::Path;
 
 pub const MODEL_DIR: &str = "sherpa-onnx-pyannote-segmentation-3-0";
 pub const MODEL_FILE: &str = "model.onnx";
+pub const MODEL_URL: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx";
+pub const MODEL_BYTES: u64 = 5_992_913;
+
+/// The segmentation model next to the speaker model, if it's there.
+pub fn model_beside(speaker_model: &std::path::Path) -> Option<std::path::PathBuf> {
+    let p = speaker_model.parent()?.join(MODEL_DIR).join(MODEL_FILE);
+    std::fs::metadata(&p)
+        .is_ok_and(|m| m.len() == MODEL_BYTES)
+        .then_some(p)
+}
 
 const SAMPLE_RATE: usize = 16_000;
 /// The model's window: 10 s.

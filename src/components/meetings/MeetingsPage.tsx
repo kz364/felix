@@ -34,6 +34,7 @@ import {
   Video,
 } from "lucide-react";
 import {
+  type ParagraphPart,
   commands,
   type LiveQuestion,
   type MeetingInfo,
@@ -253,9 +254,15 @@ const SpeakerLabel: React.FC<{
   label: string;
   people: Person[];
   editable: boolean;
+  doubt?: string;
   onChanged: () => void;
-}> = ({ meeting, p, label, people, editable, onChanged }) => {
+}> = ({ meeting, p, label, people, editable, doubt, onChanged }) => {
   const { t } = useTranslation();
+  // Splitting: the paragraph's pieces, then the piece the new speaker
+  // starts at. Merging: picking who this voice really is.
+  const [parts, setParts] = useState<ParagraphPart[] | null>(null);
+  const [splitAt, setSplitAt] = useState<number | null>(null);
+  const [merging, setMerging] = useState(false);
   // Where the menu opens: fixed to the window, so the transcript's
   // scrolling box can't cut it off; above the name near the bottom edge.
   const [open, setOpen] = useState<React.CSSProperties | null>(null);
@@ -276,6 +283,9 @@ const SpeakerLabel: React.FC<{
       if (e.type === "scroll" || !menuRef.current?.contains(e.target as Node)) {
         setOpen(null);
         setSomeoneElse(null);
+        setParts(null);
+        setSplitAt(null);
+        setMerging(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -300,15 +310,48 @@ const SpeakerLabel: React.FC<{
     );
   };
 
-  const assign = async (speaker: number | null, name: string | null) => {
+  const close = () => {
     setOpen(null);
     setSomeoneElse(null);
+    setParts(null);
+    setSplitAt(null);
+    setMerging(false);
+  };
+
+  const assign = async (speaker: number | null, name: string | null) => {
+    // After picking where to split, the person is for the rest from there.
+    const from = splitAt ?? p.start_ms;
+    close();
     const result = await commands.setParagraphSpeaker(
       meeting.id,
       p.source,
-      p.start_ms,
+      from,
       speaker,
       name,
+    );
+    if (result.status === "error") toast.error(result.error);
+    onChanged();
+  };
+
+  const startSplit = async () => {
+    const result = await commands.paragraphParts(
+      meeting.id,
+      p.source,
+      p.start_ms,
+    );
+    if (result.status === "error") {
+      toast.error(result.error);
+      return;
+    }
+    setParts(result.data);
+  };
+
+  const merge = async (into: number) => {
+    close();
+    const result = await commands.mergeMeetingVoices(
+      meeting.id,
+      p.speaker as number,
+      into,
     );
     if (result.status === "error") toast.error(result.error);
     onChanged();
@@ -342,9 +385,26 @@ const SpeakerLabel: React.FC<{
       />
     );
   }
+  const mark = doubt ? (
+    <span
+      title={t(`meetings.speaker.doubt.${doubt}`, {
+        defaultValue: t("meetings.speaker.doubt.close"),
+      })}
+      className="-ms-1 me-1.5 cursor-help text-xs text-text/45"
+    >
+      ?
+    </span>
+  ) : null;
   if (!editable) {
-    return <span className={`me-1.5 font-medium ${color}`}>{label}</span>;
+    return (
+      <>
+        <span className={`me-1.5 font-medium ${color}`}>{label}</span>
+        {mark}
+      </>
+    );
   }
+  const item = "rounded px-2 py-1 text-start hover:bg-stone/10 cursor-pointer";
+  const muted = `${item} text-text/70`;
   return (
     <span ref={menuRef}>
       <button
@@ -359,58 +419,112 @@ const SpeakerLabel: React.FC<{
           style={open}
           className="fixed z-50 flex w-56 flex-col rounded-lg border border-stone/20 bg-background p-1 text-sm shadow-lg"
         >
-          <span className="px-2 py-1 text-xs text-text/50">
-            {t("meetings.speaker.whoSaid")}
-          </span>
-          {people
-            .filter((person) => person.label !== label)
-            .map((person) => (
-              <button
-                key={person.n}
-                onClick={() => assign(person.n, null)}
-                className="rounded px-2 py-1 text-start hover:bg-stone/10 cursor-pointer"
-              >
-                {person.label}
-              </button>
-            ))}
-          {someoneElse === null ? (
-            <button
-              onClick={() => setSomeoneElse("")}
-              className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
-            >
-              {t("meetings.speaker.someoneElse")}
-            </button>
-          ) : (
-            <input
-              autoFocus
-              value={someoneElse}
-              placeholder={t("meetings.speaker.namePlaceholder")}
-              onChange={(e) => setSomeoneElse(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && someoneElse.trim()) {
-                  assign(null, someoneElse.trim());
-                }
-                if (e.key === "Escape") setSomeoneElse(null);
-              }}
-              className="mx-1 my-0.5 rounded border border-accent/50 bg-background px-1.5 py-0.5 outline-none"
-            />
-          )}
-          {numbered && (
+          {parts !== null && splitAt === null ? (
             <>
-              <span className="my-1 h-px bg-stone/20" />
-              <button
-                onClick={() => {
-                  setOpen(null);
-                  setRenaming(label);
-                }}
-                className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
-              >
-                {t("meetings.speaker.renameEverywhere", { name: label })}
-              </button>
+              <span className="px-2 py-1 text-xs text-text/50">
+                {t("meetings.speaker.splitFrom")}
+              </span>
+              {parts.length < 2 && (
+                <span className="px-2 py-1 text-text/50">
+                  {t("meetings.speaker.cantSplit")}
+                </span>
+              )}
+              {parts.slice(1).map((part) => (
+                <button
+                  key={part.start_ms}
+                  onClick={() => setSplitAt(part.start_ms)}
+                  className={`${item} line-clamp-2`}
+                >
+                  {part.text}
+                </button>
+              ))}
+            </>
+          ) : merging ? (
+            <>
+              <span className="px-2 py-1 text-xs text-text/50">
+                {t("meetings.speaker.samePersonAs", { name: label })}
+              </span>
+              {people
+                .filter((person) => person.n !== p.speaker && person.n !== ME)
+                .map((person) => (
+                  <button
+                    key={person.n}
+                    onClick={() => merge(person.n)}
+                    className={item}
+                  >
+                    {person.label}
+                  </button>
+                ))}
+            </>
+          ) : (
+            <>
+              <span className="px-2 py-1 text-xs text-text/50">
+                {splitAt !== null
+                  ? t("meetings.speaker.whoSaidRest")
+                  : t("meetings.speaker.whoSaid")}
+              </span>
+              {people
+                .filter((person) => person.label !== label)
+                .map((person) => (
+                  <button
+                    key={person.n}
+                    onClick={() => assign(person.n, null)}
+                    className="rounded px-2 py-1 text-start hover:bg-stone/10 cursor-pointer"
+                  >
+                    {person.label}
+                  </button>
+                ))}
+              {someoneElse === null ? (
+                <button
+                  onClick={() => setSomeoneElse("")}
+                  className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
+                >
+                  {t("meetings.speaker.someoneElse")}
+                </button>
+              ) : (
+                <input
+                  autoFocus
+                  value={someoneElse}
+                  placeholder={t("meetings.speaker.namePlaceholder")}
+                  onChange={(e) => setSomeoneElse(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && someoneElse.trim()) {
+                      assign(null, someoneElse.trim());
+                    }
+                    if (e.key === "Escape") setSomeoneElse(null);
+                  }}
+                  className="mx-1 my-0.5 rounded border border-accent/50 bg-background px-1.5 py-0.5 outline-none"
+                />
+              )}
+              {numbered && (
+                <>
+                  <span className="my-1 h-px bg-stone/20" />
+                  <button
+                    onClick={() => {
+                      setOpen(null);
+                      setRenaming(label);
+                    }}
+                    className="rounded px-2 py-1 text-start text-text/70 hover:bg-stone/10 cursor-pointer"
+                  >
+                    {t("meetings.speaker.renameEverywhere", { name: label })}
+                  </button>
+                  {people.some((x) => x.n !== p.speaker && x.n !== ME) && (
+                    <button onClick={() => setMerging(true)} className={muted}>
+                      {t("meetings.speaker.samePerson", { name: label })}
+                    </button>
+                  )}
+                </>
+              )}
+              {splitAt === null && (
+                <button onClick={startSplit} className={muted}>
+                  {t("meetings.speaker.split")}
+                </button>
+              )}
             </>
           )}
         </span>
       )}
+      {mark}
     </span>
   );
 };
@@ -422,6 +536,7 @@ const TranscriptParagraph: React.FC<{
   active: boolean;
   editable: boolean;
   people: Person[];
+  doubt?: string;
   onPlay: () => void;
   onChanged: () => void;
 }> = ({
@@ -431,6 +546,7 @@ const TranscriptParagraph: React.FC<{
   active,
   editable,
   people,
+  doubt,
   onPlay,
   onChanged,
 }) => {
@@ -475,6 +591,7 @@ const TranscriptParagraph: React.FC<{
             label={speaker}
             people={people}
             editable={editable}
+            doubt={doubt}
             onChanged={onChanged}
           />
         )}
@@ -526,10 +643,15 @@ const TranscriptSection: React.FC<{
   const done = progress?.done;
   const stage = progress?.stage;
 
+  const [doubts, setDoubts] = useState<Partial<Record<string, string>>>({});
+
   useEffect(() => {
     let cancelled = false;
     commands.getMeetingTranscript(meeting.id).then((result) => {
       if (!cancelled && result.status === "ok") setTranscript(result.data);
+    });
+    commands.speakerDoubts(meeting.id).then((result) => {
+      if (!cancelled && result.status === "ok") setDoubts(result.data);
     });
     return () => {
       cancelled = true;
@@ -710,6 +832,7 @@ const TranscriptSection: React.FC<{
                   active={i === activeIndex}
                   editable={status === "done" && !showOriginal}
                   people={people}
+                  doubt={doubts[`${p.source}-${p.start_ms}`]}
                   onPlay={() => player.playFrom(p.start_ms / 1000)}
                   onChanged={reload}
                 />

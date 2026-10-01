@@ -3,8 +3,9 @@
 //! on the mic it was made with. In person, the speaker matching it becomes
 //! "Me" (see [`super::diarize::mark_me`]).
 //!
-//! Nothing records a print yet: with no file for a mic, meetings number
-//! every voice as before.
+//! Prints are made from calls: there the mic's main voice is the user (see
+//! [`super::remembered`]). With no file for a mic, meetings number every
+//! voice as before.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -60,6 +61,13 @@ pub fn load(app_data: &Path, mic: &str) -> Option<Vec<f32>> {
     let print: Voiceprint =
         serde_json::from_slice(&std::fs::read(file_for(app_data, mic)).ok()?).ok()?;
     (print.mic == mic && !print.embedding.is_empty()).then_some(print.embedding)
+}
+
+/// The whole print for this mic, to add to.
+pub fn load_full(app_data: &Path, mic: &str) -> Option<Voiceprint> {
+    let print: Voiceprint =
+        serde_json::from_slice(&std::fs::read(file_for(app_data, mic)).ok()?).ok()?;
+    (print.mic == mic).then_some(print)
 }
 
 pub fn save(app_data: &Path, print: &Voiceprint) -> Result<(), String> {

@@ -1348,7 +1348,7 @@
       },
       "diarize": {
         "label": "Tell speakers apart",
-        "description": "Label who's talking: everyone in person, and the other side of a call (with names from Zoom, Teams or Meet when they show them). Downloads a 26.5 MB voice model the first time."
+        "description": "Label who's talking: everyone in person, and the other side of a call (with names from Zoom, Teams or Meet when they show them). Downloads a 40 MB voice model and a 6 MB turn model the first time."
       },
       "detectCalls": {
         "label": "Offer to record calls",
@@ -1400,14 +1400,14 @@
         "description": "How Felix tells the people in a meeting apart and puts names to them."
       },
       "extension": {
-        "title": "Chrome extension for Google Meet",
-        "description": "Lets Meet itself say who's talking, which names people far more reliably than guessing from voices. Without it, Felix reads the call window instead.",
+        "title": "Chrome extension for calls in the browser",
+        "description": "Lets Google Meet, and Zoom and Teams in the browser, say who's talking, which names people far more reliably than guessing from voices. The Zoom and Teams apps are read from their windows instead, as is any call without the extension.",
         "notSetUp": "Not set up yet.",
         "waiting": "Set up. Waiting to hear from the extension on a call.",
         "working": "Working: heard from {{app}} recently.",
         "step1": "Click Set up, so Chrome can reach Felix.",
         "step2": "In Chrome, open chrome://extensions, turn on Developer mode, click Load unpacked and choose the folder from Show folder.",
-        "step3": "Join a Meet call. The extension's button shows whether it's connected.",
+        "step3": "Join a call in Chrome. The extension's button shows whether it's connected.",
         "setUp": "Set up",
         "setUpAgain": "Set up again",
         "showFolder": "Show folder"
@@ -1419,6 +1419,22 @@
         "off": "Off",
         "denied": "Not allowed. Turn it on in System Settings → Privacy & Security → Calendars.",
         "allow": "Allow Calendar access"
+      },
+      "remembered": {
+        "title": "Remember voices",
+        "description": "Felix keeps a fingerprint of every voice it hears in meetings, so a name given once carries over to the next meeting. Kept on this Mac only.",
+        "listTitle_one": "{{count}} remembered voice",
+        "listTitle_other": "{{count}} remembered voices",
+        "listDescription": "Rename one to name it in every meeting. Merge two that are the same person. Forget removes the fingerprint.",
+        "unknown": "Unknown voice {{n}}",
+        "meetings_one": "{{count}} meeting",
+        "meetings_other": "{{count}} meetings",
+        "rename": "Rename",
+        "merge": "Merge…",
+        "mergeInto": "Same person",
+        "cancel": "Cancel",
+        "forget": "Forget",
+        "namePlaceholder": "Name"
       }
     },
     "errors": {
@@ -1479,7 +1495,18 @@
       "whoSaid": "Who said this?",
       "someoneElse": "Someone else…",
       "namePlaceholder": "Their name",
-      "renameEverywhere": "Rename {{name}} everywhere"
+      "renameEverywhere": "Rename {{name}} everywhere",
+      "whoSaidRest": "Who said the rest?",
+      "split": "Split this paragraph…",
+      "splitFrom": "A new person starts at…",
+      "cantSplit": "This paragraph is a single piece.",
+      "samePerson": "{{name}} is someone else here…",
+      "samePersonAs": "{{name}} is really…",
+      "doubt": {
+        "overlap": "Two people talked at once here, so this may be the wrong person.",
+        "close": "This voice was hard to tell apart from another here.",
+        "guessed": "Named from what was said or by elimination, not by the call app or you."
+      }
     },
     "actions": {
       "resume": "Resume recording",

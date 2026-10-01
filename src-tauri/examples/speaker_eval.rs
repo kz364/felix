@@ -16,7 +16,7 @@
 //! `speaker_fixes.json`), i.e. how much the automatic labels got wrong.
 //! Prints no transcript text.
 
-use handy_app_lib::meetings::manager::{apply_speaker_fixes, read_info, speaker_fixes};
+use handy_app_lib::meetings::manager::{read_info, speaker_fixes};
 use handy_app_lib::meetings::speaker_score::{from_rttm, from_uem, score, Score};
 use handy_app_lib::meetings::transcript::{self, FRAME_MS};
 use handy_app_lib::meetings::{diarize, pipeline};
@@ -39,6 +39,14 @@ fn main() -> Result<(), String> {
                 .unwrap_or_else(|| app_data().join("models").join(diarize::MODEL_FILE));
             ami(&dir, &model)
         }
+        Some("remember") => {
+            let dir = PathBuf::from(args.next().ok_or("remember <dir>")?);
+            let model = args
+                .next()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| app_data().join("models").join(diarize::MODEL_FILE));
+            remember(&dir, &model)
+        }
         Some("meetings") => {
             let dir = args
                 .next()
@@ -46,7 +54,10 @@ fn main() -> Result<(), String> {
                 .unwrap_or_else(|| app_data().join("meetings"));
             meetings(&dir)
         }
-        _ => Err("usage: speaker_eval ami <dir> [model] | meetings [dir]".into()),
+        _ => Err(
+            "usage: speaker_eval ami <dir> [model] | remember <dir> [model] | meetings [dir]"
+                .into(),
+        ),
     }
 }
 
@@ -229,6 +240,129 @@ fn ami(dir: &Path, model: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Remembered voices across a series of AMI meetings (ES2004a–d have the
+/// same four people, and RTTM names are the same participant IDs): each
+/// meeting's voices are grouped from the cached fingerprints (reference
+/// speech; run `ami` first) and linked to the store as the app does.
+/// A link is right when the remembered voice was first heard as the same
+/// person. MATCH=<cosine> MARGIN=<cosine> override the app's thresholds.
+fn remember(dir: &Path, model: &Path) -> Result<(), String> {
+    use handy_app_lib::meetings::remembered::{link_meeting_with, Print, Store};
+    use std::collections::BTreeMap;
+    let num = |k: &str, d: f32| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    let (matching, margin) = (num("MATCH", 0.75), num("MARGIN", 0.05));
+    let model_name = model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let cache = dir.join("cache").join(&model_name);
+    let mut ids: Vec<String> = std::fs::read_dir(dir.join("rttm"))
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+        })
+        .collect();
+    ids.sort();
+    let mut series: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for id in ids {
+        series
+            .entry(id[..id.len() - 1].to_string())
+            .or_default()
+            .push(id);
+    }
+    let (mut right, mut wrong, mut missed, mut new_ok) = (0, 0, 0, 0);
+    let mut store = Store::default();
+    // Who each remembered voice was when first heard.
+    let mut first_heard: BTreeMap<u32, String> = BTreeMap::new();
+    for (_, meetings) in series {
+        for id in meetings {
+            let rttm = std::fs::read_to_string(dir.join("rttm").join(format!("{id}.rttm")))
+                .map_err(|e| e.to_string())?;
+            let bytes = std::fs::read(cache.join(format!("{id}.ref.json")))
+                .map_err(|_| format!("No cached fingerprints for {id}; run `ami` first"))?;
+            let (speech, (wins, embs)): (Vec<bool>, diarize::Prints) =
+                serde_json::from_slice::<(Vec<bool>, Vec<(usize, usize)>, Vec<Vec<f32>>)>(&bytes)
+                    .map(|(a, b, c)| (a, (b, c)))
+                    .map_err(|e| e.to_string())?;
+            // Participant per frame (one person only).
+            let mut names: Vec<Option<String>> = vec![None; speech.len()];
+            let mut count = vec![0u8; speech.len()];
+            for line in rttm.lines() {
+                let f: Vec<&str> = line.split_whitespace().collect();
+                if f.len() < 8 {
+                    continue;
+                }
+                let (Ok(a), Ok(d)) = (f[3].parse::<f64>(), f[4].parse::<f64>()) else {
+                    continue;
+                };
+                let from = (a * 1000.0 / FRAME_MS as f64) as usize;
+                let to = (((a + d) * 1000.0 / FRAME_MS as f64) as usize).min(speech.len());
+                for i in from.min(to)..to {
+                    names[i] = Some(f[7].to_string());
+                    count[i] += 1;
+                }
+            }
+            let labels = diarize::frame_labels(
+                &speech,
+                &wins,
+                &diarize::group_voices(&embs, &diarize::Grouping::default()),
+            );
+            let prints: BTreeMap<u32, Print> = diarize::voice_prints(&labels, &wins, &embs)
+                .into_iter()
+                .map(|(v, (print, windows))| (v, Print { print, windows }))
+                .collect();
+            // Each voice's person: the one most of its frames are.
+            let mut votes: BTreeMap<u32, BTreeMap<String, usize>> = BTreeMap::new();
+            for (i, l) in labels.iter().enumerate() {
+                if let (Some(v), Some(n), 1) = (l, &names[i], count[i]) {
+                    *votes.entry(*v).or_default().entry(n.clone()).or_default() += 1;
+                }
+            }
+            let person = |v: u32| {
+                votes
+                    .get(&v)
+                    .and_then(|m| m.iter().max_by_key(|(_, c)| **c).map(|(n, _)| n.clone()))
+            };
+            let known: Vec<String> = first_heard.values().cloned().collect();
+            let before = store.voices.len();
+            let links = link_meeting_with(&mut store, &prints, 0, matching, margin);
+            for (v, rid) in &links {
+                let Some(p) = person(*v) else { continue };
+                match first_heard.get(rid) {
+                    Some(f) if *f == p => right += 1,
+                    Some(_) => wrong += 1,
+                    None => {
+                        first_heard.insert(*rid, p.clone());
+                        if known.contains(&p) {
+                            missed += 1;
+                        } else {
+                            new_ok += 1;
+                        }
+                    }
+                }
+            }
+            println!(
+                "{id}: {} voices, {} new remembered",
+                links.len(),
+                store.voices.len() - before
+            );
+        }
+    }
+    println!(
+        "matched right {right}, matched wrong {wrong}, not recognised {missed}, new people {new_ok}"
+    );
+    Ok(())
+}
+
 fn meetings(dir: &Path) -> Result<(), String> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| e.to_string())?
@@ -252,13 +386,19 @@ fn meetings(dir: &Path) -> Result<(), String> {
             continue;
         }
         let auto = transcript::paragraphs(&t.segments);
-        let fixed = apply_speaker_fixes(auto.clone(), &fixes);
-        let (mut ms, mut wrong) = (0u64, 0u64);
-        for (a, f) in auto.iter().zip(&fixed) {
-            let len = a.end_ms.saturating_sub(a.start_ms);
-            ms += len;
-            if info.speaker_label(a) != info.speaker_label(f) {
-                wrong += len;
+        let fixed = transcript::fixed_paragraphs(&t.segments, &fixes);
+        let ms: u64 = auto
+            .iter()
+            .map(|a| a.end_ms.saturating_sub(a.start_ms))
+            .sum();
+        // Fixed paragraphs (a split makes two) against the one they came from.
+        let mut wrong = 0u64;
+        for f in &fixed {
+            let from = auto
+                .iter()
+                .rfind(|a| a.source == f.source && a.start_ms <= f.start_ms);
+            if from.is_some_and(|a| info.speaker_label(a) != info.speaker_label(f)) {
+                wrong += f.end_ms.saturating_sub(f.start_ms);
             }
         }
         println!(

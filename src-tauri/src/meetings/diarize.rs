@@ -1,7 +1,7 @@
 //! Telling voices apart in an in-person meeting (one mic, several people).
 //!
-//! The speech is cut into short windows; a speaker-embedding model (WeSpeaker
-//! ResNet34, ONNX, downloaded on first use) turns each window into a voice
+//! The speech is cut into short windows; a speaker-embedding model (3D-Speaker
+//! ERes2Net, ONNX, downloaded on first use) turns each window into a voice
 //! fingerprint; fingerprints are grouped by similarity into speakers. The
 //! result is a speaker number per VAD frame, which the pipeline uses to cut
 //! chunks where the speaker changes, so each transcript segment has one voice.
@@ -14,9 +14,12 @@ use ort::value::Value;
 use rustfft::num_complex::Complex;
 use std::path::Path;
 
-pub const MODEL_FILE: &str = "wespeaker_en_voxceleb_resnet34_LM.onnx";
-pub const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx";
-pub const MODEL_BYTES: u64 = 26_530_550;
+/// 3D-Speaker ERes2Net (base): on AMI it tells people apart better than
+/// WeSpeaker ResNet34 (DER 37% vs 42%) and recognises them across meetings
+/// far more reliably (notes/benchmarking.md).
+pub const MODEL_FILE: &str = "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx";
+pub const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx";
+pub const MODEL_BYTES: u64 = 39_593_761;
 
 const SAMPLE_RATE: usize = 16_000;
 const FRAME_SAMPLES: usize = SAMPLE_RATE * FRAME_MS as usize / 1000;
@@ -594,6 +597,36 @@ pub struct Voices {
     /// than to the next nearest (0 where there's no speech; small or
     /// negative is unsure).
     pub margins: Vec<f32>,
+    /// The fingerprint windows and their fingerprints, for remembering voices.
+    pub windows: Vec<(usize, usize)>,
+    pub embeddings: Vec<Vec<f32>>,
+}
+
+/// Each voice's fingerprint (the mean of its windows', unit length) and how
+/// many windows went into it, from final per-frame `labels` (a window
+/// belongs to the voice of its middle frame). The user's voice, [`ME`] or
+/// unlabelled, is keyed [`ME`].
+pub fn voice_prints(
+    labels: &[Option<u32>],
+    windows: &[(usize, usize)],
+    embeddings: &[Vec<f32>],
+) -> std::collections::BTreeMap<u32, (Vec<f32>, usize)> {
+    let mut out: std::collections::BTreeMap<u32, (Vec<f32>, usize)> = Default::default();
+    for (&(from, to), e) in windows.iter().zip(embeddings) {
+        let mid = (from + to) / 2;
+        let Some(v) = labels.get(mid).copied().flatten() else {
+            continue;
+        };
+        let entry = out.entry(v).or_insert_with(|| (vec![0.0; e.len()], 0));
+        for (a, x) in entry.0.iter_mut().zip(e) {
+            *a += x;
+        }
+        entry.1 += 1;
+    }
+    for (print, _) in out.values_mut() {
+        *print = unit(std::mem::take(print));
+    }
+    out
 }
 
 /// [`speakers`], with names the call app gave per frame (`hints`, may be
@@ -606,9 +639,22 @@ pub fn speakers_with(
     voiceprint: Option<&[f32]>,
     hints: &[Option<String>],
 ) -> Result<Voices, String> {
-    let (wins, embeddings) = fingerprint(wav, speech, model)?;
-    Ok(label_with(speech, &wins, &embeddings, voiceprint, hints))
+    let seg = super::segment::model_beside(model);
+    let (wins, embeddings, turns) = fingerprint_with(wav, speech, model, seg.as_deref())?;
+    let mut voices = label_with(speech, &wins, &embeddings, voiceprint, hints);
+    // Two people at once: whoever the frame went to, it's unsure.
+    if let Some(t) = turns {
+        for (m, o) in voices.margins.iter_mut().zip(&t.overlap) {
+            if *o {
+                *m = m.min(OVERLAP_MARGIN);
+            }
+        }
+    }
+    Ok(voices)
 }
+
+/// The margin given to frames where two people talk at once.
+const OVERLAP_MARGIN: f32 = -0.1;
 
 /// Fingerprint windows (frame ranges) and a fingerprint for each.
 pub type Prints = (Vec<(usize, usize)>, Vec<Vec<f32>>);
@@ -670,6 +716,7 @@ pub fn label_with(
         return Voices {
             labels: vec![None; speech.len()],
             margins: vec![0.0; speech.len()],
+            ..Default::default()
         };
     }
     let names = window_names(wins, hints);
@@ -693,6 +740,8 @@ pub fn label_with(
     Voices {
         labels: frame_labels(speech, wins, &speakers),
         margins,
+        windows: wins.to_vec(),
+        embeddings: embeddings.to_vec(),
     }
 }
 

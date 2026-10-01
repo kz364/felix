@@ -330,11 +330,38 @@ const RESPONSES: Record<string, unknown> = {
   },
   get_meeting_summary: null,
   calendar_access: "not_determined",
+  speaker_doubts: {},
+  paragraph_parts: [
+    { start_ms: 0, text: "First part." },
+    { start_ms: 4000, text: "Second part." },
+  ],
+  remembered_voices: {
+    enabled: true,
+    voices: [
+      {
+        id: 1,
+        name: "Sam Rivera",
+        number: 1,
+        meetings: 4,
+        last_heard: 0,
+        windows: 900,
+      },
+      {
+        id: 2,
+        name: null,
+        number: 2,
+        meetings: 2,
+        last_heard: 0,
+        windows: 300,
+      },
+    ],
+  },
   extension_status: {
     host_installed: true,
     heard_secs_ago: 40,
     app: "meet",
-    extension_dir: "/Applications/Felix.app/Contents/Resources/resources/meet-extension",
+    extension_dir:
+      "/Applications/Felix.app/Contents/Resources/resources/meet-extension",
   },
   get_meetings: [],
   get_available_microphones: [
