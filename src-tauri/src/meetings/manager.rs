@@ -409,6 +409,17 @@ impl MeetingManager {
     pub(super) fn changed(&self) {
         let _ = self.app.emit("meeting-state", self.state());
         crate::tray::sync_tray(&self.app);
+        super::watch::apply_screen_share(&self.app);
+    }
+
+    /// Recording, or paused mid-meeting.
+    pub fn in_meeting(&self) -> bool {
+        self.is_recording()
+            || self
+                .paused
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
     }
 
     /// Start recording; `None` works out whether it's a call.
@@ -1589,8 +1600,8 @@ pub fn change_meeting_settings(
         settings.hide_from_screen_share = v;
     }
     crate::settings::write_settings(&app, settings);
-    if let Some(v) = hide {
-        super::watch::hide_from_screen_share(&app, v);
+    if hide.is_some() {
+        super::watch::apply_screen_share(&app);
     }
     Ok(())
 }

@@ -410,9 +410,7 @@ pub fn spawn(app: &AppHandle) {
                 crate::settings::write_settings(&watcher.app, settings);
                 log::info!("\"Record this call?\" is shown again");
             }
-            if get_settings(&watcher.app).hide_from_screen_share {
-                hide_from_screen_share(&watcher.app, true);
-            }
+            apply_screen_share(&watcher.app);
             loop {
                 watcher.tick();
                 std::thread::sleep(TICK);
@@ -433,13 +431,13 @@ pub fn started(app: &AppHandle, info: &MeetingInfo) {
         Notice::new(
             "hide_from_screen_share",
             "Hide Felix when you share your screen?",
-            "People on the call won't see Felix's pill or cards.",
+            "While you record, people on the call won't see Felix's pill or cards.",
         )
         .action(Action::new("Hide", |app| {
             let mut settings = get_settings(app);
             settings.hide_from_screen_share = true;
             crate::settings::write_settings(app, settings);
-            hide_from_screen_share(app, true);
+            apply_screen_share(app);
         }))
         .nudge(Duration::from_secs(30 * 24 * 3600))
         .seconds(12),
@@ -483,8 +481,23 @@ pub fn stopped(app: &AppHandle, info: &MeetingInfo) {
     );
 }
 
-/// Show or hide every Felix window in screen sharing and screenshots.
-pub fn hide_from_screen_share(app: &AppHandle, hide: bool) {
+/// Whether Felix's windows are hidden from screen sharing and screenshots
+/// now: with the setting on, only during a meeting, so screenshots of
+/// Felix work the rest of the time.
+pub fn screen_share_hidden(app: &AppHandle) -> bool {
+    get_settings(app).hide_from_screen_share
+        && app
+            .try_state::<std::sync::Arc<super::MeetingManager>>()
+            .is_some_and(|m| m.in_meeting())
+}
+
+/// Hide or show every Felix window in screen sharing, as
+/// [`screen_share_hidden`] says.
+pub fn apply_screen_share(app: &AppHandle) {
+    hide_from_screen_share(app, screen_share_hidden(app));
+}
+
+fn hide_from_screen_share(app: &AppHandle, hide: bool) {
     for (label, window) in app.webview_windows() {
         if let Err(e) = window.set_content_protected(hide) {
             log::warn!("Couldn't change screen-share visibility of {label}: {e}");

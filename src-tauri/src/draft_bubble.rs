@@ -173,7 +173,7 @@ pub fn create(app: &AppHandle) {
                 if let Some(window) = app.get_webview_window(LABEL) {
                     // Clicks and scrolling go to whatever is underneath.
                     let _ = window.set_ignore_cursor_events(true);
-                    if crate::settings::get_settings(app).hide_from_screen_share {
+                    if crate::meetings::watch::screen_share_hidden(app) {
                         let _ = window.set_content_protected(true);
                     }
                 }

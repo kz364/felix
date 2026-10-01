@@ -1358,7 +1358,7 @@
       },
       "hideFromShare": {
         "label": "Hide Felix from screen sharing",
-        "description": "Felix's pill, cards and windows don't show up when you share your screen or take screenshots."
+        "description": "While a meeting is recording, Felix's pill, cards and windows don't show up when you share your screen or take screenshots."
       },
       "panel": {
         "label": "Show a notes panel while recording",

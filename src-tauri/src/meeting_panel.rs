@@ -91,7 +91,7 @@ pub fn create(app: &AppHandle) {
                         }
                     });
                 }
-                if crate::settings::get_settings(app).hide_from_screen_share {
+                if crate::meetings::watch::screen_share_hidden(app) {
                     if let Some(window) = app.get_webview_window(LABEL) {
                         let _ = window.set_content_protected(true);
                     }
