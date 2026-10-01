@@ -22,7 +22,8 @@ fn main() -> Result<(), String> {
         if !wav.is_file() {
             continue;
         }
-        let audio = handy_app_lib::audio_toolkit::read_wav_samples(&wav).map_err(|e| e.to_string())?;
+        let audio =
+            handy_app_lib::audio_toolkit::read_wav_samples(&wav).map_err(|e| e.to_string())?;
         // Live: 20 s rounds.
         let mut listener = pipeline::Listener::new(vad, false)?;
         let mut ahead = BTreeSet::new();

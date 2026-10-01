@@ -660,7 +660,13 @@ impl MeetingManager {
             .filter(|t| t.complete)
             .ok_or("The meeting isn't transcribed yet")?;
 
-        if settings.meeting_cleanup {
+        // Tidying the text and looking for clues to who's who are separate
+        // requests to the model: both at once. The clues are found once per
+        // transcript; then the names are worked out again with them.
+        let cleanup = async {
+            if !settings.meeting_cleanup {
+                return Ok(());
+            }
             let raw = super::transcript::fixed_paragraphs(
                 &transcript.segments,
                 &super::manager::speaker_fixes(&dir),
@@ -686,14 +692,12 @@ impl MeetingManager {
                 log::warn!("Meeting {id}: some of the transcript wasn't cleaned up: {e}");
             }
             let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
-        }
-
-        // Clues to who's who in what was said, once per transcript; then the
-        // names are worked out again with them.
-        let info = &match self.find_clues(id, &dir, &llm, &transcript, info).await {
-            Some(updated) => updated,
-            None => info.clone(),
+            Ok::<(), String>(())
         };
+        let clues = self.find_clues(id, &dir, &llm, &transcript, info);
+        let (cleaned, clued) = futures_util::join!(cleanup, clues);
+        cleaned?;
+        let info = &clued.unwrap_or_else(|| info.clone());
 
         let lines: Vec<String> = paragraphs_of(&dir, &transcript)
             .iter()

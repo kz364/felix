@@ -13,6 +13,7 @@
 
 use super::llm::Llm;
 use super::transcript::{Paragraph, Source};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -214,13 +215,27 @@ pub async fn find(
 ) -> Result<(Vec<Clue>, BTreeMap<String, u32>), String> {
     let budget = llm.budget().summary.min(40_000);
     let (mut out, mut turns) = (Vec::new(), BTreeMap::new());
-    for batch in super::summary::batches(paragraphs, budget) {
-        let input: String = batch
-            .iter()
-            .enumerate()
-            .map(|(n, &i)| format!("[{n}] {}: {}\n", label(&paragraphs[i]), paragraphs[i].text))
-            .collect();
-        let reply = llm.ask_json(INSTRUCTIONS, &input, &schema(), "low").await?;
+    let schema = schema();
+    let requests = super::summary::batches(paragraphs, budget)
+        .into_iter()
+        .map(|batch| {
+            let input: String = batch
+                .iter()
+                .enumerate()
+                .map(|(n, &i)| format!("[{n}] {}: {}\n", label(&paragraphs[i]), paragraphs[i].text))
+                .collect();
+            let schema = &schema;
+            async move {
+                (
+                    llm.ask_json(INSTRUCTIONS, &input, schema, "low").await,
+                    batch,
+                )
+            }
+        });
+    // A few at once, as cleanup does.
+    let mut replies = futures_util::stream::iter(requests).buffered(3);
+    while let Some((reply, batch)) = replies.next().await {
+        let reply = reply?;
         out.extend(from_reply(&reply, paragraphs, &batch));
         turns.extend(turns_from_reply(&reply, paragraphs, &batch, label));
     }
