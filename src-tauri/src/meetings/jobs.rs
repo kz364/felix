@@ -746,17 +746,25 @@ impl MeetingManager {
         }
         let paragraphs = paragraphs_of(dir, transcript);
         let label = |p: &Paragraph| info.speaker_label(p).unwrap_or_else(|| "Speaker".into());
-        let clues = match super::clues::find(llm, &paragraphs, &label).await {
+        let (clues, turns) = match super::clues::find(llm, &paragraphs, &label).await {
             Ok(c) => c,
             Err(e) => {
                 log::warn!("Meeting {id}: couldn't look for speaker clues: {e}");
                 return None;
             }
         };
-        log::info!("Meeting {id}: {} speaker clues", clues.len());
+        log::info!(
+            "Meeting {id}: {} speaker clues, {} turns given another speaker",
+            clues.len(),
+            turns.len()
+        );
+        summary::save_json(dir, super::clues::TURNS_FILE, &turns).ok()?;
         summary::save_json(dir, super::clues::FILE, &clues).ok()?;
         let names = super::speakers::apply(dir);
         if names == info.app_speakers {
+            if !turns.is_empty() {
+                let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
+            }
             return None;
         }
         self.update_info(id, |i| i.app_speakers = names.clone());

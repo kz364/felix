@@ -105,7 +105,7 @@ impl Sources {
             heard: super::extension::load(dir),
             clues: super::summary::load_json(dir, super::clues::FILE).unwrap_or_default(),
             invite: super::calendar::load(dir),
-            fixes: super::manager::speaker_fixes(dir),
+            fixes: super::manager::user_speaker_fixes(dir),
         }
     }
 }
@@ -557,12 +557,21 @@ pub fn doubts(
 ) -> BTreeMap<String, String> {
     let margins: BTreeMap<String, f32> =
         super::summary::load_json(dir, super::pipeline::VOICES_FILE).unwrap_or_default();
-    let fixes = super::manager::speaker_fixes(dir);
+    let turns: BTreeMap<String, u32> =
+        super::summary::load_json(dir, super::clues::TURNS_FILE).unwrap_or_default();
+    let mine = super::manager::user_speaker_fixes(dir);
     let mut out = BTreeMap::new();
-    for p in super::transcript::fixed_paragraphs(segments, &fixes) {
+    for p in super::transcript::fixed_paragraphs(segments, &super::manager::speaker_fixes(dir)) {
         let key = super::summary::paragraph_key(&p);
         let Some(v) = p.speaker else { continue };
-        if fixes.contains_key(&key) || user.contains_key(&v) {
+        if mine.contains_key(&key) {
+            continue;
+        }
+        if turns.contains_key(&key) {
+            out.insert(key, "turn".to_string());
+            continue;
+        }
+        if user.contains_key(&v) {
             continue;
         }
         let worst = segments

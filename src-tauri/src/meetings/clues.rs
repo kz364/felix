@@ -5,13 +5,25 @@
 //! comes from, word for word with the name in it, or it's dropped. They're
 //! weak evidence (0.4–0.6) that the resolver weighs with the rest. Found
 //! once per transcript, with the summary (so not when there's no model).
+//!
+//! The same pass looks for turns the voices got wrong: a paragraph that
+//! answers a question put under the same label, or a back-and-forth whose
+//! labels don't alternate. Those paragraphs get the label the conversation
+//! says (`turns.json`, under the user's own fixes) and are marked unsure.
 
 use super::llm::Llm;
 use super::transcript::{Paragraph, Source};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 pub const FILE: &str = "clues.json";
+/// Paragraphs given another speaker from the flow of the conversation, by
+/// paragraph key.
+pub const TURNS_FILE: &str = "turns.json";
+/// More of a batch than this relabelled means the model lost the thread;
+/// its turns are dropped.
+const MAX_TURNS_SHARE: f32 = 0.25;
 
 /// What a clue says about the speaker of a stretch of a track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,7 +43,7 @@ const ADDRESSED: f32 = 0.4;
 const THANKED: f32 = 0.4;
 const NOT: f32 = 0.5;
 
-const INSTRUCTIONS: &str = "You read a meeting transcript and find clues to who is speaking. Each paragraph has a number and a speaker label; labels are guesses and may be wrong, so don't trust them. Find only these kinds of clue, where a person's name is said out loud:\n- \"self\": the speaker gives their own name (\"I'm Priya\", \"Sam here\").\n- \"addressed\": the speaker hands over to or asks someone by name (\"Sam, what do you think?\"), so the next speaker is probably that person and this speaker isn't.\n- \"thanked\": the speaker thanks or answers someone by name right after they spoke (\"thanks, Sam\"), so the previous speaker probably was that person and this one isn't.\n- \"not\": the speaker talks about someone by name in the third person (\"as Sam said\"), so this speaker isn't that person.\nFor each clue give the paragraph number, the name as said, the kind, and a short quote copied exactly from that paragraph that contains the name. Skip anything uncertain. Most paragraphs have no clue; an empty list is fine.";
+const INSTRUCTIONS: &str = "You read a meeting transcript and find clues to who is speaking. Each paragraph has a number and a speaker label; labels are guesses and may be wrong, so don't trust them. Find only these kinds of clue, where a person's name is said out loud:\n- \"self\": the speaker gives their own name (\"I'm Priya\", \"Sam here\").\n- \"addressed\": the speaker hands over to or asks someone by name (\"Sam, what do you think?\"), so the next speaker is probably that person and this speaker isn't.\n- \"thanked\": the speaker thanks or answers someone by name right after they spoke (\"thanks, Sam\"), so the previous speaker probably was that person and this one isn't.\n- \"not\": the speaker talks about someone by name in the third person (\"as Sam said\"), so this speaker isn't that person.\nFor each clue give the paragraph number, the name as said, the kind, and a short quote copied exactly from that paragraph that contains the name. Skip anything uncertain. Most paragraphs have no clue; an empty list is fine.\n\nAlso list \"turns\": paragraphs the conversation shows were said by someone other than their label, because voices that sound alike get mixed up. Signs: a paragraph answers a question asked in the paragraph just before under the same label (people don't answer themselves); a back-and-forth between two people where the labels don't alternate; someone named and asked a question replies. Give the paragraph number and the label of who most likely said it, written exactly as one of the labels in the transcript. Only where the conversation makes it clear; most labels are right, and an empty list is fine.";
 
 fn schema() -> Value {
     json!({
@@ -50,9 +62,21 @@ fn schema() -> Value {
                     "required": ["paragraph", "name", "kind", "quote"],
                     "additionalProperties": false
                 }
+            },
+            "turns": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "paragraph": { "type": "integer" },
+                        "speaker": { "type": "string" }
+                    },
+                    "required": ["paragraph", "speaker"],
+                    "additionalProperties": false
+                }
             }
         },
-        "required": ["clues"],
+        "required": ["clues", "turns"],
         "additionalProperties": false
     })
 }
@@ -142,14 +166,54 @@ pub fn from_reply(reply: &Value, paragraphs: &[Paragraph], numbers: &[usize]) ->
     out
 }
 
-/// Ask the model for clues across the meeting, in pieces it can take.
+/// The turns in the model's reply: paragraph key → speaker, for labels
+/// that name a voice heard on the same track, different from the one the
+/// paragraph has. None of them if the model relabelled too much.
+pub fn turns_from_reply(
+    reply: &Value,
+    paragraphs: &[Paragraph],
+    numbers: &[usize],
+    label: &dyn Fn(&Paragraph) -> String,
+) -> BTreeMap<String, u32> {
+    let mut voices: BTreeMap<(bool, String), u32> = BTreeMap::new();
+    for p in paragraphs {
+        if let Some(v) = p.speaker {
+            voices
+                .entry((p.source == Source::Mic, label(p)))
+                .or_insert(v);
+        }
+    }
+    let mut out = BTreeMap::new();
+    for item in reply["turns"].as_array().into_iter().flatten() {
+        let (Some(n), Some(who)) = (item["paragraph"].as_u64(), item["speaker"].as_str()) else {
+            continue;
+        };
+        let Some(p) = numbers.get(n as usize).map(|&i| &paragraphs[i]) else {
+            continue;
+        };
+        let Some(&v) = voices.get(&(p.source == Source::Mic, who.trim().to_string())) else {
+            continue;
+        };
+        if p.speaker.is_some() && p.speaker != Some(v) {
+            out.insert(super::summary::paragraph_key(p), v);
+        }
+    }
+    if out.len() as f32 > numbers.len() as f32 * MAX_TURNS_SHARE {
+        log::info!("Dropped {} speaker turns: too many to trust", out.len());
+        return BTreeMap::new();
+    }
+    out
+}
+
+/// Ask the model for clues and turns across the meeting, in pieces it can
+/// take.
 pub async fn find(
     llm: &Llm,
     paragraphs: &[Paragraph],
     label: &dyn Fn(&Paragraph) -> String,
-) -> Result<Vec<Clue>, String> {
+) -> Result<(Vec<Clue>, BTreeMap<String, u32>), String> {
     let budget = llm.budget().summary.min(40_000);
-    let mut out = Vec::new();
+    let (mut out, mut turns) = (Vec::new(), BTreeMap::new());
     for batch in super::summary::batches(paragraphs, budget) {
         let input: String = batch
             .iter()
@@ -158,8 +222,9 @@ pub async fn find(
             .collect();
         let reply = llm.ask_json(INSTRUCTIONS, &input, &schema(), "low").await?;
         out.extend(from_reply(&reply, paragraphs, &batch));
+        turns.extend(turns_from_reply(&reply, paragraphs, &batch, label));
     }
-    Ok(out)
+    Ok((out, turns))
 }
 
 #[cfg(test)]
@@ -198,5 +263,27 @@ mod tests {
         // "Sam, …?" says this speaker isn't Sam and the next one probably is.
         assert!(!clues[1].is && clues[1].start_ms == 5_000);
         assert!(clues[2].is && clues[2].name == "Sam" && clues[2].start_ms == 10_000);
+    }
+
+    #[test]
+    fn turns_move_a_paragraph_to_a_voice_heard_on_its_track() {
+        let mut ps: Vec<Paragraph> = (0..8)
+            .map(|i| para(i * 5, 100 + (i % 2) as u32, "words"))
+            .collect();
+        ps[3].speaker = Some(100);
+        let label = |p: &Paragraph| format!("Speaker {}", p.speaker.unwrap_or(0));
+        let numbers: Vec<usize> = (0..ps.len()).collect();
+        let reply = json!({"turns": [
+            {"paragraph": 3, "speaker": "Speaker 101"},
+            // Nobody by that label: ignored.
+            {"paragraph": 4, "speaker": "Priya"},
+            // Already that speaker: nothing to do.
+            {"paragraph": 5, "speaker": "Speaker 101"}
+        ]});
+        let turns = turns_from_reply(&reply, &ps, &numbers, &label);
+        assert_eq!(turns, BTreeMap::from([("system-15000".to_string(), 101)]));
+        // Relabelling most of the batch isn't trusted.
+        let wild = json!({"turns": (0..4).map(|i| json!({"paragraph": i * 2, "speaker": "Speaker 101"})).collect::<Vec<_>>()});
+        assert!(turns_from_reply(&wild, &ps, &numbers, &label).is_empty());
     }
 }

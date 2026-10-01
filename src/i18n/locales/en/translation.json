@@ -1496,7 +1496,8 @@
       "doubt": {
         "overlap": "Two people talked at once here, so this may be the wrong person.",
         "close": "This voice was hard to tell apart from another here.",
-        "guessed": "Named from what was said or by elimination, not by the call app or you."
+        "guessed": "Named from what was said or by elimination, not by the call app or you.",
+        "turn": "Moved to this person because of how the conversation went (the voices sounded alike)."
       }
     },
     "actions": {

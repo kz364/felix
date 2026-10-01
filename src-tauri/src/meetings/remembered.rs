@@ -413,7 +413,7 @@ fn update_my_print(
 }
 
 /// Each voice's print in a meeting as the transcript now says (with the
-/// user's speaker fixes): every fingerprint window goes to the speaker of
+/// user's speaker fixes, not the turns Felix guessed): every fingerprint window goes to the speaker of
 /// the paragraph its middle falls in. On a call the mic's unlabelled
 /// paragraphs are the user's. None when the meeting has no windows kept
 /// (transcribed before they were).
@@ -421,7 +421,7 @@ pub fn corrected_prints(dir: &Path, call: bool) -> Option<BTreeMap<u32, Print>> 
     let tracks = super::windows::load(dir)?;
     let t = super::pipeline::load(dir)?;
     let paragraphs =
-        super::transcript::fixed_paragraphs(&t.segments, &super::manager::speaker_fixes(dir));
+        super::transcript::fixed_paragraphs(&t.segments, &super::manager::user_speaker_fixes(dir));
     let mut sums: BTreeMap<u32, (Vec<f32>, usize)> = BTreeMap::new();
     for (source, (wins, embs)) in &tracks {
         let mine: Vec<_> = paragraphs.iter().filter(|p| p.source == *source).collect();

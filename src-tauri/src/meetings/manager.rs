@@ -537,6 +537,7 @@ impl MeetingManager {
             summary::CLEANED_FILE,
             super::live::FILE,
             super::clues::FILE,
+            super::clues::TURNS_FILE,
         ] {
             let _ = std::fs::remove_file(dir.join(file));
         }
@@ -889,8 +890,17 @@ pub fn paragraphs_of(dir: &Path, t: &transcript::Transcript) -> Vec<Paragraph> {
 /// start that's the paragraph, further in it splits it.
 pub(super) const SPEAKER_FIXES_FILE: &str = "speaker_fixes.json";
 
-pub fn speaker_fixes(dir: &Path) -> BTreeMap<String, u32> {
+pub fn user_speaker_fixes(dir: &Path) -> BTreeMap<String, u32> {
     summary::load_json(dir, SPEAKER_FIXES_FILE).unwrap_or_default()
+}
+
+/// The speakers the transcript shows: turns found from the conversation
+/// (see [`super::clues`]), under the user's own fixes.
+pub fn speaker_fixes(dir: &Path) -> BTreeMap<String, u32> {
+    let mut fixes: BTreeMap<String, u32> =
+        summary::load_json(dir, super::clues::TURNS_FILE).unwrap_or_default();
+    fixes.extend(user_speaker_fixes(dir));
+    fixes
 }
 
 /// A number for a new person heard on `source`: after every voice already
@@ -1130,7 +1140,7 @@ pub fn set_paragraph_speaker(
         .find(|s| s.source == source && s.start_ms == start_ms)
         .ok_or("That part of the transcript isn't there any more")?;
     let key = transcript::segment_key(segment);
-    let mut fixes = speaker_fixes(&dir);
+    let mut fixes = user_speaker_fixes(&dir);
     // Who it is without this fix, and the paragraph it's in now.
     let others: BTreeMap<String, u32> = fixes
         .iter()
@@ -1271,7 +1281,7 @@ pub fn merge_meeting_voices(
 ) -> Result<(), String> {
     let dir = meeting_dir(&app, &id)?;
     let t = pipeline::load(&dir).ok_or("The meeting isn't transcribed yet")?;
-    let mut fixes = speaker_fixes(&dir);
+    let mut fixes = user_speaker_fixes(&dir);
     for p in transcript::fixed_paragraphs(&t.segments, &fixes) {
         if p.speaker == Some(from) {
             fixes.insert(summary::paragraph_key(&p), into);
@@ -1334,7 +1344,12 @@ pub fn retranscribe_meeting(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(info) = read_info(&dir) {
         super::speakers::keep_names(&dir, &info.speakers);
     }
-    for file in [transcript::FILE, summary::CLEANED_FILE, super::clues::FILE] {
+    for file in [
+        transcript::FILE,
+        summary::CLEANED_FILE,
+        super::clues::FILE,
+        super::clues::TURNS_FILE,
+    ] {
         match std::fs::remove_file(dir.join(file)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
