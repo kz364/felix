@@ -365,9 +365,71 @@ fn read_from(path: &Path, from: u64, max: u64) -> Option<Vec<f32>> {
     )
 }
 
+/// The system track this far behind the mic has stopped.
+const STALLED_SECS: usize = 5;
+
+/// The mic with the call's echo cancelled as it's heard (on speakers).
+struct Cleaner {
+    canceller: super::aec::Canceller,
+    mic: PathBuf,
+    system: PathBuf,
+    /// Samples of the mic (and system) track cancelled so far.
+    done: u64,
+    out: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
+}
+
+impl Cleaner {
+    fn new(dir: &Path) -> Result<Self, String> {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        Ok(Cleaner {
+            canceller: super::aec::Canceller::new()?,
+            mic: dir.join(Source::Mic.file()),
+            system: dir.join(Source::System.file()),
+            done: 0,
+            out: hound::WavWriter::create(dir.join(super::aec::LIVE_FILE), spec)
+                .map_err(|e| e.to_string())?,
+        })
+    }
+
+    /// Cancel what both tracks have recorded since; returns the cleaned mic.
+    fn next(&mut self) -> Result<Vec<f32>, String> {
+        let max = READ_SECS * SAMPLE_RATE as u64;
+        let mic = read_from(&self.mic, self.done, max).unwrap_or_default();
+        let mut system = read_from(&self.system, self.done, max).unwrap_or_default();
+        // The call's track stalled (its capture failed): carry on without it.
+        if mic.len() > system.len() + STALLED_SECS * SAMPLE_RATE as usize {
+            system.resize(mic.len(), 0.0);
+        }
+        let frame = super::aec::Canceller::FRAME;
+        let n = mic.len().min(system.len()) / frame * frame;
+        let mut out = Vec::with_capacity(n);
+        for at in (0..n).step_by(frame) {
+            out.extend(
+                self.canceller
+                    .process(&mic[at..at + frame], &system[at..at + frame])?,
+            );
+        }
+        for &s in &out {
+            self.out
+                .write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16)
+                .map_err(|e| e.to_string())?;
+        }
+        self.out.flush().map_err(|e| e.to_string())?;
+        self.done += n as u64;
+        Ok(out)
+    }
+}
+
 struct Track {
     source: Source,
+    /// What's transcribed: the track, or the mic cleaned as it's heard.
     path: PathBuf,
+    cleaner: Option<Cleaner>,
     live_gain: bool,
     /// Hears the track as the final pass will.
     listener: pipeline::Listener,
@@ -464,6 +526,12 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
     };
     // As the final pass hears the mic in person (see `pipeline::run`).
     let lift_mic = mode == MeetingMode::InPerson && settings.meeting_auto_gain;
+    // On a call through the speakers, the mic hears the call again: cancel
+    // it as it's heard, as the final pass does.
+    let clean_mic = mode == MeetingMode::Call
+        && !super::manager::read_info(dir)
+            .and_then(|i| i.output_device)
+            .is_some_and(|o| super::echo::is_headphones(&o));
     // Told apart only with the model already there (the final pass fetches it).
     let speaker_model = settings
         .meeting_diarize
@@ -492,6 +560,7 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
                 mode,
                 &vad,
                 lift_mic,
+                clean_mic,
                 speaker_model.as_deref(),
                 engine,
                 engine_name,
@@ -523,6 +592,7 @@ fn run(
     mode: MeetingMode,
     vad: &Path,
     lift_mic: bool,
+    clean_mic: bool,
     speaker_model: Option<&Path>,
     engine: Engine,
     engine_name: String,
@@ -543,16 +613,30 @@ fn run(
         }
         let live_gain = lift_mic && source == Source::Mic;
         match pipeline::Listener::new(vad, live_gain) {
-            Ok(listener) => tracks.push(Track {
-                source,
-                path: dir.join(source.file()),
-                live_gain,
-                listener,
-                heard: 0,
-                cache: diarize::FingerprintCache::default(),
-                labels: None,
-                cuts: HashMap::new(),
-            }),
+            Ok(listener) => {
+                let cleaner = (clean_mic && source == Source::Mic)
+                    .then(|| {
+                        Cleaner::new(dir)
+                            .inspect_err(|e| log::warn!("Live echo cancelling: {e}"))
+                            .ok()
+                    })
+                    .flatten();
+                let path = match &cleaner {
+                    Some(_) => dir.join(super::aec::LIVE_FILE),
+                    None => dir.join(source.file()),
+                };
+                tracks.push(Track {
+                    source,
+                    path,
+                    cleaner,
+                    live_gain,
+                    listener,
+                    heard: 0,
+                    cache: diarize::FingerprintCache::default(),
+                    labels: None,
+                    cuts: HashMap::new(),
+                })
+            }
             Err(e) => log::warn!("No live transcript for the {source:?} track: {e}"),
         }
     }
@@ -575,9 +659,13 @@ fn run(
             .filter(|_| !voices_failed && voices_at.is_none_or(|at| at.elapsed() >= VOICES_EVERY));
         for track in &mut tracks {
             // Hear what's new.
-            while let Some(audio) =
-                read_from(&track.path, track.heard, READ_SECS * SAMPLE_RATE as u64)
-            {
+            while let Some(audio) = match &mut track.cleaner {
+                Some(c) => c
+                    .next()
+                    .inspect_err(|e| log::warn!("Live echo cancelling: {e}"))
+                    .ok(),
+                None => read_from(&track.path, track.heard, READ_SECS * SAMPLE_RATE as u64),
+            } {
                 if audio.is_empty() || stop.load(Ordering::Acquire) {
                     break;
                 }

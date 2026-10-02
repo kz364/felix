@@ -845,6 +845,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::remembered::merge_remembered_voices,
             meetings::remembered::delete_remembered_voice,
             meetings::manager::retranscribe_meeting,
+            meetings::remembered::learn_my_voice_from,
             meetings::manager::change_meeting_settings,
             meetings::manager::default_meeting_summary_prompt,
             meetings::manager::resume_meeting,

@@ -13,6 +13,8 @@ use std::path::Path;
 
 /// The mic with the call taken out, kept next to the tracks.
 pub const FILE: &str = "mic_clean.wav";
+/// The same, made while recording for the live transcript.
+pub const LIVE_FILE: &str = "mic_live_clean.wav";
 
 fn open(path: &Path) -> Result<hound::WavReader<std::io::BufReader<std::fs::File>>, String> {
     let reader = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -64,14 +66,17 @@ pub fn cancel(mic: &Path, system: &Path, out: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, out).map_err(|e| e.to_string())
 }
 
-struct Canceller {
+/// Echo cancelling a frame at a time ([`Canceller::FRAME`] samples).
+pub struct Canceller {
     pipeline: linear::LinearPipeline,
     frame: usize,
     processed: Vec<f32>,
 }
 
 impl Canceller {
-    fn new() -> Result<Self, String> {
+    pub const FRAME: usize = SAMPLE_RATE as usize / 100;
+
+    pub fn new() -> Result<Self, String> {
         let format = AudioFormat::ten_ms(SAMPLE_RATE, 1);
         // Only the echo canceller (and the high-pass it expects): noise
         // suppression and gain would change the voices the speaker model hears.
@@ -89,7 +94,7 @@ impl Canceller {
     }
 
     /// One 10 ms frame (shorter at the end) of mic and what played then.
-    fn process(&mut self, mic: &[f32], system: &[f32]) -> Result<Vec<f32>, String> {
+    pub fn process(&mut self, mic: &[f32], system: &[f32]) -> Result<Vec<f32>, String> {
         let pad = |x: &[f32]| {
             let mut f = x.to_vec();
             f.resize(self.frame, 0.0);

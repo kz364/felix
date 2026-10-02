@@ -320,7 +320,7 @@ impl MeetingManager {
         // The user's voice on this mic, once they've recorded a print.
         let voiceprint = crate::portable::app_data_dir(&self.app)
             .ok()
-            .and_then(|dir| super::voiceprint::load(&dir, &info.mic));
+            .and_then(|dir| super::voiceprint::load_or_nearest(&dir, &info.mic));
         // The languages it's in: chosen, found before, or listened for now.
         let models = self
             .app

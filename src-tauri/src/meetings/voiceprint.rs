@@ -72,6 +72,23 @@ pub fn load(app_data: &Path, mic: &str) -> Option<Vec<f32>> {
     (print.mic == mic && !print.embedding.is_empty()).then_some(print.embedding)
 }
 
+/// The user's print for this mic or, without one, the one made from the
+/// most speech on another mic: the same voice through a different mic is
+/// still nearer than anyone else's.
+pub fn load_or_nearest(app_data: &Path, mic: &str) -> Option<Vec<f32>> {
+    load(app_data, mic).or_else(|| {
+        std::fs::read_dir(app_data.join(DIR))
+            .ok()?
+            .flatten()
+            .filter_map(|e| {
+                serde_json::from_slice::<Voiceprint>(&std::fs::read(e.path()).ok()?).ok()
+            })
+            .filter(|p| !p.embedding.is_empty())
+            .max_by_key(|p| p.windows)
+            .map(|p| p.embedding)
+    })
+}
+
 /// The whole print for this mic, to add to.
 pub fn load_full(app_data: &Path, mic: &str) -> Option<Voiceprint> {
     let print: Voiceprint =

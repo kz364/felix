@@ -828,7 +828,7 @@ pub fn list_meetings(app: AppHandle) -> Vec<MeetingInfo> {
 }
 
 /// A meeting's folder, refusing ids that could point outside `meetings/`.
-fn meeting_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+pub(super) fn meeting_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     // Ids are timestamps like 2026-09-24_14-32-05.
     if id.is_empty()
         || !id

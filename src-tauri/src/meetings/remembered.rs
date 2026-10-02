@@ -535,6 +535,41 @@ pub fn apply(
     names_for(&store, &links)
 }
 
+/// The user says this call is a clean recording of them: their print for
+/// its mic takes the mic's main voice from it, even for a meeting from
+/// before `learn_since`. Returns the mic's name.
+pub fn learn_my_voice(dir: &Path) -> Result<String, String> {
+    let app_data = dir.parent().and_then(Path::parent).ok_or("No app folder")?;
+    let meeting = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("No meeting")?;
+    let info = super::manager::read_info(dir).ok_or("This meeting can't be read")?;
+    if info.mode != super::MeetingMode::Call {
+        return Err("Only a call tells which voice on the mic is yours".into());
+    }
+    if !super::voiceprint::enrolls_from(&info.mic) {
+        return Err(format!(
+            "{} is a dictation mic: it hears you unlike a meeting does",
+            info.mic
+        ));
+    }
+    let prints = corrected_prints(dir, true)
+        .or_else(|| super::summary::load_json(dir, PRINTS_FILE))
+        .ok_or("Transcribe this meeting first")?;
+    if prints.get(&ME).is_none_or(|p| p.windows < MIN_WINDOWS) {
+        return Err("You don't talk enough in this meeting to learn from".into());
+    }
+    update_my_print(app_data, &info.mic, meeting, &prints, info.started_at);
+    Ok(info.mic)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn learn_my_voice_from(app: AppHandle, id: String) -> Result<String, String> {
+    learn_my_voice(&super::manager::meeting_dir(&app, &id)?)
+}
+
 // ---- Settings ----
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {

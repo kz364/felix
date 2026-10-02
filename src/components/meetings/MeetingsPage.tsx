@@ -669,6 +669,12 @@ const TranscriptSection: React.FC<{
     if (result.status === "error") toast.error(result.error);
   };
 
+  const learnVoice = async () => {
+    const result = await commands.learnMyVoiceFrom(meeting.id);
+    if (result.status === "error") toast.error(result.error);
+    else toast.success(t("meetings.transcript.learnedVoice", { mic: result.data }));
+  };
+
   const copy = async () => {
     const lines = (transcript?.paragraphs ?? []).map((p) => {
       const label = who(meeting, p);
@@ -770,6 +776,15 @@ const TranscriptSection: React.FC<{
           <button onClick={copy} className={linkButton}>
             <Copy className="w-3 h-3" />
             {t("meetings.transcript.copy")}
+          </button>
+        )}
+        {status === "done" && !busy && meeting.mode === "call" && (
+          <button
+            onClick={learnVoice}
+            className={linkButton}
+            title={t("meetings.transcript.learnVoiceHint")}
+          >
+            {t("meetings.transcript.learnVoice")}
           </button>
         )}
         {status === "done" &&
