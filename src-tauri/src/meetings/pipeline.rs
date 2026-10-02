@@ -591,6 +591,12 @@ pub fn run(
         .sort_by_key(|s| (s.start_ms, s.source == Source::System));
     if mode == MeetingMode::Call {
         transcript::mark_echo(&mut t.segments);
+        if !headphones {
+            let n = transcript::mark_echo_voices(&mut t.segments);
+            if n > 0 {
+                log::info!("{n} mic segments were the call echoing in the room");
+            }
+        }
     }
     t.complete = true;
     save(dir, &t)?;

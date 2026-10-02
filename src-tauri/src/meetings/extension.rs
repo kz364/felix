@@ -76,12 +76,17 @@ pub fn load(dir: &Path) -> Vec<Logged> {
 /// Whether the page gave a person's name, not an icon's: Meet draws its
 /// icons from words ("frame_person", "keep_outline"), which an older
 /// extension read as names, so every voice it heard looked like one person.
+/// Notices and labels in a tile ("Others might still see your full
+/// video.", "… (visible to everyone)") aren't either.
 pub fn is_name(name: &str) -> bool {
     let n = name.trim();
     !n.is_empty()
         && !n
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && !n.ends_with(['.', '!', '?', ':'])
+        && !n.contains(['(', ')'])
+        && n.split_whitespace().count() <= 4
 }
 
 fn data_dir() -> Option<PathBuf> {

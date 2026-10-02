@@ -202,7 +202,11 @@ fn ami(dir: &Path, model: &Path) -> Result<(), String> {
             let speakers = match &grouping {
                 Some(g) => {
                     let names = diarize::window_names(&p.wins, &hints);
-                    diarize::group_voices_with(&p.embs, g, &names).0
+                    let mut v = diarize::group_voices_with(&p.embs, g, &names).0;
+                    if std::env::var("MERGE").map_or(true, |m| m != "0") {
+                        diarize::merge_same_voices(&p.embs, &mut v, &names);
+                    }
+                    v
                 }
                 None => diarize::cluster(&p.embs),
             };

@@ -222,6 +222,60 @@ pub fn mark_echo(segments: &mut [Segment]) {
     }
 }
 
+/// A mic voice talking over the call this much of the time is the call
+/// coming out of the laptop's speakers into the room, not a person: the
+/// people in the room talked over it 5–9% of the time on a call measured.
+const ECHO_VOICE_SHARE: f32 = 0.4;
+
+/// With the call on the laptop's speakers in a room, the mic hears it back,
+/// in a voice the mic can't match to the call's (the room changes it), so
+/// it comes out as one more person. Mic voices that mostly talk while the
+/// call does are that echo: their segments over the call's speech are
+/// flagged. Returns how many.
+pub fn mark_echo_voices(segments: &mut [Segment]) -> usize {
+    let system: Vec<(u64, u64)> = segments
+        .iter()
+        .filter(|s| s.source == Source::System && !s.text.trim().is_empty())
+        .map(|s| (s.start_ms, s.end_ms))
+        .collect();
+    let over_call = |s: &Segment| -> u64 {
+        system
+            .iter()
+            .map(|&(a, b)| s.end_ms.min(b).saturating_sub(s.start_ms.max(a)))
+            .sum::<u64>()
+            .min(s.end_ms - s.start_ms)
+    };
+    let mut talk: std::collections::BTreeMap<u32, (u64, u64)> = Default::default();
+    for s in segments
+        .iter()
+        .filter(|s| s.source == Source::Mic && !s.echo)
+    {
+        if let Some(v) = s.speaker.filter(|v| *v != super::diarize::ME) {
+            let t = talk.entry(v).or_default();
+            t.0 += s.end_ms - s.start_ms;
+            t.1 += over_call(s);
+        }
+    }
+    let echoes: Vec<u32> = talk
+        .into_iter()
+        .filter(|(_, (all, over))| *all > 0 && *over as f32 >= ECHO_VOICE_SHARE * *all as f32)
+        .map(|(v, _)| v)
+        .collect();
+    let mut marked = 0;
+    for s in segments
+        .iter_mut()
+        .filter(|s| s.source == Source::Mic && !s.echo)
+    {
+        if s.speaker.is_some_and(|v| echoes.contains(&v))
+            && over_call(s) * 2 >= s.end_ms - s.start_ms
+        {
+            s.echo = true;
+            marked += 1;
+        }
+    }
+    marked
+}
+
 /// A pause this long starts a new paragraph.
 const PARAGRAPH_PAUSE_MS: u64 = 2_000;
 /// Paragraphs are split after about this long, so timestamps stay useful.
@@ -328,6 +382,34 @@ pub fn to_text(paragraphs: &[Paragraph], label: impl Fn(&Paragraph) -> Option<St
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_mic_voice_that_talks_over_the_call_is_its_echo() {
+        let seg = |source, start_s: u64, end_s: u64, speaker| Segment {
+            source,
+            start_ms: start_s * 1000,
+            end_ms: end_s * 1000,
+            text: "words".into(),
+            echo: false,
+            speaker,
+        };
+        let mut segments = vec![
+            seg(Source::System, 0, 10, Some(100)),
+            seg(Source::System, 20, 30, Some(100)),
+            // The call in the room's mic, and a moment of it alone.
+            seg(Source::Mic, 1, 9, Some(1)),
+            seg(Source::Mic, 21, 29, Some(1)),
+            seg(Source::Mic, 40, 42, Some(1)),
+            // Someone in the room, once over the call.
+            seg(Source::Mic, 10, 20, Some(0)),
+            seg(Source::Mic, 8, 11, Some(0)),
+            seg(Source::Mic, 30, 40, None),
+        ];
+        assert_eq!(mark_echo_voices(&mut segments), 2);
+        let echo: Vec<bool> = segments.iter().map(|s| s.echo).collect();
+        assert_eq!(echo, [false, false, true, true, false, false, false, false]);
+    }
+
     use super::*;
 
     /// Speech flags from (speech?, milliseconds) spans.

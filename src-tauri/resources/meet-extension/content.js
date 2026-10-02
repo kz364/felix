@@ -105,6 +105,9 @@
     if (!n || n.length > 80) return null;
     // Icons drawn from words ("frame_person", "keep_outline") aren't names.
     if (/^[a-z0-9_]+$/.test(n)) return null;
+    // Nor are notices and labels in a tile ("Others might still see your
+    // full video.", "… (visible to everyone)").
+    if (/[.!?:]$|[()]/.test(n) || n.split(" ").length > 4) return null;
     if (/^(you|me|presentation|meeting host)$/i.test(n)) return null;
     return n;
   }

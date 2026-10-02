@@ -838,6 +838,7 @@ pub fn label_with(
     let names = window_names(wins, hints);
     let (mut speakers, window_margins) =
         group_voices_with(embeddings, &Grouping::default(), &names);
+    merge_same_voices(embeddings, &mut speakers, &names);
     if let Some(print) = voiceprint {
         mark_me(embeddings, &mut speakers, print);
     }
@@ -858,6 +859,82 @@ pub fn label_with(
         margins,
         windows: wins.to_vec(),
         embeddings: embeddings.to_vec(),
+    }
+}
+
+/// Voices whose mean fingerprints are at least this similar (before the
+/// meeting's mean is taken off) are one person. On the meetings so far,
+/// different people came out at 0.36 to 0.64 and pieces of one voice at
+/// 0.76 to 0.94: taking the mean off helps tell many voices apart, but with
+/// one person on the line it leaves little but noise, and they split.
+const SAME_VOICE: f32 = 0.72;
+
+/// Join voices that are plainly one person (see [`SAME_VOICE`]), unless the
+/// call app gave them different names. Renumbers in order of first window.
+pub fn merge_same_voices(embeddings: &[Vec<f32>], speakers: &mut [u32], names: &[Option<u32>]) {
+    let n = speakers.iter().max().map_or(0, |m| *m as usize + 1);
+    if n < 2 {
+        return;
+    }
+    let dim = embeddings.first().map_or(0, Vec::len);
+    let mut sums = vec![vec![0.0f32; dim]; n];
+    let mut named: Vec<std::collections::BTreeMap<u32, usize>> = vec![Default::default(); n];
+    for (i, (&v, e)) in speakers.iter().zip(embeddings).enumerate() {
+        let e = unit(e.clone());
+        for (a, x) in sums[v as usize].iter_mut().zip(&e) {
+            *a += x;
+        }
+        if let Some(name) = names.get(i).copied().flatten() {
+            *named[v as usize].entry(name).or_default() += 1;
+        }
+    }
+    let name_of = |m: &std::collections::BTreeMap<u32, usize>| {
+        m.iter().max_by_key(|(_, c)| **c).map(|(n, _)| *n)
+    };
+    let mut into: Vec<usize> = (0..n).collect();
+    loop {
+        let alive: Vec<usize> = (0..n)
+            .filter(|&v| into[v] == v && norm(&sums[v]) > 0.0)
+            .collect();
+        let mut best: Option<(usize, usize, f32)> = None;
+        for (i, &a) in alive.iter().enumerate() {
+            for &b in &alive[i + 1..] {
+                if let (Some(x), Some(y)) = (name_of(&named[a]), name_of(&named[b])) {
+                    if x != y {
+                        continue;
+                    }
+                }
+                let sim = cosine(&sums[a], &sums[b]) / (norm(&sums[a]) * norm(&sums[b]));
+                if sim >= SAME_VOICE && best.is_none_or(|(_, _, s)| sim > s) {
+                    best = Some((a, b, sim));
+                }
+            }
+        }
+        let Some((a, b, _)) = best else { break };
+        let moved = std::mem::take(&mut sums[b]);
+        for (x, y) in sums[a].iter_mut().zip(&moved) {
+            *x += y;
+        }
+        let moved = std::mem::take(&mut named[b]);
+        for (k, c) in moved {
+            *named[a].entry(k).or_default() += c;
+        }
+        into[b] = a;
+    }
+    let root = |mut v: usize| {
+        while into[v] != v {
+            v = into[v];
+        }
+        v
+    };
+    let mut order: Vec<usize> = Vec::new();
+    for s in speakers.iter_mut() {
+        let r = root(*s as usize);
+        let i = order.iter().position(|&o| o == r).unwrap_or_else(|| {
+            order.push(r);
+            order.len() - 1
+        });
+        *s = i as u32;
     }
 }
 
