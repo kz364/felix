@@ -574,9 +574,32 @@ impl AudioRecordingManager {
 
     /// The microphone dictation would use now (preferred list, selection or
     /// the system default as `None`), for a meeting recording.
+    /// Dictation mics (the DJI) are skipped: they're never used for a call,
+    /// connected or not. `None` falls back to [`crate::meetings::mic`]'s
+    /// default, which skips them too.
     pub fn meeting_microphone(&self) -> Option<cpal::Device> {
-        let settings = get_settings(&self.app_handle);
-        self.resolve_microphone_device(&settings).device
+        use crate::meetings::voiceprint::is_dictation_mic;
+        let mut settings = get_settings(&self.app_handle);
+        settings
+            .preferred_microphones
+            .retain(|m| !is_dictation_mic(m));
+        if settings
+            .selected_microphone
+            .as_deref()
+            .is_some_and(is_dictation_mic)
+        {
+            settings.selected_microphone = None;
+        }
+        if settings
+            .clamshell_microphone
+            .as_deref()
+            .is_some_and(is_dictation_mic)
+        {
+            settings.clamshell_microphone = None;
+        }
+        self.resolve_microphone_device(&settings)
+            .device
+            .filter(|d| !cpal::traits::DeviceTrait::name(d).is_ok_and(|n| is_dictation_mic(&n)))
     }
 
     pub fn invalidate_device_cache(&self) {

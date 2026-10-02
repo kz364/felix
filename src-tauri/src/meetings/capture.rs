@@ -130,19 +130,22 @@ trait Input: Send {
 struct MicInput {
     chosen: Option<cpal::Device>,
     opened: String,
+    /// The system default when it was opened (it may be a dictation mic,
+    /// which was skipped).
+    default: Option<String>,
     /// The Mac's input volume for it when the meeting started, in dB.
     start_db: Option<f32>,
 }
 
 impl MicInput {
     fn volume_db(&self) -> Option<f32> {
-        let chosen = self.chosen.is_some().then_some(self.opened.as_str());
-        super::mic::input_volume_db(chosen)
+        super::mic::input_volume_db(Some(self.opened.as_str()).filter(|o| !o.is_empty()))
     }
 }
 
 impl Input for MicInput {
     fn open(&mut self) -> Result<Opened, String> {
+        self.default = super::mic::default_name();
         let (source, stream) = match super::mic::start(self.chosen.clone()) {
             Ok(opened) => opened,
             // The chosen mic went away mid-meeting: carry on with the default.
@@ -169,14 +172,10 @@ impl Input for MicInput {
     }
 
     fn moved(&mut self) -> bool {
-        use cpal::traits::{DeviceTrait, HostTrait};
         if self.chosen.is_some() {
             return false;
         }
-        crate::audio_toolkit::get_cpal_host()
-            .default_input_device()
-            .and_then(|d| d.name().ok())
-            .is_some_and(|name| name != self.opened)
+        super::mic::default_name().is_some_and(|name| Some(name) != self.default)
     }
 }
 
@@ -452,6 +451,7 @@ impl Recording {
         let mut mic = Box::new(MicInput {
             chosen: mic,
             opened: String::new(),
+            default: None,
             start_db: None,
         });
         let opened = mic.open()?;

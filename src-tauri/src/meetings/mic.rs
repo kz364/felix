@@ -53,7 +53,37 @@ where
     )
 }
 
-/// Open the microphone (`None`: the system default input).
+/// The system default input's name.
+pub fn default_name() -> Option<String> {
+    crate::audio_toolkit::get_cpal_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+}
+
+/// The system default input, unless it's a dictation mic (the DJI): then
+/// the Mac's own mic, or else any other input.
+pub fn call_default() -> Option<cpal::Device> {
+    use super::voiceprint::is_dictation_mic;
+    let host = crate::audio_toolkit::get_cpal_host();
+    let default = host.default_input_device();
+    if let Some(d) = default.filter(|d| !d.name().is_ok_and(|n| is_dictation_mic(&n))) {
+        return Some(d);
+    }
+    let devices = crate::audio_toolkit::list_input_devices().ok()?;
+    let others: Vec<_> = devices
+        .into_iter()
+        .filter(|d| !is_dictation_mic(&d.name))
+        .collect();
+    let built_in = others
+        .iter()
+        .position(|d| d.name.contains("MacBook") || d.name.contains("Built-in"));
+    others
+        .into_iter()
+        .nth(built_in.unwrap_or(0))
+        .map(|d| d.device)
+}
+
+/// Open the microphone (`None`: the system default input, see [`call_default`]).
 pub fn start(device: Option<cpal::Device>) -> Result<(Source, MicStream), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (init_tx, init_rx) = mpsc::sync_channel(1);
@@ -65,9 +95,8 @@ pub fn start(device: Option<cpal::Device>) -> Result<(Source, MicStream), String
             let result = (|| -> Result<(cpal::Stream, Source), String> {
                 let device = match device {
                     Some(d) => d,
-                    None => crate::audio_toolkit::get_cpal_host()
-                        .default_input_device()
-                        .ok_or("No microphone found")?,
+                    None => call_default()
+                        .ok_or("No microphone found (dictation mics aren't used for meetings)")?,
                 };
                 let label = device.name().unwrap_or_else(|_| "Microphone".into());
                 let config = AudioRecorder::get_preferred_config(&device)

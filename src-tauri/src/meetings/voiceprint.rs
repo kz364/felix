@@ -33,12 +33,12 @@ pub struct Voiceprint {
     pub base: Option<Print>,
 }
 
-/// Mics made for dictation (clip-on and wireless lav receivers) aren't
-/// used to make a print: they hear the user 2 cm away in a voice unlike the
-/// one the room hears.
-pub fn enrolls_from(mic: &str) -> bool {
+/// Mics made for dictation (clip-on and wireless lav receivers): never
+/// used for a meeting, and never used to make a print (they hear the user
+/// 2 cm away in a voice unlike the one the room hears).
+pub fn is_dictation_mic(mic: &str) -> bool {
     let mic = mic.to_lowercase();
-    ![
+    [
         "wireless mic",
         "dji",
         "rode wireless",
@@ -47,6 +47,10 @@ pub fn enrolls_from(mic: &str) -> bool {
     ]
     .iter()
     .any(|m| mic.contains(m))
+}
+
+pub fn enrolls_from(mic: &str) -> bool {
+    !is_dictation_mic(mic)
 }
 
 fn file_for(app_data: &Path, mic: &str) -> PathBuf {
@@ -113,6 +117,8 @@ mod tests {
     fn prints_are_kept_per_mic_and_not_made_on_dictation_mics() {
         assert!(!enrolls_from("Wireless Mic Rx"));
         assert!(!enrolls_from("DJI Mic 2"));
+        assert!(is_dictation_mic("DJI MIC MINI"));
+        assert!(!is_dictation_mic("MacBook Pro Microphone"));
         assert!(enrolls_from("MacBook Pro Microphone"));
 
         let dir = std::env::temp_dir().join(format!("felix-voiceprint-{}", std::process::id()));
