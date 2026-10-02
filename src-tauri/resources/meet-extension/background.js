@@ -49,3 +49,37 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (p && msg && typeof msg.type === "string") p.postMessage(msg);
   return false;
 });
+
+// ---- Keeping up with Felix's copy ----
+// Loaded unpacked from Felix's folder, the extension picks up a newer copy
+// by itself: now and then it reads its own manifest from disk and reloads
+// when the version changed, then starts itself again on open call pages.
+const CHECK_EVERY_MS = 60 * 1000;
+let checkedAt = 0;
+
+async function checkForUpdate() {
+  if (Date.now() - checkedAt < CHECK_EVERY_MS) return;
+  checkedAt = Date.now();
+  try {
+    const r = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    const onDisk = (await r.json()).version;
+    if (onDisk && onDisk !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+  } catch (e) {
+    // Not readable right now; try again later.
+  }
+}
+
+chrome.runtime.onMessage.addListener(() => {
+  checkForUpdate();
+  return false;
+});
+chrome.runtime.onStartup.addListener(checkForUpdate);
+
+chrome.runtime.onInstalled.addListener(async () => {
+  const matches = chrome.runtime.getManifest().content_scripts[0].matches;
+  for (const tab of await chrome.tabs.query({ url: matches })) {
+    chrome.scripting
+      .executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
+      .catch(() => {});
+  }
+});
