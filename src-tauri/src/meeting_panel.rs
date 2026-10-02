@@ -27,7 +27,7 @@ const EDGE: f64 = 16.0;
 /// Down from the top of the screen's usable area.
 const TOP: f64 = 72.0;
 /// Dropped this close to a side of the screen, the panel snaps to it.
-const SNAP: f64 = 48.0;
+const SNAP: f64 = 120.0;
 /// How long the panel has to be still before it snaps.
 const SNAP_AFTER: Duration = Duration::from_millis(250);
 
