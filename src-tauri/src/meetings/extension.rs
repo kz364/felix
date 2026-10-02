@@ -57,7 +57,31 @@ pub fn load(dir: &Path) -> Vec<Logged> {
         .unwrap_or_default()
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
+        .filter_map(|mut l: Logged| {
+            match &mut l.message {
+                Message::Speaking { names, .. } | Message::Participants { names, .. } => {
+                    names.retain(|n| is_name(n));
+                    if names.is_empty() {
+                        return None;
+                    }
+                }
+                Message::Caption { name, .. } if !is_name(name) => return None,
+                _ => {}
+            }
+            Some(l)
+        })
         .collect()
+}
+
+/// Whether the page gave a person's name, not an icon's: Meet draws its
+/// icons from words ("frame_person", "keep_outline"), which an older
+/// extension read as names, so every voice it heard looked like one person.
+pub fn is_name(name: &str) -> bool {
+    let n = name.trim();
+    !n.is_empty()
+        && !n
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 fn data_dir() -> Option<PathBuf> {

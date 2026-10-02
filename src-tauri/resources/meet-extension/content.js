@@ -103,6 +103,8 @@
     if (!name) return null;
     const n = name.replace(/\s+/g, " ").trim();
     if (!n || n.length > 80) return null;
+    // Icons drawn from words ("frame_person", "keep_outline") aren't names.
+    if (/^[a-z0-9_]+$/.test(n)) return null;
     if (/^(you|me|presentation|meeting host)$/i.test(n)) return null;
     return n;
   }
@@ -115,19 +117,12 @@
         isSelf: (tile) =>
           !!tile.querySelector("[data-self-name]") ||
           /\(you\)/i.test(tile.getAttribute("aria-label") || ""),
-        nameOf: (tile) => {
-          const el =
-            tile.querySelector("[data-self-name]") ||
-            tile.querySelector(".notranslate") ||
-            tile.querySelector("[jsname] span");
-          return clean(el && el.textContent);
-        },
+        nameOf: (tile) => meetName(tile),
         participants: () => {
           const names = new Set();
           for (const tile of document.querySelectorAll("[data-participant-id]")) {
             if (tile.parentElement && tile.parentElement.closest("[data-participant-id]")) continue;
-            const el = tile.querySelector(".notranslate");
-            const n = clean(el && el.textContent);
+            const n = meetName(tile);
             if (n) names.add(n);
           }
           return [...names].sort();
@@ -201,6 +196,19 @@
           return out;
         },
       };
+    }
+    return null;
+  }
+
+  // A Meet tile's name: the first text in it that reads as a name. Meet's
+  // icons are text too (and share the name's "notranslate" class).
+  function meetName(tile) {
+    const self = tile.querySelector("[data-self-name]");
+    if (self) return clean(self.textContent);
+    for (const el of tile.querySelectorAll(".notranslate, [jsname] span, span, div")) {
+      if (el.children.length || el.closest('i, [aria-hidden="true"]')) continue;
+      const n = clean(el.textContent);
+      if (n) return n;
     }
     return null;
   }

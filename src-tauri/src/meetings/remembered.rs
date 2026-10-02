@@ -88,6 +88,10 @@ impl RememberedVoice {
 pub struct Store {
     pub enabled: bool,
     pub voices: Vec<RememberedVoice>,
+    /// Meetings started before this (unix ms) teach nothing: they were
+    /// recorded while voices were told apart badly.
+    #[serde(default)]
+    pub learn_since: i64,
 }
 
 impl Default for Store {
@@ -95,6 +99,7 @@ impl Default for Store {
         Store {
             enabled: true,
             voices: Vec::new(),
+            learn_since: 0,
         }
     }
 }
@@ -480,6 +485,9 @@ pub fn apply(
     };
     let mut store = load_store(app_data);
     if !store.enabled {
+        return Default::default();
+    }
+    if super::manager::read_info(dir).is_some_and(|i| i.started_at < store.learn_since) {
         return Default::default();
     }
     let old: Option<BTreeMap<u32, u32>> = super::summary::load_json(dir, LINKS_FILE);
