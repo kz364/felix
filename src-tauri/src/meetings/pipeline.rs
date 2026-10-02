@@ -433,7 +433,9 @@ pub fn run(
                 diarize(Source::Mic, &mic_wav, speech, voiceprint)
             }
             (Some(speech), MeetingMode::Call) => {
-                diarize(Source::Mic, &mic_wav, speech, None).map(|labels| {
+                // In a room, the user's print says which voice is theirs.
+                let print = voiceprint.filter(|_| !headset_mic);
+                diarize(Source::Mic, &mic_wav, speech, print).map(|labels| {
                     if headset_mic {
                         labels
                             .iter()

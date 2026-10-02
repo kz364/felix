@@ -509,15 +509,20 @@ const ROOM_SHARE: f32 = 0.15;
 const ROOM_SPEAKER_SHARE: f32 = 0.05;
 
 /// On a call, the mic is the user plus, in a meeting room, others with them.
-/// The voice heard most is the user ([`ME`]); other clear voices are kept as
-/// people in the room, numbered from 0; stray bits are the user's.
+/// The user is the voice their print picked out ([`ME`] already), or else
+/// the voice heard most (in a room, someone else may talk more); other
+/// clear voices are kept as people in the room, numbered from 0; stray
+/// bits are the user's.
 pub fn others_in_room(labels: &[Option<u32>]) -> Vec<Option<u32>> {
     let mut counts = std::collections::BTreeMap::<u32, usize>::new();
     for s in labels.iter().flatten() {
         *counts.entry(*s).or_default() += 1;
     }
     let total: usize = counts.values().sum();
-    let Some((&me, &mine)) = counts.iter().max_by_key(|&(_, n)| *n) else {
+    let Some((&me, &mine)) = counts
+        .get_key_value(&ME)
+        .or_else(|| counts.iter().max_by_key(|&(_, n)| *n))
+    else {
         return labels.to_vec();
     };
     let share = |n: usize| n as f32 / total.max(1) as f32;
@@ -553,9 +558,13 @@ pub fn offset(labels: &[Option<u32>], base: u32) -> Vec<Option<u32>> {
 
 /// A speaker at least this close to the user's voiceprint (cosine of the
 /// centroids) can be the user...
-pub const VOICEPRINT_MATCH: f32 = 0.8;
+///
+/// Measured on a room call on the MacBook mic: the user's voice came out
+/// 0.70 to an AirPods print and 0.80 to a print from them close to the
+/// MacBook mic; the two others in the room 0.16–0.32.
+pub const VOICEPRINT_MATCH: f32 = 0.55;
 /// ...and must be this much closer than any other speaker.
-pub const VOICEPRINT_MARGIN: f32 = 0.1;
+pub const VOICEPRINT_MARGIN: f32 = 0.2;
 
 /// Relabel as [`ME`] the one speaker whose voice matches the user's print,
 /// if one clearly does. `speakers` holds a speaker per embedding.
@@ -1433,6 +1442,12 @@ mod tests {
         labels.extend(l(&[1; 8]));
         assert!(others_in_room(&labels).iter().all(|s| *s == Some(ME)));
         assert_eq!(offset(&l(&[0, -1, 2]), 100), l(&[100, -1, 102]));
+        // In a room someone else talks more, but the print found me.
+        let mut labels = l(&[0; 100]);
+        labels.extend(vec![Some(ME); 60]);
+        labels.extend(l(&[2; 40]));
+        let got = others_in_room(&labels);
+        assert_eq!((got[0], got[100], got[180]), (Some(0), Some(ME), Some(1)));
     }
 
     #[test]
