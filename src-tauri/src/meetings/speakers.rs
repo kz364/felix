@@ -709,18 +709,43 @@ fn names_by_overlap(segments: &[Segment], stretches: &[NamedStretch]) -> BTreeMa
             }
         }
     }
-    by_name
+    let picked: Vec<(u32, &str, u64)> = by_name
         .into_iter()
         .filter_map(|(v, names)| {
             let (name, ms) = names.into_iter().max_by_key(|(_, ms)| *ms)?;
-            (ms * 2 > total.get(&v).copied().unwrap_or(0)).then(|| (v, name.to_string()))
+            (ms * 2 > total.get(&v).copied().unwrap_or(0)).then_some((v, name, ms))
         })
+        .collect();
+    // A name is one person: when the voices split since (one named voice
+    // was really several), only the one that said the most keeps it.
+    picked
+        .iter()
+        .filter(|(v, name, ms)| {
+            !picked.iter().any(|(w, n, m)| {
+                n == name && w != v && (m, std::cmp::Reverse(w)) > (ms, std::cmp::Reverse(v))
+            })
+        })
+        .map(|(v, name, _)| (*v, name.to_string()))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_carries_to_one_voice_only() {
+        let named = |start_s: u64, end_s: u64| NamedStretch {
+            source: Source::System,
+            start_ms: start_s * 1000,
+            end_ms: end_s * 1000,
+            name: "Ron".into(),
+        };
+        // One "Ron" voice split into two since: the one who said more keeps it.
+        let segments = vec![seg(0, 10, Some(100)), seg(10, 30, Some(101))];
+        let names = names_by_overlap(&segments, &[named(0, 30)]);
+        assert_eq!(names, BTreeMap::from([(101, "Ron".to_string())]));
+    }
 
     fn seg(start_s: u64, end_s: u64, speaker: Option<u32>) -> Segment {
         Segment {
