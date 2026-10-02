@@ -3,6 +3,7 @@
 //! dictation: its own mic stream, no gain or VAD at capture time.
 
 pub mod active_speaker;
+pub mod aec;
 pub mod ask;
 mod awake;
 pub mod calendar;

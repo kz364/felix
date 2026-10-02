@@ -198,6 +198,31 @@ pub fn read_chunk(wav: &Path, chunk: Chunk, silence: Option<&[bool]>) -> Result<
     Ok(audio)
 }
 
+/// The mic with the call's echo cancelled ([`super::aec`]), made once and
+/// again when the mic track is newer (the meeting was resumed). None if it
+/// couldn't be made: the raw mic is used then.
+fn clean_mic(dir: &Path, mic: &Path, system: &Path) -> Option<std::path::PathBuf> {
+    let out = dir.join(super::aec::FILE);
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    if modified(&out).is_some_and(|c| modified(mic).is_some_and(|m| c >= m)) {
+        return Some(out);
+    }
+    let started = std::time::Instant::now();
+    match super::aec::cancel(mic, system, &out) {
+        Ok(()) => {
+            log::info!(
+                "Meeting pipeline: took the call out of the mic in {:.1?}",
+                started.elapsed()
+            );
+            Some(out)
+        }
+        Err(e) => {
+            log::warn!("Couldn't take the call out of the mic: {e}");
+            None
+        }
+    }
+}
+
 pub fn load(dir: &Path) -> Option<Transcript> {
     serde_json::from_slice(&std::fs::read(dir.join(transcript::FILE)).ok()?).ok()
 }
@@ -276,8 +301,24 @@ pub fn run(
     // Find the speech in each track. On a call, the mic's echo of the other
     // side is masked out first, so the user's own words get chunks of their
     // own instead of being merged with (and dropped as) echo.
-    let mic_wav = dir.join(Source::Mic.file());
+    let raw_mic_wav = dir.join(Source::Mic.file());
     let system_wav = dir.join(Source::System.file());
+    let info = super::manager::read_info(dir);
+    // Headphones keep the call out of the mic: nothing to mask.
+    let headphones = info
+        .as_ref()
+        .and_then(|i| i.output_device.as_deref())
+        .is_some_and(super::echo::is_headphones);
+    // On speakers, the mic hears the call again: cancel it first.
+    let cleaned =
+        (mode == MeetingMode::Call && !headphones && raw_mic_wav.is_file() && system_wav.is_file())
+            .then(|| clean_mic(dir, &raw_mic_wav, &system_wav))
+            .flatten();
+    let mic_wav = cleaned.clone().unwrap_or_else(|| raw_mic_wav.clone());
+    let wav_of = |source: Source| match source {
+        Source::Mic => mic_wav.clone(),
+        Source::System => system_wav.clone(),
+    };
     let lift_mic = mode == MeetingMode::InPerson && level.is_some_and(|l| l.auto);
     let started = std::time::Instant::now();
     let mut step_at = started;
@@ -289,6 +330,10 @@ pub fn run(
     let mut heard = super::live::take_heard(dir);
     let mut caches: Vec<(Source, super::diarize::FingerprintCache)> = Vec::new();
     let mut hear = |source: Source, wav: &Path, live_gain: bool| -> Result<Analysis, String> {
+        // The live pass heard the mic before the call was taken out.
+        if source == Source::Mic && cleaned.is_some() {
+            return analyze(wav, vad_model, live_gain);
+        }
         let Some(i) = heard
             .iter()
             .position(|h| h.source == source && h.live_gain == live_gain)
@@ -329,12 +374,6 @@ pub fn run(
     } else {
         None
     };
-    let info = super::manager::read_info(dir);
-    // Headphones keep the call out of the mic: nothing to mask.
-    let headphones = info
-        .as_ref()
-        .and_then(|i| i.output_device.as_deref())
-        .is_some_and(super::echo::is_headphones);
     // A headset's own mic (AirPods) only hears whoever wears it.
     let headset_mic = headphones
         && info
@@ -523,9 +562,11 @@ pub fn run(
             m.get(frames.start.min(m.len())..frames.end.min(m.len()))
                 .is_some_and(|f| f.iter().any(|&e| e))
         });
+        // Nor the call's echo taken out.
+        let mic_cleaned = source == Source::Mic && cleaned.is_some();
         if let Some(text) = ahead
             .get(&super::live::chunk_key(source, chunk))
-            .filter(|_| !in_person_mic && !echoed)
+            .filter(|_| !in_person_mic && !echoed && !mic_cleaned)
         {
             t.segments.push(Segment {
                 source,
@@ -546,7 +587,7 @@ pub fn run(
                 let from = chunk.start_ms.saturating_sub(super::level::WARMUP_MS);
                 let lead_in = ((chunk.start_ms - from) * SAMPLE_RATE as u64 / 1000) as usize;
                 let mut audio = read_chunk(
-                    &dir.join(source.file()),
+                    &wav_of(source),
                     Chunk {
                         start_ms: from,
                         end_ms: chunk.end_ms,
@@ -561,7 +602,7 @@ pub fn run(
                 audio.split_off(lead_in.min(audio.len()))
             }
             _ => {
-                let mut audio = read_chunk(&dir.join(source.file()), chunk, silence)?;
+                let mut audio = read_chunk(&wav_of(source), chunk, silence)?;
                 if let (true, Some(settings), Some(m)) = (in_person_mic, level, &mic) {
                     let start = (chunk.start_ms * SAMPLE_RATE as u64 / 1000) as usize;
                     super::level::level(&mut audio, start, &m.speech, settings);
