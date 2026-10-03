@@ -91,6 +91,9 @@ fn grouping_from_env() -> Option<diarize::Grouping> {
     if let Some(v) = num("MINW") {
         g.min_windows = v as usize;
     }
+    if let Some(v) = num("BONUS") {
+        g.same_name_bonus = v;
+    }
     if let Ok(v) = std::env::var("NORM") {
         g.normalise = v != "0";
     }
@@ -186,12 +189,18 @@ fn ami(dir: &Path, model: &Path) -> Result<(), String> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
+        // TILES=1: the first two people share one tile (a room behind one
+        // laptop on the call), so their hints carry the same name.
+        let tiles = std::env::var("TILES").is_ok_and(|v| v == "1");
+        let tile = |one: u32| if tiles && one < 2 { 0 } else { one };
         let hints: Vec<Option<String>> = reference
             .iter()
             .enumerate()
             .map(|(i, r)| match r.as_slice() {
                 // Whole 3 s stretches on or off, so hints come in runs.
-                [one] if ((i / 100) as f32 * 0.618).fract() < share => Some(format!("p{one}")),
+                [one] if ((i / 100) as f32 * 0.618).fract() < share => {
+                    Some(format!("p{}", tile(*one)))
+                }
                 _ => None,
             })
             .collect();
@@ -260,11 +269,15 @@ fn remember(dir: &Path, model: &Path) -> Result<(), String> {
             .unwrap_or(d)
     };
     let (matching, margin) = (num("MATCH", 0.75), num("MARGIN", 0.05));
-    let model_name = model
+    let mut model_name = model
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
+    // SEG=1: the fingerprints `ami` cut at the segmentation model's turns.
+    if std::env::var("SEG").as_deref() == Ok("1") {
+        model_name.push_str("+seg");
+    }
     let cache = dir.join("cache").join(&model_name);
     let mut ids: Vec<String> = std::fs::read_dir(dir.join("rttm"))
         .map_err(|e| e.to_string())?

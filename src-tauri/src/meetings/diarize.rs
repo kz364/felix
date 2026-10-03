@@ -16,7 +16,9 @@ use std::path::Path;
 
 /// 3D-Speaker ERes2Net (base): on AMI it tells people apart better than
 /// WeSpeaker ResNet34 (DER 37% vs 42%) and recognises them across meetings
-/// far more reliably (notes/benchmarking.md).
+/// far more reliably (notes/benchmarking.md). ERes2NetV2 confuses AMI's
+/// people a little less but tells the user from the room apart less well on
+/// real room calls (2 Oct 2026), so base stays.
 pub const MODEL_FILE: &str = "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx";
 pub const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx";
 pub const MODEL_BYTES: u64 = 39_593_761;
@@ -980,8 +982,11 @@ pub fn window_names(wins: &[(usize, usize)], hints: &[Option<String>]) -> Vec<Op
 
 /// Share of a window one name must cover to count.
 const HINT_SHARE: f32 = 0.6;
-/// Added to the similarity of two groups under the same name.
-const SAME_NAME_BONUS: f32 = 0.15;
+/// Added to the similarity of two groups under the same name. Small: one
+/// call tile can be a room of people. On AMI with half the speech named
+/// (notes/benchmarking.md), 0.15 merged two people sharing a tile (12.9%
+/// confusion vs 6.5% at 0.08), and 0.08 does as well with a tile each.
+const SAME_NAME_BONUS: f32 = 0.08;
 
 /// Settings for [`group_voices`].
 #[derive(Debug, Clone, Copy)]
@@ -995,6 +1000,8 @@ pub struct Grouping {
     pub stop: f32,
     /// A voice heard in fewer windows than this is folded into the nearest.
     pub min_windows: usize,
+    /// Added to the similarity of two groups under the same name.
+    pub same_name_bonus: f32,
 }
 
 impl Default for Grouping {
@@ -1006,6 +1013,7 @@ impl Default for Grouping {
             // good as 0.03 there and doesn't split a call's voices in two.
             stop: 0.0,
             min_windows: MIN_WINDOWS_PER_SPEAKER,
+            same_name_bonus: SAME_NAME_BONUS,
         }
     }
 }
@@ -1089,7 +1097,7 @@ pub fn group_voices_with(
         let s = cosine(&sums[a], &sums[b]) / (counts[a] * counts[b]) as f32;
         match (gname[a], gname[b]) {
             (Some(x), Some(y)) if x != y => f32::NEG_INFINITY,
-            (Some(_), Some(_)) => s + SAME_NAME_BONUS,
+            (Some(_), Some(_)) => s + g.same_name_bonus,
             _ => s,
         }
     };
