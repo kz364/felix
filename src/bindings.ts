@@ -1718,8 +1718,24 @@ async chatgptSignIn() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async chatgptSignOut() : Promise<void> {
-    await TAURI_INVOKE("chatgpt_sign_out");
+/**
+ * Sign out of ChatGPT, ending the session at OpenAI. `Err` when OpenAI
+ * didn't confirm (the sign-in is gone from this Mac either way).
+ */
+async chatgptSignOut() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chatgpt_sign_out") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whether ChatGPT requests still go through the deprecated sign-in (sign
+ * in again to move to the new one).
+ */
+async chatgptLegacySignIn() : Promise<boolean> {
+    return await TAURI_INVOKE("chatgpt_legacy_sign_in");
 },
 /**
  * The signed-in ChatGPT account's email, or `None` when signed out.

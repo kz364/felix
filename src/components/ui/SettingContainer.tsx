@@ -3,7 +3,7 @@ import { Tooltip } from "./Tooltip";
 
 interface SettingContainerProps {
   title: string;
-  description: string;
+  description: React.ReactNode;
   children: React.ReactNode;
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;

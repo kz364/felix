@@ -894,13 +894,16 @@
         "toggleDescription": "Listen for the assistant's name in dictations.",
         "account": {
           "title": "ChatGPT account",
-          "description": "Uses your ChatGPT subscription. The sign-in is saved in a file only your Mac account can read.",
+          "description": "Complete Felix's AI requests (cleanup, summaries, the assistant) with your ChatGPT plan or credits. Speech to text still needs an API key: the plan doesn't cover audio. The sign-in is saved in a file only your Mac account can read.",
           "signedInAs": "Signed in as {{email}}",
           "signedIn": "Signed in",
-          "signIn": "Sign in with ChatGPT",
+          "signIn": "Continue with ChatGPT",
           "signingIn": "Waiting for the browser...",
           "signOut": "Sign out",
-          "failed": "ChatGPT sign-in failed: {{error}}"
+          "failed": "ChatGPT sign-in failed: {{error}}",
+          "usingPlan": "Using ChatGPT plan.",
+          "manageUsage": "Manage usage",
+          "legacy": "This is the older sign-in, which is being retired. Continue with ChatGPT to switch; it keeps working until you do."
         },
         "name": {
           "title": "Name",

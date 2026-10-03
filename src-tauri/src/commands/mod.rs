@@ -216,11 +216,26 @@ pub async fn chatgpt_sign_in(app: AppHandle) -> Result<String, String> {
     }
 }
 
+/// Sign out of ChatGPT, ending the session at OpenAI. `Err` when OpenAI
+/// didn't confirm (the sign-in is gone from this Mac either way).
 #[tauri::command]
 #[specta::specta]
-pub fn chatgpt_sign_out() {
+pub async fn chatgpt_sign_out() -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    crate::chatgpt::sign_out();
+    return crate::chatgpt::sign_out().await;
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+/// Whether ChatGPT requests still go through the deprecated sign-in (sign
+/// in again to move to the new one).
+#[tauri::command]
+#[specta::specta]
+pub fn chatgpt_legacy_sign_in() -> bool {
+    #[cfg(target_os = "macos")]
+    return crate::chatgpt::uses_legacy_sign_in();
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// The signed-in ChatGPT account's email, or `None` when signed out.

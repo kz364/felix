@@ -82,6 +82,8 @@ flate2 = "1.0"
 sha2 = "0.10"
 # Sign in with ChatGPT (PKCE, callback URL parsing, request ids).
 base64 = "0.22"
+# Checking ChatGPT sign-in ID tokens (RS256); already built for rustls.
+ring = "0.17"
 rand = "0.9"
 url = "2"
 uuid = { version = "1", features = ["v4"] }

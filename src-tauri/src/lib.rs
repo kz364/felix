@@ -922,6 +922,7 @@ pub fn run(cli_args: CliArgs) {
             commands::initialize_shortcuts,
             commands::chatgpt_sign_in,
             commands::chatgpt_sign_out,
+            commands::chatgpt_legacy_sign_in,
             commands::chatgpt_account,
             commands::models::get_available_models,
             commands::models::get_model_info,

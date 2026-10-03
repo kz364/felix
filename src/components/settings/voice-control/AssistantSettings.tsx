@@ -61,9 +61,11 @@ export const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
   // undefined = still loading, null = signed out, "" = signed in, no email.
   const [account, setAccount] = useState<string | null | undefined>();
   const [busy, setBusy] = useState(false);
+  const [legacy, setLegacy] = useState(false);
 
   useEffect(() => {
     commands.chatgptAccount().then(setAccount);
+    commands.chatgptLegacySignIn().then(setLegacy);
   }, []);
 
   const signIn = async () => {
@@ -72,6 +74,7 @@ export const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
     setBusy(false);
     if (result.status === "ok") {
       setAccount(result.data);
+      setLegacy(false);
     } else {
       toast.error(
         t("settings.voiceControl.assistant.account.failed", {
@@ -82,8 +85,10 @@ export const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
   };
 
   const signOut = async () => {
-    await commands.chatgptSignOut();
+    const result = await commands.chatgptSignOut();
+    if (result.status === "error") toast.warning(result.error);
     setAccount(null);
+    setLegacy(false);
   };
 
   const signedIn = account !== null && account !== undefined;
@@ -91,18 +96,43 @@ export const ChatGptAccount: React.FC<AssistantSettingsProps> = ({
     <SettingContainer
       title={t("settings.voiceControl.assistant.account.title")}
       description={
-        signedIn
-          ? account
-            ? t("settings.voiceControl.assistant.account.signedInAs", {
-                email: account,
-              })
-            : t("settings.voiceControl.assistant.account.signedIn")
-          : t("settings.voiceControl.assistant.account.description")
+        signedIn ? (
+          <>
+            {account
+              ? t("settings.voiceControl.assistant.account.signedInAs", {
+                  email: account,
+                })
+              : t("settings.voiceControl.assistant.account.signedIn")}{" "}
+            {legacy ? (
+              t("settings.voiceControl.assistant.account.legacy")
+            ) : (
+              <>
+                {t("settings.voiceControl.assistant.account.usingPlan")}{" "}
+                <a
+                  href="https://chatgpt.com/settings/usage"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-accent"
+                >
+                  {t("settings.voiceControl.assistant.account.manageUsage")}
+                </a>
+              </>
+            )}
+          </>
+        ) : (
+          t("settings.voiceControl.assistant.account.description")
+        )
       }
       descriptionMode={signedIn ? "inline" : descriptionMode}
       grouped={grouped}
     >
-      {signedIn ? (
+      {signedIn && legacy ? (
+        <Button size="sm" onClick={signIn} disabled={busy}>
+          {busy
+            ? t("settings.voiceControl.assistant.account.signingIn")
+            : t("settings.voiceControl.assistant.account.signIn")}
+        </Button>
+      ) : signedIn ? (
         <Button variant="secondary" size="sm" onClick={signOut}>
           {t("settings.voiceControl.assistant.account.signOut")}
         </Button>
