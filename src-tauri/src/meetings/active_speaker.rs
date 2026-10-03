@@ -26,6 +26,9 @@ pub(super) const TTL_MS: u64 = 1_500;
 const MIN_VOTES: usize = 3;
 /// …and when this share of its sightings agree.
 const MIN_SHARE: f32 = 0.6;
+/// One voice on the call's track is several people only when a second name
+/// has at least this share of the sightings.
+const SPLIT_SHARE: f32 = 0.1;
 /// One name on several voices, each talking at least this long, is a
 /// room on the call (several people on one account): the voices are
 /// numbered instead of all getting the same name.
@@ -264,9 +267,17 @@ pub fn names_for(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, Strin
         .filter(|s| s.source == Source::System)
         .filter_map(|s| s.speaker)
         .collect();
-    let names_seen: std::collections::BTreeSet<&str> =
-        seen.iter().map(|s| s.name.as_str()).collect();
-    if !voices.is_empty() && !(voices.len() == 1 && names_seen.len() >= 2) {
+    // Names seen enough to be someone talking on the line, not a stray mark
+    // (a muted tile lighting up from room noise).
+    let mut sightings: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in seen {
+        *sightings.entry(s.name.as_str()).or_default() += 1;
+    }
+    let names_seen = sightings
+        .values()
+        .filter(|n| **n as f32 >= SPLIT_SHARE * seen.len() as f32)
+        .count();
+    if !voices.is_empty() && !(voices.len() == 1 && names_seen >= 2) {
         return name_voices(segments, seen);
     }
     if voices.len() == 1 {
@@ -477,5 +488,17 @@ mod tests {
         assert_eq!(names[&segments[0].speaker.unwrap()], "Sam");
         assert_eq!(names[&segments[1].speaker.unwrap()], "Ana");
         assert_eq!(segments[2].speaker, None);
+    }
+
+    #[test]
+    fn a_stray_mark_for_someone_else_keeps_the_one_voice() {
+        let mut segments: Vec<Segment> = (0..30)
+            .map(|i| seg(Source::System, i * 5_000, (i + 1) * 5_000, Some(100)))
+            .collect();
+        let mut sightings: Vec<Seen> = (0..30).map(|i| seen(i * 5_000 + 1_000, "Era")).collect();
+        sightings.push(seen(12_000, "Eugene"));
+        let names = names_for(&mut segments, &sightings);
+        assert_eq!(names[&100], "Era");
+        assert!(segments.iter().all(|s| s.speaker == Some(100)));
     }
 }

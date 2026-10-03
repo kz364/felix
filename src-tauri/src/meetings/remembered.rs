@@ -630,13 +630,20 @@ pub fn clean_parts(
         per_voice.values().filter(|n| **n >= ROOM_WINDOWS).count() < 2
     });
 
-    // The user says it was a 1-on-1: the whole call side is that person.
+    // The user says it was a 1-on-1 (or one person on the call's end): the
+    // whole call side is that person, voice-labelled or not.
     if let Some(name) = one_on_one.map(str::trim).filter(|n| !n.is_empty()) {
         by_name.clear();
+        let on_call = |from: usize, to: usize| {
+            let mid = (from + to) as u64 * frame / 2;
+            labelled(Source::System, from, to).is_none()
+                && calls.iter().any(|s| s.start_ms <= mid && mid < s.end_ms)
+        };
         let theirs: Vec<Snippet> = wins
             .iter()
             .zip(embs)
-            .filter_map(|(&(from, to), e)| voice_at(from, to).map(|v| (Some(v), e)))
+            .filter(|(&(from, to), _)| on_call(from, to))
+            .map(|(&(from, to), e)| (voice_at(from, to), e))
             .collect();
         by_name.insert(name.to_string(), theirs);
     }
