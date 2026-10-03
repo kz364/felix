@@ -435,6 +435,27 @@ fn as_said(invitee: &str, said: &[String]) -> String {
         .unwrap_or_else(|| invitee.to_string())
 }
 
+/// On a 1-on-1 (one person invited besides the user), that person, written
+/// as the call said them when the invite only has a handle.
+pub fn one_on_one_name(dir: &Path) -> Option<String> {
+    let invite = super::calendar::load(dir)?;
+    let others: Vec<&String> = invite
+        .attendees
+        .iter()
+        .filter(|n| !invite.me.as_deref().is_some_and(|m| same_name(m, n)))
+        .collect();
+    let [other] = others.as_slice() else {
+        return None;
+    };
+    if !invite.handles.contains(other) {
+        return Some((*other).clone());
+    }
+    let clues: Vec<super::clues::Clue> =
+        super::summary::load_json(dir, super::clues::FILE).unwrap_or_default();
+    let said: Vec<String> = clues.into_iter().map(|c| c.name).collect();
+    Some(as_said(other, &said))
+}
+
 /// The voice that talks most in a stretch of a track.
 fn voice_at(segments: &[Segment], track: Source, start_ms: u64, end_ms: u64) -> Option<u32> {
     let mut overlap: BTreeMap<u32, u64> = BTreeMap::new();
