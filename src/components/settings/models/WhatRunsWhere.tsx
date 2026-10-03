@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCcw } from "lucide-react";
-import { commands, type ThisMac } from "@/bindings";
+import { commands, type OpenRouterModel, type ThisMac } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import { Alert } from "../../ui/Alert";
@@ -12,10 +12,12 @@ import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { LocalModelSetup } from "../post-processing/LocalModelSetup";
 
-/** Cloud speech-to-text providers (id, what they run). */
+/** Cloud speech-to-text providers (id, what they run; OpenRouter's is a setting). */
 const SPEECH_CLOUD = [
   { id: "openai", label: "OpenAI", model: "gpt-transcribe" },
   { id: "groq", label: "Groq", model: "whisper-large-v3-turbo" },
+  { id: "openrouter", label: "OpenRouter", model: "" },
+  { id: "elevenlabs", label: "ElevenLabs", model: "Scribe v2" },
 ];
 const CHATGPT_MODELS = [
   { value: "gpt-6-luna", label: "GPT-6 Luna" },
@@ -31,6 +33,10 @@ export const WhatRunsWhere: React.FC = () => {
   const cleanup = usePostProcessProviderState();
   const [mac, setMac] = useState<ThisMac | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [routerModels, setRouterModels] = useState<OpenRouterModel[] | null>(
+    null,
+  );
+  const [routerError, setRouterError] = useState<string | null>(null);
 
   useEffect(() => {
     commands.thisMac().then(setMac);
@@ -39,6 +45,16 @@ export const WhatRunsWhere: React.FC = () => {
   const keys = settings?.post_process_api_keys ?? {};
   const hasKey = (id: string) => (keys[id] ?? "").trim() !== "";
   const speech = settings?.transcription_provider ?? "local";
+  const routerModel =
+    settings?.openrouter_transcription_model ?? "microsoft/mai-transcribe-2";
+
+  useEffect(() => {
+    if (speech !== "openrouter" || routerModels) return;
+    commands.openrouterTranscriptionModels().then((result) => {
+      if (result.status === "ok") setRouterModels(result.data);
+      else setRouterError(result.error);
+    });
+  }, [speech, routerModels]);
   const localName =
     models.find((m) => m.id === currentModel)?.name ??
     t("settings.models.where.noLocalModel");
@@ -53,7 +69,7 @@ export const WhatRunsWhere: React.FC = () => {
       label: hasKey(p.id)
         ? t("settings.models.where.cloud", {
             provider: p.label,
-            model: p.model,
+            model: p.model || routerModel,
           })
         : t("settings.models.where.needsKey", { provider: p.label }),
       disabled: !hasKey(p.id),
@@ -68,6 +84,16 @@ export const WhatRunsWhere: React.FC = () => {
   };
 
   const cleanupId = cleanup.selectedProviderId;
+  const selectRouterModel = async (model: string) => {
+    const result =
+      await commands.changeOpenrouterTranscriptionModelSetting(model);
+    if (result.status === "error") setError(result.error);
+    await refreshSettings();
+  };
+  const routerOptions = (
+    routerModels ?? [{ id: routerModel, name: routerModel }]
+  ).map((m) => ({ value: m.id, label: m.name }));
+
   const cleanupOptions = cleanup.providerOptions.map((o) => {
     const needsKey =
       !ON_THIS_MAC.has(o.value) &&
@@ -122,6 +148,32 @@ export const WhatRunsWhere: React.FC = () => {
           onSelect={selectSpeech}
         />
       </SettingContainer>
+      {speech === "openrouter" && (
+        <SettingContainer
+          title={t("settings.models.where.openrouterModel.title")}
+          description={t("settings.models.where.openrouterModel.description")}
+          descriptionMode="tooltip"
+          grouped
+        >
+          <Dropdown
+            options={routerOptions}
+            selectedValue={routerModel}
+            onSelect={selectRouterModel}
+            placeholder={
+              routerModels
+                ? undefined
+                : t("settings.models.where.openrouterModel.loading")
+            }
+          />
+        </SettingContainer>
+      )}
+      {routerError && speech === "openrouter" && (
+        <Alert variant="error" contained>
+          {t("settings.models.where.openrouterModel.failed", {
+            error: routerError,
+          })}
+        </Alert>
+      )}
       {error && (
         <Alert variant="error" contained>
           {error}

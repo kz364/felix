@@ -786,6 +786,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_stacked_messages_setting,
             shortcut::change_tag_agent_files_setting,
             shortcut::change_transcription_provider_setting,
+            shortcut::change_openrouter_transcription_model_setting,
+            meetings::remote::openrouter_transcription_models,
             commands::rules::rules_file_path,
             commands::rules::open_rules_file,
             commands::rules::save_rules,

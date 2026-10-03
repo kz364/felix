@@ -4,6 +4,9 @@ import { commands, type PostProcessProvider } from "@/bindings";
 import type { ModelOption } from "./types";
 import type { DropdownOption } from "../../ui/Dropdown";
 
+/** Accounts that only transcribe (`SPEECH_ONLY_PROVIDERS` in settings.rs). */
+const SPEECH_ONLY_PROVIDERS = new Set(["elevenlabs"]);
+
 type PostProcessProviderState = {
   providerOptions: DropdownOption[];
   selectedProviderId: string;
@@ -69,10 +72,12 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   const model = settings?.post_process_models?.[selectedProviderId] ?? "";
 
   const providerOptions = useMemo<DropdownOption[]>(() => {
-    return providers.map((provider) => ({
-      value: provider.id,
-      label: provider.label,
-    }));
+    return providers
+      .filter((provider) => !SPEECH_ONLY_PROVIDERS.has(provider.id))
+      .map((provider) => ({
+        value: provider.id,
+        label: provider.label,
+      }));
   }, [providers]);
 
   const handleProviderSelect = useCallback(

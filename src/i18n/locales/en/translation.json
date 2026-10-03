@@ -327,11 +327,17 @@
         "chatgptModel": "Luna is fastest and is enough for cleanup.",
         "speech": {
           "title": "Speech to text",
-          "description": "Cloud providers get the dictation's audio and your vocabulary as a spelling hint."
+          "description": "Cloud providers get the dictation's audio and your vocabulary as a spelling hint. Your ChatGPT plan can't transcribe, so speech always needs an API key."
         },
         "cleanup": {
           "title": "Cleanup",
           "description": "Tidies what you said. Cloud providers get the text, plus what’s on screen only if you allow it under Writing."
+        },
+        "openrouterModel": {
+          "title": "OpenRouter model",
+          "description": "Which speech-to-text model OpenRouter runs, for dictation and for meetings set to OpenRouter. One OpenRouter key covers them all.",
+          "loading": "Loading models…",
+          "failed": "Couldn't load OpenRouter's models: {{error}}"
         }
       },
       "accounts": {
@@ -342,7 +348,8 @@
         "usesCleanup": "Cleanup",
         "keyPlaceholder": "API key",
         "more_one": "{{count}} more provider",
-        "more_other": "{{count}} more providers"
+        "more_other": "{{count}} more providers",
+        "usesSpeechOnly": "Speech to text"
       },
       "memory": {
         "title": "Memory"
@@ -1328,7 +1335,9 @@
         "auto": "Automatic (cloud first)",
         "local": "This Mac",
         "openai": "OpenAI",
-        "groq": "Groq"
+        "groq": "Groq",
+        "openrouter": "OpenRouter ({{model}})",
+        "elevenlabs": "ElevenLabs Scribe v2"
       },
       "languages": {
         "title": "Meeting languages",

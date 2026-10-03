@@ -7,11 +7,12 @@ import { BaseUrlField } from "../PostProcessingSettingsApi/BaseUrlField";
 import { ChatGptAccount } from "../voice-control/AssistantSettings";
 
 /** Providers shown up front, and what each can do in Handy. */
-const MAIN: Record<string, "speech" | "cleanup"> = {
+const MAIN: Record<string, "speech" | "cleanup" | "speechOnly"> = {
   openai: "speech",
   groq: "speech",
+  openrouter: "speech",
+  elevenlabs: "speechOnly",
   anthropic: "cleanup",
-  openrouter: "cleanup",
 };
 /** Not accounts: they run on this Mac or through the ChatGPT sign-in. */
 const NOT_ACCOUNTS = new Set(["local", "apple_intelligence", "chatgpt"]);
@@ -35,7 +36,9 @@ export const Accounts: React.FC = () => {
     const uses =
       MAIN[p.id] === "speech"
         ? t("settings.models.accounts.usesSpeech")
-        : t("settings.models.accounts.usesCleanup");
+        : MAIN[p.id] === "speechOnly"
+          ? t("settings.models.accounts.usesSpeechOnly")
+          : t("settings.models.accounts.usesCleanup");
     return (
       <div
         key={p.id}

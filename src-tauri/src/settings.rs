@@ -656,10 +656,13 @@ pub struct AppSettings {
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
     /// Where dictation is transcribed: "local" (the selected model on this
-    /// Mac) or a provider with a transcription API ("openai", "groq"),
-    /// using that provider's API key.
+    /// Mac) or a provider with a transcription API ("openai", "groq",
+    /// "openrouter", "elevenlabs"), using that provider's API key.
     #[serde(default = "default_transcription_provider")]
     pub transcription_provider: String,
+    /// The speech-to-text model OpenRouter runs (dictation and meetings).
+    #[serde(default = "default_openrouter_transcription_model")]
+    pub openrouter_transcription_model: String,
     #[serde(default)]
     pub custom_words: Vec<String>,
     #[serde(default)]
@@ -1166,6 +1169,14 @@ fn default_transcription_provider() -> String {
     "local".to_string()
 }
 
+fn default_openrouter_transcription_model() -> String {
+    crate::meetings::remote::DEFAULT_OPENROUTER_MODEL.to_string()
+}
+
+/// Accounts that only transcribe: their keys live with the others, but they
+/// can't tidy text.
+pub const SPEECH_ONLY_PROVIDERS: &[&str] = &["elevenlabs"];
+
 /// Cleanup through the ChatGPT sign-in (the user's plan, no API key).
 pub const CHATGPT_PROVIDER_ID: &str = "chatgpt";
 
@@ -1222,6 +1233,15 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+        },
+        // Speech-to-text only (`SPEECH_ONLY_PROVIDERS`).
+        PostProcessProvider {
+            id: "elevenlabs".to_string(),
+            label: "ElevenLabs".to_string(),
+            base_url: "https://api.elevenlabs.io/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
         },
     ];
 
@@ -1505,6 +1525,7 @@ pub fn get_default_settings() -> AppSettings {
         debug_mode: false,
         log_level: default_log_level(),
         transcription_provider: default_transcription_provider(),
+        openrouter_transcription_model: default_openrouter_transcription_model(),
         custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),

@@ -68,5 +68,9 @@ pub enum MeetingTranscriber {
     Openai,
     /// Groq's Whisper API, with the Groq key from cleanup providers.
     Groq,
+    /// The model picked for OpenRouter, with the OpenRouter key.
+    Openrouter,
+    /// ElevenLabs Scribe, with the ElevenLabs key.
+    Elevenlabs,
 }
 pub use manager::MeetingManager;

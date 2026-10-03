@@ -1127,6 +1127,9 @@ pub fn change_post_process_model_setting(
 pub fn set_post_process_provider(app: AppHandle, provider_id: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
+    if settings::SPEECH_ONLY_PROVIDERS.contains(&provider_id.as_str()) {
+        return Err(format!("{provider_id} only transcribes speech"));
+    }
     settings.post_process_provider_id = provider_id;
     crate::local_llm::sync_with_settings(&settings);
     settings::write_settings(&app, settings);
@@ -1906,8 +1909,25 @@ pub fn change_focus_message_box_setting(app: AppHandle, enabled: bool) -> Result
     Ok(())
 }
 
+/// The model OpenRouter transcribes with (dictation and meetings).
+#[tauri::command]
+#[specta::specta]
+pub fn change_openrouter_transcription_model_setting(
+    app: AppHandle,
+    model: String,
+) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() || !model.contains('/') {
+        return Err(format!("Not an OpenRouter model: {model}"));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.openrouter_transcription_model = model.to_string();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// Where dictation is transcribed: "local" or a cloud provider ("openai",
-/// "groq"). Switching to the cloud frees the local model's memory.
+/// "groq", "openrouter", "elevenlabs"). Switching to the cloud frees the local model's memory.
 #[tauri::command]
 #[specta::specta]
 pub fn change_transcription_provider_setting(

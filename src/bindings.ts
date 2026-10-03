@@ -554,11 +554,34 @@ async changeTagAgentFilesSetting(enabled: boolean) : Promise<Result<null, string
 },
 /**
  * Where dictation is transcribed: "local" or a cloud provider ("openai",
- * "groq"). Switching to the cloud frees the local model's memory.
+ * "groq", "openrouter", "elevenlabs"). Switching to the cloud frees the local model's memory.
  */
 async changeTranscriptionProviderSetting(provider: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_transcription_provider_setting", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The model OpenRouter transcribes with (dictation and meetings).
+ */
+async changeOpenrouterTranscriptionModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_openrouter_transcription_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * OpenRouter's speech-to-text models, from its public model list (no key
+ * sent: the list is open).
+ */
+async openrouterTranscriptionModels() : Promise<Result<OpenRouterModel[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("openrouter_transcription_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2212,10 +2235,14 @@ preferred_microphones?: string[];
 selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; 
 /**
  * Where dictation is transcribed: "local" (the selected model on this
- * Mac) or a provider with a transcription API ("openai", "groq"),
- * using that provider's API key.
+ * Mac) or a provider with a transcription API ("openai", "groq",
+ * "openrouter", "elevenlabs"), using that provider's API key.
  */
-transcription_provider?: string; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
+transcription_provider?: string; 
+/**
+ * The speech-to-text model OpenRouter runs (dictation and meetings).
+ */
+openrouter_transcription_model?: string; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
 /**
  * Legacy count limit (upstream); superseded by `history_retention_days`.
  */
@@ -2883,6 +2910,10 @@ export type MeetingStatus = "recording" | "recorded" |
  * What transcribes meetings. Meetings are cloud-first: local models
  * aren't good enough for long, many-voiced audio, and nobody is waiting.
  */
+/**
+ * A speech-to-text model OpenRouter offers.
+ */
+export type OpenRouterModel = { id: string; name: string }
 export type MeetingTranscriber = 
 /**
  * A cloud provider whose key is set (OpenAI, then Groq), otherwise the
@@ -2900,7 +2931,15 @@ export type MeetingTranscriber =
 /**
  * Groq's Whisper API, with the Groq key from cleanup providers.
  */
-"groq"
+"groq" | 
+/**
+ * The model picked for OpenRouter, with the OpenRouter key.
+ */
+"openrouter" | 
+/**
+ * ElevenLabs Scribe, with the ElevenLabs key.
+ */
+"elevenlabs"
 /**
  * A meeting's transcript as the page shows it.
  */

@@ -412,7 +412,7 @@ pub async fn guess_benchmark_ground_truth(app: AppHandle, id: String) -> Result<
     }
     let audio = crate::audio_toolkit::read_wav_samples(dir.join(&record.audio))
         .map_err(|e| format!("Couldn't read the audio: {e}"))?;
-    for (provider, _, _) in crate::meetings::remote::PROVIDERS {
+    for provider in crate::meetings::remote::AUTO_PROVIDERS {
         let Ok(remote) = crate::meetings::remote::Remote::for_provider(&settings, provider, false)
         else {
             continue; // no API key for this one

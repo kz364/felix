@@ -50,6 +50,18 @@ export const MeetingSettings: React.FC = () => {
               label: t("meetings.settings.transcriber.openai"),
             },
             { value: "groq", label: t("meetings.settings.transcriber.groq") },
+            {
+              value: "openrouter",
+              label: t("meetings.settings.transcriber.openrouter", {
+                model:
+                  getSetting("openrouter_transcription_model") ??
+                  "microsoft/mai-transcribe-2",
+              }),
+            },
+            {
+              value: "elevenlabs",
+              label: t("meetings.settings.transcriber.elevenlabs"),
+            },
           ]}
           selectedValue={transcriber}
           onSelect={(v) =>
