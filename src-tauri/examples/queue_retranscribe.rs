@@ -4,7 +4,7 @@
 //!
 //! cargo run --example queue_retranscribe -- <meeting dir>...
 
-use handy_app_lib::meetings::{clues, manager, speakers, summary, transcript};
+use handy_app_lib::meetings::{clues, floor, manager, speakers, summary, transcript};
 use std::path::Path;
 
 fn main() -> Result<(), String> {
@@ -17,6 +17,7 @@ fn main() -> Result<(), String> {
             summary::CLEANED_FILE,
             clues::FILE,
             clues::TURNS_FILE,
+            floor::FILE,
         ] {
             let _ = std::fs::remove_file(dir.join(file));
         }

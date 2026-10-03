@@ -52,6 +52,8 @@ pub enum Kind {
     /// Something said points at (or, `NotClue`, away from) this person.
     Clue,
     NotClue,
+    /// The conversation hands this line to the person ([`super::floor`]).
+    Floor,
     /// On the call (the extension's participant list), not necessarily talking.
     Participant,
     /// Invited to the calendar event.
@@ -86,6 +88,10 @@ const CAPTION_MATCH: f32 = 0.5;
 const CAPTION_LAG_MS: u64 = 10_000;
 /// Votes one caption is worth against single sightings.
 const CAPTION_VOTES: usize = 3;
+/// A line the conversation hands to someone ("Joseph, you're up"): the
+/// model read it closely and quoted the hand-over, but it can misjudge
+/// where a turn ends.
+const FLOOR: f32 = 0.8;
 
 /// Everything known about a meeting that hints at who spoke.
 #[derive(Default)]
@@ -95,6 +101,8 @@ pub struct Sources {
     /// What the meetings extension heard.
     pub heard: Vec<super::extension::Logged>,
     pub clues: Vec<super::clues::Clue>,
+    /// Lines named from the conversation, as said (see [`floor_turns`]).
+    pub floor: Vec<super::floor::Turn>,
     pub invite: Option<super::calendar::Invite>,
     /// The user's fixes, by paragraph key.
     pub fixes: BTreeMap<String, u32>,
@@ -106,6 +114,7 @@ impl Sources {
             seen: active_speaker::load(dir),
             heard: super::extension::load(dir),
             clues: super::summary::load_json(dir, super::clues::FILE).unwrap_or_default(),
+            floor: super::summary::load_json(dir, super::floor::FILE).unwrap_or_default(),
             invite: super::calendar::load(dir),
             fixes: super::manager::user_speaker_fixes(dir),
         }
@@ -157,6 +166,18 @@ pub fn gather(t: &Transcript, src: &Sources) -> Vec<Evidence> {
         strength: c.strength,
         from: if c.is { Kind::Clue } else { Kind::NotClue },
     }));
+    out.extend(
+        floor_turns(&src.floor, src.invite.as_ref())
+            .into_iter()
+            .map(|t| Evidence {
+                track: t.source,
+                start_ms: t.start_ms,
+                end_ms: t.end_ms,
+                who: Who::Name(t.name),
+                strength: FLOOR,
+                from: Kind::Floor,
+            }),
+    );
     if let Some(invite) = &src.invite {
         out.extend(invite.attendees.iter().map(|n| {
             let kind = if invite.handles.contains(n) {
@@ -306,13 +327,13 @@ pub fn call_app_names(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeM
         .any(|e| matches!(e.from, Kind::Extension | Kind::Caption));
     let marks = |e: &&Evidence| match e.from {
         Kind::ActiveSpeaker => !has_extension,
-        Kind::Extension | Kind::Caption => true,
+        Kind::Extension | Kind::Caption | Kind::Floor => true,
         _ => false,
     };
     let mut seen: Vec<Seen> = Vec::new();
     for e in evidence.iter().filter(marks) {
         let Who::Name(name) = &e.who else { continue };
-        let votes = if e.from == Kind::Caption {
+        let votes = if matches!(e.from, Kind::Caption | Kind::Floor) {
             CAPTION_VOTES
         } else {
             1
@@ -396,13 +417,14 @@ fn split_handle(handle: &str, said: &str) -> Option<String> {
     {
         return None;
     }
+    let first = &handle[..said.len()];
     let mut rest = rest.chars();
     let rest: String = rest
         .next()?
         .to_uppercase()
         .chain(rest.flat_map(char::to_lowercase))
         .collect();
-    Some(format!("{said} {rest}"))
+    Some(format!("{first} {rest}"))
 }
 
 /// The name to show for an invitee: the handle split as it was said on the
@@ -584,6 +606,95 @@ fn by_clues_and_elimination(
     }
 }
 
+/// Whether `said` (as speech recognition wrote it) is the person `name`:
+/// their name or first name, a longer mishearing of it ("Kasparov" for
+/// Kaspar), or one letter off.
+fn sounds_like(said: &str, name: &str) -> bool {
+    let said = said.trim().to_lowercase();
+    let name = name.trim().to_lowercase();
+    let first = name.split_whitespace().next().unwrap_or("");
+    if said == name || said == first {
+        return true;
+    }
+    if said.contains(' ') || first.chars().count() < 4 {
+        return false;
+    }
+    said.starts_with(first) || one_letter_off(&said, first)
+}
+
+fn one_letter_off(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    match long.len() - short.len() {
+        0 => a.iter().zip(&b).filter(|(x, y)| x != y).count() == 1,
+        1 => (0..long.len()).any(|skip| {
+            long.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != skip)
+                .map(|(_, c)| c)
+                .eq(short.iter())
+        }),
+        _ => false,
+    }
+}
+
+/// The floor's lines (see [`super::floor`]) under the names the meeting
+/// knows: matched to the invite ("joseph" is "Joseph Chong" when the invite
+/// has "Josephchong"). Lines handed to the user are dropped (on a call
+/// they're never on the call's track, and their mic is theirs anyway), and
+/// with an invite so are names nobody invited sounds like: speech
+/// recognition's mishearings.
+pub fn floor_turns(
+    turns: &[super::floor::Turn],
+    invite: Option<&super::calendar::Invite>,
+) -> Vec<super::floor::Turn> {
+    let empty = super::calendar::Invite::default();
+    let invite = invite.unwrap_or(&empty);
+    turns
+        .iter()
+        .filter(|t| {
+            !invite
+                .me
+                .as_deref()
+                .is_some_and(|me| sounds_like(&t.name, me))
+        })
+        .filter_map(|t| {
+            let said = t.name.trim();
+            let as_said = if t.said.trim().is_empty() {
+                said
+            } else {
+                t.said.trim()
+            };
+            let matches: Vec<String> = invite
+                .attendees
+                .iter()
+                .filter_map(|a| {
+                    if invite.handles.contains(a) {
+                        if let Some(split) = split_handle(a, said).or_else(|| {
+                            same_name(a, said)
+                                .then(|| split_handle(a, as_said))
+                                .flatten()
+                        }) {
+                            return Some(split);
+                        }
+                    }
+                    sounds_like(said, a).then(|| a.clone())
+                })
+                .collect();
+            let name = match matches.as_slice() {
+                [one] => one.clone(),
+                [] if invite.attendees.is_empty() => said.to_string(),
+                _ => return None,
+            };
+            Some(super::floor::Turn { name, ..t.clone() })
+        })
+        .collect()
+}
+
 /// The name marked as talking in each frame of the system track, for
 /// telling voices apart: the extension's marks when it was there, otherwise
 /// the call app's. Frames where two names overlap have none.
@@ -622,7 +733,113 @@ pub fn name_hints(dir: &Path, frames: usize) -> Vec<Option<String>> {
             *o = None;
         }
     }
+    // Where the call app said nothing, the lines the conversation named.
+    let floor: Vec<super::floor::Turn> =
+        super::summary::load_json(dir, super::floor::FILE).unwrap_or_default();
+    let invite = super::calendar::load(dir);
+    for t in floor_turns(&floor, invite.as_ref()) {
+        if t.source != Source::System {
+            continue;
+        }
+        let from = ((t.start_ms / frame) as usize).min(frames);
+        let to = ((t.end_ms / frame) as usize).min(frames);
+        for o in &mut out[from..to] {
+            if o.is_none() {
+                *o = Some(t.name.clone());
+            }
+        }
+    }
     out
+}
+
+/// Tell the call's voices apart again from the kept windows with the names
+/// as hints ([`name_hints`], now with the floor's): voices that merged
+/// several people (a standup's) come apart where the conversation named
+/// them. Gives each line of the call's track the voice of most of its
+/// frames; false when there's nothing to go on or nothing changed.
+fn regroup_call(dir: &Path, segments: &mut [Segment]) -> bool {
+    let Some((wins, embs)) = super::windows::load(dir).and_then(|tracks| {
+        tracks
+            .into_iter()
+            .find(|(s, _)| *s == Source::System)
+            .map(|(_, p)| p)
+    }) else {
+        return false;
+    };
+    let frame = super::transcript::FRAME_MS;
+    let frames = wins.iter().map(|w| w.1).max().unwrap_or(0).max(
+        segments
+            .iter()
+            .map(|s| (s.end_ms / frame) as usize)
+            .max()
+            .unwrap_or(0),
+    );
+    let mut speech = vec![false; frames];
+    for &(from, to) in &wins {
+        for x in &mut speech[from.min(frames)..to.min(frames)] {
+            *x = true;
+        }
+    }
+    let hints = name_hints(dir, frames);
+    if hints.iter().all(Option::is_none) {
+        return false;
+    }
+    let voices = super::diarize::label_with(&speech, &wins, &embs, None, &hints);
+    let labels = super::diarize::offset(&voices.labels, super::pipeline::SYSTEM_SPEAKERS);
+    let mut changed = false;
+    for s in segments
+        .iter_mut()
+        .filter(|s| s.source == Source::System && !s.echo)
+    {
+        let from = ((s.start_ms / frame) as usize).min(frames);
+        let to = ((s.end_ms / frame) as usize).min(frames);
+        let mut count: BTreeMap<u32, usize> = BTreeMap::new();
+        for l in labels[from..to].iter().flatten() {
+            *count.entry(*l).or_default() += 1;
+        }
+        let voice = count.into_iter().max_by_key(|(_, c)| *c).map(|(v, _)| v);
+        if voice.is_some() && voice != s.speaker {
+            s.speaker = voice;
+            changed = true;
+        }
+    }
+    // A name the conversation gave is one person (unlike a call tile, which
+    // can be a room): voices whose named lines are mostly one name are one
+    // voice.
+    let floor: Vec<super::floor::Turn> =
+        super::summary::load_json(dir, super::floor::FILE).unwrap_or_default();
+    let mut named: BTreeMap<u32, BTreeMap<String, usize>> = BTreeMap::new();
+    for t in floor_turns(&floor, super::calendar::load(dir).as_ref()) {
+        let line = segments
+            .iter()
+            .find(|s| s.source == t.source && s.start_ms == t.start_ms);
+        if let Some(v) = line
+            .filter(|s| s.source == Source::System)
+            .and_then(|s| s.speaker)
+        {
+            *named.entry(v).or_default().entry(t.name).or_default() += 1;
+        }
+    }
+    let mut first_with: BTreeMap<String, u32> = BTreeMap::new();
+    let mut into: BTreeMap<u32, u32> = BTreeMap::new();
+    for (v, names) in &named {
+        let total: usize = names.values().sum();
+        if let Some((name, n)) = names.iter().max_by_key(|(_, n)| **n) {
+            if n * 2 > total {
+                let to = *first_with.entry(name.clone()).or_insert(*v);
+                if to != *v {
+                    into.insert(*v, to);
+                }
+            }
+        }
+    }
+    for s in segments.iter_mut().filter(|s| s.source == Source::System) {
+        if let Some(to) = s.speaker.and_then(|v| into.get(&v)) {
+            s.speaker = Some(*to);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Which paragraphs' speakers are unsure, and why. Paragraphs the user
@@ -694,8 +911,23 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
         super::calendar::for_meeting(dir, i.started_at, end);
     }
     let user = info.map(|i| i.speakers).unwrap_or_default();
-    let evidence = record(dir, &t);
     let before = t.segments.clone();
+    // The conversation named people: the call's voices again with those
+    // names, unless the user has already named or moved voices (their
+    // names are by voice number).
+    let floor = dir.join(super::floor::FILE).exists();
+    let untouched = user.keys().all(|v| *v < super::pipeline::SYSTEM_SPEAKERS)
+        && super::manager::user_speaker_fixes(dir).is_empty();
+    let regrouped = floor && untouched && regroup_call(dir, &mut t.segments);
+    if regrouped {
+        // The clue step's turns name voices by their old numbers.
+        let _ = super::summary::save_json(
+            dir,
+            super::clues::TURNS_FILE,
+            &BTreeMap::<String, u32>::new(),
+        );
+    }
+    let evidence = record(dir, &t);
     let mut names = call_app_names(&mut t.segments, &evidence);
     let (named, unknown) = super::remembered::apply(dir, &user, &names);
     let guessed = finish(
@@ -707,8 +939,9 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
     );
     let doubts = doubts(dir, &t.segments, &user, &guessed);
     let _ = super::summary::save_json(dir, DOUBTS_FILE, &doubts);
-    // Saved only when the names took over the track, as before.
-    if !names.is_empty() && t.segments != before {
+    // Saved when the voices were told apart again or the names took over
+    // the track.
+    if (regrouped || !names.is_empty()) && t.segments != before {
         if let Err(e) = super::pipeline::save(dir, &t) {
             log::warn!("Couldn't save the transcript with names: {e}");
             return BTreeMap::new();
@@ -1070,6 +1303,63 @@ mod tests {
         t.segments.push(seg(400, 460, Some(101)));
         let names = resolve(&mut t.segments, &evidence, &BTreeMap::new());
         assert_eq!(names.get(&100), None);
+    }
+
+    #[test]
+    fn floor_names_are_matched_to_the_invite() {
+        use crate::meetings::calendar::Invite;
+        use crate::meetings::floor::Turn;
+        let turn = |at: u64, name: &str| Turn {
+            source: Source::System,
+            start_ms: at,
+            end_ms: at + 1000,
+            name: name.into(),
+            said: String::new(),
+        };
+        let invite = Invite {
+            attendees: vec![
+                "Josephchong".into(),
+                "Paul".into(),
+                "Jiaming".into(),
+                "Sam Rivera".into(),
+            ],
+            handles: vec!["Josephchong".into()],
+            me: Some("Kaspar".into()),
+            ..Default::default()
+        };
+        let turns = vec![
+            turn(0, "joseph"),
+            turn(1, "Kasparov"), // the user, misheard
+            turn(2, "poop"),     // nobody invited
+            turn(3, "Paul"),
+            turn(4, "Jiamin"), // one letter off
+            turn(5, "Sam"),
+            // Matched by the model to the invite, said as "Joseph".
+            Turn {
+                said: "Joseph".into(),
+                ..turn(6, "Josephchong")
+            },
+        ];
+        let names: Vec<String> = floor_turns(&turns, Some(&invite))
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Joseph Chong",
+                "Paul",
+                "Jiaming",
+                "Sam Rivera",
+                "Joseph Chong"
+            ]
+        );
+        // Without an invite the names stand as said.
+        let names: Vec<String> = floor_turns(&turns, None)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names.len(), 7);
     }
 
     #[test]

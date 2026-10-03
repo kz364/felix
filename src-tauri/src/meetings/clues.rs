@@ -82,7 +82,7 @@ fn schema() -> Value {
     })
 }
 
-fn norm(s: &str) -> String {
+pub(super) fn norm(s: &str) -> String {
     s.chars()
         .map(|c| {
             if c.is_alphanumeric() {

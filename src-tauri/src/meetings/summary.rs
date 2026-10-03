@@ -164,11 +164,8 @@ fn with_vocabulary(
     out
 }
 
-/// The ChatGPT model and effort meeting cleanup uses, whatever the
-/// assistant model is: it keeps names, numbers and who-said-what straight
-/// across a long transcript better than a faster model.
-const CLEANUP_MODEL: &str = "gpt-6.1-sol";
-const CLEANUP_EFFORT: &str = "medium";
+/// Meeting cleanup's reasoning effort, with [`Llm::careful`]'s model.
+pub const CLEANUP_EFFORT: &str = "medium";
 
 /// Clean the paragraphs `todo` (indices into `paragraphs`) and add the
 /// accepted results to `cleaned`. A batch that fails keeps its raw text; the
@@ -182,16 +179,8 @@ pub async fn clean(
     cleaned: &mut Cleaned,
     mut progress: impl FnMut(usize, usize),
 ) -> Option<String> {
-    let chatgpt;
-    let llm = match llm {
-        Llm::Chatgpt { .. } => {
-            chatgpt = Llm::Chatgpt {
-                model: CLEANUP_MODEL.into(),
-            };
-            &chatgpt
-        }
-        other => other,
-    };
+    let careful = llm.careful();
+    let llm = careful.as_ref().unwrap_or(llm);
     let instructions = with_vocabulary(CLEANUP_INSTRUCTIONS, vocabulary, soundalikes);
     let schema = cleanup_schema();
     let todo: Vec<usize> = (0..paragraphs.len())

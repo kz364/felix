@@ -549,6 +549,7 @@ impl MeetingManager {
             super::live::FILE,
             super::clues::FILE,
             super::clues::TURNS_FILE,
+            super::floor::FILE,
         ] {
             let _ = std::fs::remove_file(dir.join(file));
         }
@@ -1360,6 +1361,7 @@ pub fn retranscribe_meeting(app: AppHandle, id: String) -> Result<(), String> {
         summary::CLEANED_FILE,
         super::clues::FILE,
         super::clues::TURNS_FILE,
+        super::floor::FILE,
     ] {
         match std::fs::remove_file(dir.join(file)) {
             Ok(()) => {}

@@ -14,6 +14,7 @@ pub mod detect;
 pub mod diarize;
 pub mod echo;
 pub mod extension;
+pub mod floor;
 mod jobs;
 pub use jobs::split_runaways;
 pub mod language;

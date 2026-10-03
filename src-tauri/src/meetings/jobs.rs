@@ -656,6 +656,14 @@ impl MeetingManager {
         let transcript = pipeline::load(&dir)
             .filter(|t| t.complete)
             .ok_or("The meeting isn't transcribed yet")?;
+        // Who held the floor first: it can tell the voices apart again,
+        // which the cleanup's paragraphs and the clues should start from.
+        let updated = self.read_floor(id, &dir, &llm, &transcript, info).await;
+        let info = updated.as_ref().unwrap_or(info);
+        let transcript = match updated {
+            Some(_) => pipeline::load(&dir).unwrap_or(transcript),
+            None => transcript,
+        };
 
         // Tidying the text and looking for clues to who's who are separate
         // requests to the model: both at once. The clues are found once per
@@ -738,6 +746,64 @@ impl MeetingManager {
 impl MeetingManager {
     /// Find clues (if not found yet) and name voices again with them. The
     /// meeting as it is after, if anything changed.
+    /// Name lines from the conversation ([`super::floor`]), once per
+    /// transcript, and work the voices and names out again with them. The
+    /// meeting as it now is, when that changed anything.
+    async fn read_floor(
+        &self,
+        id: &str,
+        dir: &std::path::Path,
+        llm: &Llm,
+        transcript: &super::transcript::Transcript,
+        info: &MeetingInfo,
+    ) -> Option<MeetingInfo> {
+        if dir.join(super::floor::FILE).exists() {
+            return None;
+        }
+        let careful = llm.careful();
+        let label = |s: &super::transcript::Segment| {
+            let p = Paragraph {
+                source: s.source,
+                start_ms: s.start_ms,
+                end_ms: s.end_ms,
+                text: String::new(),
+                raw: None,
+                speaker: s.speaker,
+            };
+            info.speaker_label(&p).unwrap_or_else(|| "Speaker".into())
+        };
+        let end = info.ended_at.unwrap_or(info.started_at + 60 * 60 * 1000);
+        let invite = super::calendar::for_meeting(dir, info.started_at, end).unwrap_or_default();
+        let turns = match super::floor::find(
+            careful.as_ref().unwrap_or(llm),
+            &transcript.segments,
+            &label,
+            &invite.attendees,
+            invite.me.as_deref(),
+            summary::CLEANUP_EFFORT,
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("Meeting {id}: couldn't read who held the floor: {e}");
+                return None;
+            }
+        };
+        log::info!(
+            "Meeting {id}: {} lines named from the conversation",
+            turns.len()
+        );
+        summary::save_json(dir, super::floor::FILE, &turns).ok()?;
+        if turns.is_empty() {
+            return None;
+        }
+        let names = super::speakers::apply(dir);
+        self.update_info(id, |i| i.app_speakers = names);
+        let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
+        super::manager::read_info(dir)
+    }
+
     async fn find_clues(
         &self,
         id: &str,
@@ -751,7 +817,8 @@ impl MeetingManager {
         }
         let paragraphs = paragraphs_of(dir, transcript);
         let label = |p: &Paragraph| info.speaker_label(p).unwrap_or_else(|| "Speaker".into());
-        let (clues, turns) = match super::clues::find(llm, &paragraphs, &label).await {
+        let found = super::clues::find(llm, &paragraphs, &label).await;
+        let (clues, turns) = match found {
             Ok(c) => c,
             Err(e) => {
                 log::warn!("Meeting {id}: couldn't look for speaker clues: {e}");

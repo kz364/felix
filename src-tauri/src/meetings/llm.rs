@@ -30,7 +30,22 @@ pub struct Budget {
     pub summary: usize,
 }
 
+/// The ChatGPT model for reading a whole transcript closely (cleanup, who
+/// holds the floor), whatever the assistant's model is: it keeps names,
+/// numbers and who-said-what straight better than a faster one.
+pub const CAREFUL_CHATGPT_MODEL: &str = "gpt-6.1-sol";
+
 impl Llm {
+    /// This model, or [`CAREFUL_CHATGPT_MODEL`] when it's ChatGPT.
+    pub fn careful(&self) -> Option<Llm> {
+        match self {
+            Llm::Chatgpt { .. } => Some(Llm::Chatgpt {
+                model: CAREFUL_CHATGPT_MODEL.into(),
+            }),
+            _ => None,
+        }
+    }
+
     /// The model the settings pick, or why there's none.
     pub fn from_settings(settings: &AppSettings) -> Result<Self, String> {
         match settings.meeting_llm {
