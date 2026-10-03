@@ -56,6 +56,8 @@ pub enum Kind {
     Participant,
     /// Invited to the calendar event.
     Invited,
+    /// Invited, known only by a one-word e-mail handle ("Peterlai").
+    InvitedHandle,
     /// The user's own name (on the invite); never one of the voices.
     Myself,
 }
@@ -156,12 +158,14 @@ pub fn gather(t: &Transcript, src: &Sources) -> Vec<Evidence> {
         from: if c.is { Kind::Clue } else { Kind::NotClue },
     }));
     if let Some(invite) = &src.invite {
-        out.extend(
-            invite
-                .attendees
-                .iter()
-                .map(|n| name_evidence(n, Kind::Invited)),
-        );
+        out.extend(invite.attendees.iter().map(|n| {
+            let kind = if invite.handles.contains(n) {
+                Kind::InvitedHandle
+            } else {
+                Kind::Invited
+            };
+            name_evidence(n, kind)
+        }));
         out.extend(invite.me.iter().map(|n| name_evidence(n, Kind::Myself)));
     }
     for p in super::transcript::fixed_paragraphs(&t.segments, &src.fixes) {
@@ -359,19 +363,54 @@ fn same_name(a: &str, b: &str) -> bool {
 }
 
 /// A clue's name as the meeting knows it: "Sam" is "Sam Rivera" when he's
-/// the only Sam on the call or the invite.
-fn full_name(name: &str, known: &[String]) -> String {
+/// the only Sam on the call or the invite, and "Peter" is "Peter Lai" when
+/// the invite only has his e-mail handle "Peterlai" (one of `handles`).
+fn full_name(name: &str, known: &[String], handles: &[String]) -> String {
     let first = |n: &str| n.split_whitespace().next().unwrap_or("").to_lowercase();
+    let split = |k: &String| handles.contains(k).then(|| split_handle(k, name)).flatten();
     let matches: Vec<&String> = known
         .iter()
         .filter(|k| {
-            same_name(k, name) || (!name.contains(' ') && first(k) == name.trim().to_lowercase())
+            same_name(k, name)
+                || (!name.contains(' ') && first(k) == name.trim().to_lowercase())
+                || split(k).is_some()
         })
         .collect();
     match matches.as_slice() {
-        [one] => (*one).clone(),
+        [one] => split(one).unwrap_or_else(|| (*one).clone()),
         _ => name.trim().to_string(),
     }
+}
+
+/// An invitee known only by an e-mail handle ("Peterlai") written as the
+/// name said on the call starts it: "Peter Lai".
+fn split_handle(handle: &str, said: &str) -> Option<String> {
+    let (handle, said) = (handle.trim(), said.trim());
+    if handle.contains(' ') || said.contains(' ') || said.chars().count() < 3 {
+        return None;
+    }
+    let rest = handle.get(said.len()..)?;
+    if !handle.to_lowercase().starts_with(&said.to_lowercase())
+        || rest.chars().count() < 2
+        || !rest.chars().all(char::is_alphabetic)
+    {
+        return None;
+    }
+    let mut rest = rest.chars();
+    let rest: String = rest
+        .next()?
+        .to_uppercase()
+        .chain(rest.flat_map(char::to_lowercase))
+        .collect();
+    Some(format!("{said} {rest}"))
+}
+
+/// The name to show for an invitee: the handle split as it was said on the
+/// call, when it was.
+fn as_said(invitee: &str, said: &[String]) -> String {
+    said.iter()
+        .find_map(|s| split_handle(invitee, s))
+        .unwrap_or_else(|| invitee.to_string())
 }
 
 /// The voice that talks most in a stretch of a track.
@@ -418,6 +457,7 @@ fn by_clues_and_elimination(
     let known = of_kind(&[
         Kind::Participant,
         Kind::Invited,
+        Kind::InvitedHandle,
         Kind::Extension,
         Kind::Caption,
         Kind::ActiveSpeaker,
@@ -440,6 +480,44 @@ fn by_clues_and_elimination(
     let named =
         |names: &BTreeMap<u32, String>, v: &u32| names.contains_key(v) || user.contains_key(v);
 
+    // A 1-on-1 on the calendar: the one voice heard from the call is the
+    // other person invited, whatever names came up in passing.
+    let said: Vec<String> = evidence
+        .iter()
+        .filter(|e| matches!(e.from, Kind::Clue | Kind::NotClue))
+        .filter_map(name_of)
+        .collect();
+    let handles = of_kind(&[Kind::InvitedHandle]);
+    let others: Vec<String> = of_kind(&[Kind::Invited, Kind::InvitedHandle])
+        .into_iter()
+        .filter(|n| !me.iter().any(|m| same_name(m, n)))
+        .collect();
+    let mut from_call: BTreeMap<u32, u64> = BTreeMap::new();
+    for s in segments
+        .iter()
+        .filter(|s| s.source == Source::System && !s.echo)
+    {
+        if let Some(v) = s.speaker.filter(|&v| v != super::diarize::ME) {
+            *from_call.entry(v).or_default() += s.end_ms.saturating_sub(s.start_ms);
+        }
+    }
+    let heard: Vec<u32> = from_call
+        .iter()
+        .filter(|(_, ms)| **ms >= ELIMINATE_MS)
+        .map(|(v, _)| *v)
+        .collect();
+    if let ([other], [v]) = (others.as_slice(), heard.as_slice()) {
+        let name = if handles.contains(other) {
+            as_said(other, &said)
+        } else {
+            other.clone()
+        };
+        if !named(names, v) && !is_taken(&taken, other) && !is_taken(&taken, &name) {
+            taken.push(name.clone());
+            names.insert(*v, name);
+        }
+    }
+
     // Clues, per voice.
     let mut score: BTreeMap<u32, BTreeMap<String, f32>> = BTreeMap::new();
     let mut not: BTreeMap<u32, Vec<String>> = BTreeMap::new();
@@ -453,7 +531,7 @@ fn by_clues_and_elimination(
         ) else {
             continue;
         };
-        let n = full_name(&n, &known);
+        let n = full_name(&n, &known, &handles);
         let entry = score.entry(v).or_default().entry(n.clone()).or_default();
         if e.from == Kind::Clue {
             *entry += e.strength;
@@ -934,6 +1012,7 @@ mod tests {
                 title: "Pricing review".into(),
                 attendees: vec!["Sam Rivera".into(), "Jo Park".into(), "Priya".into()],
                 me: Some("Kaspar".into()),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -950,6 +1029,62 @@ mod tests {
         let user = BTreeMap::from([(102, "Sam Rivera".to_string())]);
         let names = resolve(&mut t.segments, &evidence, &user);
         assert_eq!(names.get(&101).map(String::as_str), Some("Jo Park"));
+    }
+
+    #[test]
+    fn a_one_on_one_names_the_call_from_the_invite() {
+        use crate::meetings::calendar::Invite;
+        use crate::meetings::clues::Clue;
+        // One voice on the call; Charlie and Peter come up in passing, and
+        // the invite only knows Peter's e-mail handle.
+        let mut t = Transcript {
+            segments: vec![seg(0, 300, Some(100)), seg(300, 302, Some(101))],
+            ..Default::default()
+        };
+        let clue = |start_s: u64, name: &str, is: bool| Clue {
+            source: Source::System,
+            start_ms: start_s * 1000,
+            end_ms: (start_s + 5) * 1000,
+            name: name.into(),
+            is,
+            strength: 0.5,
+            quote: String::new(),
+        };
+        let src = Sources {
+            clues: vec![clue(10, "Charlie", false), clue(20, "Peter", false)],
+            invite: Some(Invite {
+                title: "Catch-up".into(),
+                attendees: vec!["Peterlai".into()],
+                me: Some("Kaspar".into()),
+                handles: vec!["Peterlai".into()],
+                version: crate::meetings::calendar::VERSION,
+            }),
+            ..Default::default()
+        };
+        let evidence = gather(&t, &src);
+        let names = resolve(&mut t.segments, &evidence, &BTreeMap::new());
+        assert_eq!(names.get(&100).map(String::as_str), Some("Peter Lai"));
+        assert_eq!(names.get(&101), None);
+
+        // Two people talking from the call isn't a 1-on-1.
+        t.segments.push(seg(400, 460, Some(101)));
+        let names = resolve(&mut t.segments, &evidence, &BTreeMap::new());
+        assert_eq!(names.get(&100), None);
+    }
+
+    #[test]
+    fn handles_split_only_where_the_name_said_starts_them() {
+        assert_eq!(
+            split_handle("Peterlai", "Peter").as_deref(),
+            Some("Peter Lai")
+        );
+        assert_eq!(split_handle("Peterlai", "Pe"), None);
+        assert_eq!(split_handle("Peter", "Peter"), None);
+        assert_eq!(split_handle("Peter Lai", "Peter"), None);
+        assert_eq!(
+            split_handle("Samantha", "Sam").as_deref(),
+            Some("Sam Antha")
+        );
     }
 
     #[test]

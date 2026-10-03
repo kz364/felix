@@ -17,7 +17,19 @@ pub struct Invite {
     pub attendees: Vec<String>,
     /// The user's own name on the invite, if it has one.
     pub me: Option<String>,
+    /// Attendees known only by a one-word e-mail handle ("Peterlai"), which
+    /// may be first and last name run together.
+    #[serde(default)]
+    pub handles: Vec<String>,
+    /// [`VERSION`] when it was read from the calendar; older ones are read
+    /// again.
+    #[serde(default)]
+    pub version: u32,
 }
+
+/// Bumped when [`Invite`] gains something worth reading the calendar again
+/// for (1: handles).
+pub const VERSION: u32 = 1;
 
 pub fn load(dir: &Path) -> Option<Invite> {
     super::summary::load_json(dir, FILE)
@@ -27,10 +39,13 @@ pub fn load(dir: &Path) -> Option<Invite> {
 /// ms), saved with the meeting the first time. None without Calendar
 /// access or a matching event with attendees.
 pub fn for_meeting(dir: &Path, start_ms: i64, end_ms: i64) -> Option<Invite> {
-    if let Some(i) = load(dir) {
-        return Some(i);
+    let saved = load(dir);
+    if let Some(i) = saved.as_ref().filter(|i| i.version >= VERSION) {
+        return Some(i.clone());
     }
-    let invite = imp::invite_between(start_ms, end_ms)?;
+    let Some(invite) = imp::invite_between(start_ms, end_ms) else {
+        return saved;
+    };
     let _ = super::summary::save_json(dir, FILE, &invite);
     Some(invite)
 }
@@ -149,6 +164,7 @@ mod imp {
             }
             let mut invite = Invite {
                 title: unsafe { event.title() }.to_string(),
+                version: super::VERSION,
                 ..Default::default()
             };
             for a in attendees.iter() {
@@ -160,6 +176,10 @@ mod imp {
                 if unsafe { a.isCurrentUser() } {
                     invite.me = Some(n);
                 } else if !invite.attendees.contains(&n) {
+                    let named = name.as_deref().is_some_and(|n| !n.contains('@'));
+                    if !named && !n.contains(' ') {
+                        invite.handles.push(n.clone());
+                    }
                     invite.attendees.push(n);
                 }
             }
