@@ -1254,20 +1254,8 @@ pub(crate) async fn process_transcription_output(
     // the cleanup level (when Post Processing is on) applies to every dictation.
     let request = if post_process {
         Some(CleanupRequest::SelectedPrompt)
-    } else if uses_level_cleanup(&settings) {
-        // Coding agents always get the pass, for their layout.
-        let for_coding =
-            crate::app_context::resolve(&crate::app_context::current(), &settings.app_rules).0
-                == crate::settings::AppCategory::Coding;
-        let has_instructions = has_custom_instructions(&settings) || for_coding;
-        if crate::cleanup::needs_ai_cleanup(&final_text, settings.cleanup_level, has_instructions) {
-            Some(CleanupRequest::Level(settings.cleanup_level))
-        } else {
-            debug!("Dictation already clean; skipping the AI pass");
-            None
-        }
     } else {
-        None
+        level_cleanup_request(&settings, &final_text)
     };
     if let Some(request) = request {
         if let Some(processed_text) =
@@ -1293,13 +1281,7 @@ pub(crate) async fn process_transcription_output(
     // Deterministic styling for the destination: list layout, email layout
     // and the category's formality. Last, so the LLM can't undo it.
     let context = crate::app_context::current();
-    let (category, _) = crate::app_context::resolve(&context, &settings.app_rules);
-    let styled = crate::style::apply(
-        &final_text,
-        category,
-        settings.category_styles.get(category),
-        &settings.custom_words,
-    );
+    let styled = style_for_app(&settings, &context, &final_text);
     let period_dropped = final_text.trim_end().ends_with('.') && !styled.trim_end().ends_with('.');
     final_text = styled;
     let mut updated = get_settings(app);
@@ -1321,6 +1303,57 @@ pub(crate) async fn process_transcription_output(
         assistant_error: None,
         period_dropped,
     }
+}
+
+/// The cleanup level's AI pass for this dictation, when it needs one.
+fn level_cleanup_request(settings: &AppSettings, text: &str) -> Option<CleanupRequest> {
+    if !uses_level_cleanup(settings) {
+        return None;
+    }
+    // Coding agents always get the pass, for their layout.
+    let for_coding =
+        crate::app_context::resolve(&crate::app_context::current(), &settings.app_rules).0
+            == crate::settings::AppCategory::Coding;
+    let has_instructions = has_custom_instructions(settings) || for_coding;
+    if crate::cleanup::needs_ai_cleanup(text, settings.cleanup_level, has_instructions) {
+        Some(CleanupRequest::Level(settings.cleanup_level))
+    } else {
+        debug!("Dictation already clean; skipping the AI pass");
+        None
+    }
+}
+
+/// Deterministic styling for the destination: list layout, email layout
+/// and the category's formality.
+fn style_for_app(
+    settings: &AppSettings,
+    context: &crate::app_context::DictationContext,
+    text: &str,
+) -> String {
+    let (category, _) = crate::app_context::resolve(context, &settings.app_rules);
+    crate::style::apply(
+        text,
+        category,
+        settings.category_styles.get(category),
+        &settings.custom_words,
+    )
+}
+
+/// What a dictation's transcript becomes before pasting, outside the app:
+/// the rules, the cleanup level's AI pass (if it needs one and its output
+/// is kept) and the styling, for the app in [`crate::app_context::current`].
+/// Also says whether the AI pass was used. For the benchmark.
+pub(crate) async fn clean_like_dictation(settings: &AppSettings, text: &str) -> (String, bool) {
+    let mut text = crate::scratchpad::run_rules(text, settings).text;
+    let mut used_ai = false;
+    if let Some(request) = level_cleanup_request(settings, &text) {
+        if let Some(cleaned) = post_process_transcription(settings, &text, request).await {
+            text = cleaned;
+            used_ai = true;
+        }
+    }
+    let styled = style_for_app(settings, &crate::app_context::current(), &text);
+    (styled, used_ai)
 }
 
 impl ShortcutAction for TranscribeAction {

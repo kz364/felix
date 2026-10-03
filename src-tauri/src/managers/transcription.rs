@@ -1252,10 +1252,7 @@ impl TranscriptionManager {
     /// own output is (filler words, language-gated cleanup).
     pub fn finish_cloud_text(&self, raw: String) -> String {
         let settings = crate::rules::with_rules(get_settings(&self.app_handle));
-        let hint =
-            Some(settings.selected_language.as_str()).filter(|l| !l.is_empty() && *l != "auto");
-        let evidence = resolve_output_language_evidence(&settings, hint, &[], false);
-        post_process_transcription_text(raw, &settings, &evidence, &[])
+        finish_cloud_text_with(&settings, raw)
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
@@ -1424,20 +1421,13 @@ impl TranscriptionManager {
                         output_was_translated = run_plan.target_language.as_deref() == Some("en");
                         applied_language_hint = run_plan.language.clone();
 
-                        let run_options = RunOptions {
-                            task: run_plan.task,
-                            language: run_plan.language,
-                            target_language: run_plan.target_language,
-                            context: recognition_context(
-                                &settings.custom_words,
-                                model_takes_context,
-                            ),
-                            bias_phrases: boost_phrases(&settings.custom_words, model_takes_boost),
-                            // 0 = the per-family default calibrated in transcribe.cpp.
-                            bias_strength: 0.0,
+                        let run_options = cpp_run_options(
+                            run_plan,
+                            &settings.custom_words,
                             family,
-                            ..Default::default()
-                        };
+                            model_takes_context,
+                            model_takes_boost,
+                        );
 
                         debug!(
                             "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}, context={}, boost_phrases={}",
@@ -1448,64 +1438,11 @@ impl TranscriptionManager {
                             run_options.bias_phrases.len()
                         );
 
-                        // Models that drop sentences from long audio get it in
-                        // pieces cut at pauses; every other model as before.
-                        let pieces = if model_splits_long_audio {
-                            split_at_pauses(&audio, PIECE_SAMPLES)
-                        } else {
-                            vec![&audio[..]]
-                        };
-                        if pieces.len() > 1 {
-                            debug!(
-                                "Transcribing {:.1}s in {} pieces",
-                                audio.len() as f32 / 16000.0,
-                                pieces.len()
-                            );
-                        }
-                        let mut texts = Vec::with_capacity(pieces.len());
-                        for piece in pieces {
-                            let t = session.run(piece, &run_options).map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })?;
-                            // Whisper's audio-based LID (auto mode only;
-                            // `None` when a language hint was passed).
-                            if model_detected_language.is_none() {
-                                model_detected_language = t.language;
-                            }
-                            let text = t.text.trim().to_string();
-                            if !text.is_empty() {
-                                texts.push(text);
-                            }
-                        }
-                        let text = texts.join(" ");
-                        // Safety net for the other models: a long dictation
-                        // that came back suspiciously short is run again in
-                        // pieces, and the pieces win if they hold clearly
-                        // more words (a skipped stretch, not a rewording).
-                        if !model_splits_long_audio && looks_cut_short(&text, audio.len()) {
-                            let mut pieces = Vec::new();
-                            for piece in split_at_pauses(&audio, PIECE_SAMPLES) {
-                                let t = session.run(piece, &run_options).map_err(|e| {
-                                    anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                                })?;
-                                let t = t.text.trim().to_string();
-                                if !t.is_empty() {
-                                    pieces.push(t);
-                                }
-                            }
-                            let pieces = pieces.join(" ");
-                            let (whole_words, piece_words) = (
-                                text.split_whitespace().count(),
-                                pieces.split_whitespace().count(),
-                            );
-                            warn!(
-                                "Long dictation came back short ({whole_words} words in {:.0}s); in pieces: {piece_words} words",
-                                audio.len() as f32 / 16000.0
-                            );
-                            if piece_words * 10 >= whole_words * 11 {
-                                return Ok(pieces);
-                            }
-                        }
+                        let (text, detected) =
+                            run_cpp(session, &audio, &run_options, model_splits_long_audio)?;
+                        // Whisper's audio-based LID (auto mode only;
+                        // `None` when a language hint was passed).
+                        model_detected_language = detected;
                         Ok(text)
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
@@ -1940,6 +1877,152 @@ const SPLIT_LONG_AUDIO_ARCHS: &[&str] = &["cohere_asr", "canary_qwen"];
 fn looks_cut_short(text: &str, samples: usize) -> bool {
     let minutes = samples as f32 / 16000.0 / 60.0;
     minutes > 0.75 && (text.split_whitespace().count() as f32) < 100.0 * minutes
+}
+
+/// Run options for a dictation: the language plan plus your vocabulary in
+/// the form the model takes (Whisper prompt via `family`, Qwen3-ASR
+/// context, keyword boosting).
+fn cpp_run_options(
+    run_plan: TranscribeCppRunPlan,
+    custom_words: &[String],
+    family: Option<RunExtension>,
+    model_takes_context: bool,
+    model_takes_boost: bool,
+) -> RunOptions {
+    RunOptions {
+        task: run_plan.task,
+        language: run_plan.language,
+        target_language: run_plan.target_language,
+        context: recognition_context(custom_words, model_takes_context),
+        bias_phrases: boost_phrases(custom_words, model_takes_boost),
+        // 0 = the per-family default calibrated in transcribe.cpp.
+        bias_strength: 0.0,
+        family,
+        ..Default::default()
+    }
+}
+
+/// Transcribe a dictation's audio, in pieces for the models that need them;
+/// also returns the language Whisper detected, if any.
+fn run_cpp(
+    session: &mut Session,
+    audio: &[f32],
+    run_options: &RunOptions,
+    model_splits_long_audio: bool,
+) -> Result<(String, Option<String>)> {
+    let mut detected = None;
+    // Models that drop sentences from long audio get it in
+    // pieces cut at pauses; every other model as before.
+    let pieces = if model_splits_long_audio {
+        split_at_pauses(audio, PIECE_SAMPLES)
+    } else {
+        vec![audio]
+    };
+    if pieces.len() > 1 {
+        debug!(
+            "Transcribing {:.1}s in {} pieces",
+            audio.len() as f32 / 16000.0,
+            pieces.len()
+        );
+    }
+    let mut texts = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        let t = session
+            .run(piece, run_options)
+            .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))?;
+        if detected.is_none() {
+            detected = t.language;
+        }
+        let text = t.text.trim().to_string();
+        if !text.is_empty() {
+            texts.push(text);
+        }
+    }
+    let text = texts.join(" ");
+    // Safety net for the other models: a long dictation
+    // that came back suspiciously short is run again in
+    // pieces, and the pieces win if they hold clearly
+    // more words (a skipped stretch, not a rewording).
+    if !model_splits_long_audio && looks_cut_short(&text, audio.len()) {
+        let mut pieces = Vec::new();
+        for piece in split_at_pauses(audio, PIECE_SAMPLES) {
+            let t = session
+                .run(piece, run_options)
+                .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))?;
+            let t = t.text.trim().to_string();
+            if !t.is_empty() {
+                pieces.push(t);
+            }
+        }
+        let pieces = pieces.join(" ");
+        let (whole_words, piece_words) = (
+            text.split_whitespace().count(),
+            pieces.split_whitespace().count(),
+        );
+        warn!(
+            "Long dictation came back short ({whole_words} words in {:.0}s); in pieces: {piece_words} words",
+            audio.len() as f32 / 16000.0
+        );
+        if piece_words * 10 >= whole_words * 11 {
+            return Ok((pieces, detected));
+        }
+    }
+    Ok((text, detected))
+}
+
+/// Transcribe with a transcribe-cpp model the way a dictation does, then
+/// the same text rules (fillers, normalising). For the benchmark.
+pub(crate) fn transcribe_like_dictation(
+    settings: &AppSettings,
+    session: &mut Session,
+    audio: &[f32],
+) -> Result<String> {
+    let model = session.model();
+    let caps = model.capabilities();
+    let is_whisper = model.arch() == "whisper";
+    let family = (is_whisper && !settings.custom_words.is_empty()).then(|| {
+        RunExtension::Whisper(WhisperRunOptions {
+            initial_prompt: Some(settings.custom_words.join(", ")),
+            ..Default::default()
+        })
+    });
+    let plan = transcribe_cpp_run_plan(
+        settings.translate_to_english,
+        &settings.selected_language,
+        &caps.languages,
+        caps.supports_translate,
+    );
+    let options = cpp_run_options(
+        plan,
+        &settings.custom_words,
+        family,
+        model.supports(Feature::Context),
+        model.supports(Feature::KeywordBoost),
+    );
+    let splits = SPLIT_LONG_AUDIO_ARCHS.contains(&model.arch().as_str());
+    let (text, detected) = run_cpp(session, audio, &options, splits)?;
+    let evidence = with_model_detected_language(
+        resolve_output_language_evidence(
+            settings,
+            options.language.as_deref(),
+            &caps.languages,
+            options.target_language.as_deref() == Some("en"),
+        ),
+        detected,
+    );
+    Ok(post_process_transcription_text(
+        text,
+        settings,
+        &evidence,
+        &caps.languages,
+    ))
+}
+
+/// The text rules a cloud transcript gets, outside the app.
+pub(crate) fn finish_cloud_text_with(settings: &AppSettings, raw: String) -> String {
+    let hint = Some(settings.selected_language.as_str()).filter(|l| !l.is_empty() && *l != "auto");
+    let evidence = resolve_output_language_evidence(settings, hint, &[], false);
+    post_process_transcription_text(raw, settings, &evidence, &[])
 }
 
 /// Longest piece for those models: ~30 s, what they are trained on.

@@ -1713,6 +1713,15 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     settings
 }
 
+/// Settings as the app would load them from a store value (salvaged and
+/// migrated), without writing anything back. For tools run outside the app.
+pub(crate) fn from_store_value(stored: &serde_json::Value) -> AppSettings {
+    let mut settings = serde_json::from_value::<AppSettings>(stored.clone())
+        .unwrap_or_else(|_| salvage_settings(stored));
+    apply_settings_migrations(&mut settings, stored);
+    settings
+}
+
 /// Rebuilds settings from a store value that failed to deserialize as a whole.
 /// Every stored field that is individually valid is kept; only broken values
 /// (e.g. an enum variant written by a newer or older version) fall back to

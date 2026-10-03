@@ -26,6 +26,7 @@ mod dictation_log;
 pub mod draft;
 pub mod draft_bubble;
 mod edit_learning;
+pub mod eval;
 mod helpers;
 mod input;
 mod installed_apps;

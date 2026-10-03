@@ -426,12 +426,24 @@ pub async fn guess_benchmark_ground_truth(app: AppHandle, id: String) -> Result<
         }
     }
 
+    let guess = reconcile(&llm, &settings.custom_words, &record, heard).await?;
+    change_now(&app, &id, move |r| r.guess = Some(guess))
+}
+
+/// Have the model reconcile what the speech models heard with what was
+/// pasted and your edits into a best guess at what was said.
+pub(crate) async fn reconcile(
+    llm: &crate::meetings::llm::Llm,
+    vocabulary: &[String],
+    record: &Record,
+    heard: Vec<Heard>,
+) -> Result<Guess, String> {
     let input = serde_json::json!({
         "transcripts": heard,
         "pasted": record.pasted,
         "edited": record.edited.as_ref().filter(|_| record.edit.as_deref() == Some("edited")),
         "app": record.app,
-        "vocabulary": settings.custom_words,
+        "vocabulary": vocabulary,
     });
     let reply = llm
         .ask_json(
@@ -442,7 +454,7 @@ pub async fn guess_benchmark_ground_truth(app: AppHandle, id: String) -> Result<
         )
         .await?;
     let text = |k: &str| reply[k].as_str().unwrap_or_default().trim().to_string();
-    let guess = Guess {
+    Ok(Guess {
         text: text("text"),
         confident: reply["confident"].as_bool().unwrap_or(false),
         unsure: reply["unsure"]
@@ -457,8 +469,7 @@ pub async fn guess_benchmark_ground_truth(app: AppHandle, id: String) -> Result<
         by: llm.label(),
         heard,
         at: chrono::Local::now().to_rfc3339(),
-    };
-    change_now(&app, &id, move |r| r.guess = Some(guess))
+    })
 }
 
 #[cfg(test)]

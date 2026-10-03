@@ -191,6 +191,12 @@ pub fn init(app_data_dir: &Path) {
     }
 }
 
+/// Read the rules from `app_data_dir` without creating or changing the
+/// file, for tools run outside the app.
+pub(crate) fn read_from(app_data_dir: &Path) {
+    let _ = PATH.set(app_data_dir.join(FILE));
+}
+
 /// `text` with the section for agents added on top, or `None` if it has
 /// one already.
 fn with_agent_section(text: &str) -> Option<String> {
