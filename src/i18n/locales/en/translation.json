@@ -1564,6 +1564,21 @@
       },
       "transcriptEmpty": "What's said shows up here as you go. It's rough; the full transcript is made when you stop."
     },
-    "paused": "Paused"
+    "paused": "Paused",
+    "vouch": {
+      "open": "Learn their voices",
+      "openHint": "Tell Felix this call's voices are clean, so it learns the people on it",
+      "explain": "Felix learns people only from clean audio. Vouch for this call if one person was on each line.",
+      "oneOnOne": "1-on-1 with them",
+      "oneOnOneHint": "Only this person was on the other end: everything the call side said is them",
+      "trust": "Voices are named right",
+      "trustHint": "Each person dialled in on their own, and the call's voices have the right names",
+      "stop": "Stop learning from this call",
+      "isOneOnOne": "Learning: 1-on-1 with {{name}}",
+      "isTrusted": "Learning: the call's voices as named",
+      "learned": "Learned {{people}}",
+      "nothing": "Nothing clean enough to learn here",
+      "stopped": "No longer learning from this call"
+    }
   }
 }

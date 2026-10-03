@@ -951,6 +951,64 @@ pub fn learn_my_voice_from(app: AppHandle, id: String) -> Result<String, String>
     learn_my_voice(&super::manager::meeting_dir(&app, &id)?)
 }
 
+/// What the user said about a call's voices, for learning from it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+pub struct Vouch {
+    /// A 1-on-1 (or one person on the call's end): who they were.
+    pub one_on_one: Option<String>,
+    /// One person per line on the call side, and the call's voices are
+    /// named right.
+    pub trusted: bool,
+}
+
+pub fn vouched(app_data: &Path, meeting: &str) -> Vouch {
+    let store = load_store(app_data);
+    Vouch {
+        one_on_one: store.one_on_one.get(meeting).cloned(),
+        trusted: store.trust_voices.iter().any(|m| m == meeting),
+    }
+}
+
+/// Record what the user said about a meeting's voices. Taking it back
+/// takes out what was learned from the meeting, unless it would teach by
+/// itself (a call recorded after `learn_since`); [`apply`] then learns it
+/// again either way.
+pub fn set_vouch(
+    app_data: &Path,
+    meeting: &str,
+    started_at: i64,
+    vouch: &Vouch,
+) -> Result<(), String> {
+    let mut store = load_store(app_data);
+    store.one_on_one.remove(meeting);
+    store.trust_voices.retain(|m| m != meeting);
+    match vouch.one_on_one.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            store
+                .one_on_one
+                .insert(meeting.to_string(), name.to_string());
+        }
+        _ if vouch.trusted => store.trust_voices.push(meeting.to_string()),
+        _ if started_at < store.learn_since && !store.learn_also.iter().any(|m| m == meeting) => {
+            learn_clean(&mut store, &BTreeMap::new(), meeting, 0);
+        }
+        _ => {}
+    }
+    save_store(app_data, &store)
+}
+
+/// Seconds of clean speech each person has from a meeting.
+pub fn learned_from(app_data: &Path, meeting: &str) -> BTreeMap<String, u64> {
+    load_store(app_data)
+        .voices
+        .iter()
+        .filter_map(|v| {
+            let p = v.from.get(meeting)?;
+            Some((v.label(), p.windows as u64 * 3 / 2))
+        })
+        .collect()
+}
+
 // ---- Settings ----
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1208,6 +1266,34 @@ mod tests {
             &none(),
         );
         assert_eq!(store.voices.len(), 1);
+    }
+
+    #[test]
+    fn taking_back_a_vouch_unlearns_an_old_call() {
+        let dir = std::env::temp_dir().join(format!("felix-vouch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store {
+            learn_since: 100,
+            ..Store::default()
+        };
+        learn_clean(
+            &mut store,
+            &BTreeMap::from([("Era".to_string(), print(&[1.0, 0.0], 50))]),
+            "old",
+            1,
+        );
+        save_store(&dir, &store).unwrap();
+        let one_on_one = Vouch {
+            one_on_one: Some(" Era ".into()),
+            trusted: false,
+        };
+        set_vouch(&dir, "old", 1, &one_on_one).unwrap();
+        assert_eq!(vouched(&dir, "old").one_on_one.as_deref(), Some("Era"));
+        assert_eq!(learned_from(&dir, "old").get("Era"), Some(&75));
+        set_vouch(&dir, "old", 1, &Vouch::default()).unwrap();
+        assert!(vouched(&dir, "old").one_on_one.is_none());
+        assert!(learned_from(&dir, "old").is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -1050,6 +1050,33 @@ async paragraphParts(id: string, source: Source, startMs: number) : Promise<Resu
 }
 },
 /**
+ * What the user has said about a call's voices for learning, and who a
+ * 1-on-1 would be with (from the invite, else the one named call voice).
+ */
+async meetingVouch(id: string) : Promise<Result<MeetingVouch, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_vouch", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The user vouches for a call's voices (a 1-on-1 with someone, or every
+ * call voice named right), or takes that back: what's learned from it is
+ * made again, and the meeting's names worked out again with it. Returns
+ * seconds of clean speech learned per person. Off the main thread: it
+ * reads the meeting's voice windows (no model runs).
+ */
+async vouchMeeting(id: string, vouch: Vouch) : Promise<Result<Partial<{ [key in string]: number }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vouch_meeting", { id, vouch }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Two voices in a meeting are one person.
  */
 async mergeMeetingVoices(id: string, from: number, into: number) : Promise<Result<null, string>> {
@@ -2015,6 +2042,21 @@ number: number; meetings: number;
  * Unix ms.
  */
 last_heard: number; windows: number }
+export type MeetingVouch = { vouch: Vouch; suggested: string | null; 
+/**
+ * Seconds of clean speech each person has from this meeting.
+ */
+learned: Partial<{ [key in string]: number }> }
+export type Vouch = { 
+/**
+ * A 1-on-1 (or one person on the call's end): who they were.
+ */
+one_on_one: string | null; 
+/**
+ * One person per line on the call side, and the call's voices are
+ * named right.
+ */
+trusted: boolean }
 export type RememberedVoices = { enabled: boolean; voices: RememberedVoice[] }
 export type ExtensionStatus = { 
 /**

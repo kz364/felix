@@ -1318,6 +1318,71 @@ pub fn merge_meeting_voices(
     Ok(())
 }
 
+/// What the user has said about a call's voices for learning, and who a
+/// 1-on-1 would be with (from the invite, else the one named call voice).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct MeetingVouch {
+    pub vouch: super::remembered::Vouch,
+    pub suggested: Option<String>,
+    /// Seconds of clean speech each person has from this meeting.
+    pub learned: BTreeMap<String, u64>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_vouch(app: AppHandle, id: String) -> Result<MeetingVouch, String> {
+    let dir = meeting_dir(&app, &id)?;
+    let data = crate::portable::app_data_dir(&app).map_err(|e| e.to_string())?;
+    let info = read_info(&dir).ok_or("The meeting isn't there any more")?;
+    let call_names: Vec<&String> = info
+        .speakers
+        .iter()
+        .chain(&info.app_speakers)
+        .filter(|(v, _)| **v >= pipeline::SYSTEM_SPEAKERS)
+        .map(|(_, n)| n)
+        .collect();
+    let suggested = super::speakers::one_on_one_name(&dir).or_else(|| match call_names[..] {
+        [one, ..] if call_names.iter().all(|n| n == &one) => Some(one.clone()),
+        _ => None,
+    });
+    Ok(MeetingVouch {
+        vouch: super::remembered::vouched(&data, &id),
+        suggested,
+        learned: super::remembered::learned_from(&data, &id),
+    })
+}
+
+/// The user vouches for a call's voices (a 1-on-1 with someone, or every
+/// call voice named right), or takes that back: what's learned from it is
+/// made again, and the meeting's names worked out again with it. Returns
+/// seconds of clean speech learned per person. Off the main thread: it
+/// reads the meeting's voice windows (no model runs).
+#[tauri::command]
+#[specta::specta]
+pub async fn vouch_meeting(
+    app: AppHandle,
+    id: String,
+    vouch: super::remembered::Vouch,
+) -> Result<BTreeMap<String, u64>, String> {
+    let dir = meeting_dir(&app, &id)?;
+    let data = crate::portable::app_data_dir(&app).map_err(|e| e.to_string())?;
+    let manager = app.state::<Arc<MeetingManager>>().inner().clone();
+    if manager.is_processing(&id) {
+        return Err("Wait until this meeting has finished processing".into());
+    }
+    let info = read_info(&dir).ok_or("The meeting isn't there any more")?;
+    let task_id = id.clone();
+    let (names, data) = tauri::async_runtime::spawn_blocking(move || {
+        super::remembered::set_vouch(&data, &task_id, info.started_at, &vouch)?;
+        Ok::<_, String>((super::speakers::apply(&dir), data))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    manager.update_info(&id, |i| i.app_speakers = names);
+    let _ = app.emit("meetings-changed", ());
+    Ok(super::remembered::learned_from(&data, &id))
+}
+
 /// The user said who spoke: the remembered voices (and the user's own
 /// print) are made again from the windows each person actually spoke in.
 fn relearn_voices(dir: &Path) {

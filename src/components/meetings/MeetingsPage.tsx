@@ -38,6 +38,8 @@ import {
   commands,
   type LiveQuestion,
   type MeetingInfo,
+  type MeetingVouch,
+  type Vouch,
   type MeetingMode,
   type MeetingState,
   type MeetingTranscript,
@@ -627,6 +629,131 @@ const TranscriptParagraph: React.FC<{
   );
 };
 
+/** Seconds as "25 min" or "40 s". */
+const speechLength = (secs: number) =>
+  secs >= 90 ? `${Math.round(secs / 60)} min` : `${secs} s`;
+
+const learnedList = (learned: Partial<Record<string, number>>) =>
+  Object.entries(learned)
+    .map(([name, secs]) => `${name} (${speechLength(secs ?? 0)})`)
+    .join(", ");
+
+/**
+ * Say a call's voices are clean enough to learn from: a 1-on-1 with someone
+ * (the whole call side is them) or every call voice named right. Felix
+ * otherwise only learns people from what the call app marked one at a time.
+ */
+const VouchVoices: React.FC<{ meeting: MeetingInfo; onClose: () => void }> = ({
+  meeting,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+  const [state, setState] = useState<MeetingVouch | null>(null);
+  const [name, setName] = useState("");
+  const [working, setWorking] = useState(false);
+
+  useEffect(() => {
+    commands.meetingVouch(meeting.id).then((result) => {
+      if (result.status === "error") {
+        toast.error(result.error);
+        onClose();
+        return;
+      }
+      setState(result.data);
+      setName(result.data.vouch.one_on_one ?? result.data.suggested ?? "");
+    });
+  }, [meeting.id, onClose]);
+
+  const save = async (vouch: Vouch) => {
+    setWorking(true);
+    const result = await commands.vouchMeeting(meeting.id, vouch);
+    setWorking(false);
+    if (result.status === "error") {
+      toast.error(result.error);
+      return;
+    }
+    const learned = learnedList(result.data);
+    if (vouch.one_on_one || vouch.trusted) {
+      toast.success(
+        learned
+          ? t("meetings.vouch.learned", { people: learned })
+          : t("meetings.vouch.nothing"),
+      );
+    } else {
+      toast.success(t("meetings.vouch.stopped"));
+    }
+    onClose();
+  };
+
+  if (!state) return null;
+  const vouched = state.vouch.one_on_one !== null || state.vouch.trusted;
+  const pill =
+    "rounded-full border border-stone/30 px-2.5 py-0.5 hover:border-accent hover:text-accent cursor-pointer disabled:opacity-50 disabled:cursor-default";
+
+  return (
+    <div className="mx-1 rounded-lg border border-stone/20 bg-surface px-3 py-2 text-sm space-y-2">
+      <div className="text-text/60">{t("meetings.vouch.explain")}</div>
+      {vouched && (
+        <div className="text-text/70">
+          {state.vouch.one_on_one
+            ? t("meetings.vouch.isOneOnOne", { name: state.vouch.one_on_one })
+            : t("meetings.vouch.isTrusted")}
+          {Object.keys(state.learned).length > 0 &&
+            ` · ${learnedList(state.learned)}`}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={name}
+          placeholder={t("meetings.speaker.namePlaceholder")}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim()) {
+              save({ one_on_one: name.trim(), trusted: false });
+            }
+            if (e.key === "Escape") onClose();
+          }}
+          className="w-40 rounded border border-stone/30 bg-background px-1.5 py-0.5 outline-none focus:border-accent/60"
+        />
+        <button
+          disabled={working || !name.trim()}
+          onClick={() => save({ one_on_one: name.trim(), trusted: false })}
+          className={pill}
+          title={t("meetings.vouch.oneOnOneHint")}
+        >
+          {t("meetings.vouch.oneOnOne")}
+        </button>
+        <button
+          disabled={working}
+          onClick={() => save({ one_on_one: null, trusted: true })}
+          className={pill}
+          title={t("meetings.vouch.trustHint")}
+        >
+          {t("meetings.vouch.trust")}
+        </button>
+        {vouched && (
+          <button
+            disabled={working}
+            onClick={() => save({ one_on_one: null, trusted: false })}
+            className={pill}
+          >
+            {t("meetings.vouch.stop")}
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className="text-text/55 hover:text-text cursor-pointer"
+        >
+          {t("meetings.transcript.cancel")}
+        </button>
+        {working && (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-text/50" />
+        )}
+      </div>
+    </div>
+  );
+};
+
 const TranscriptSection: React.FC<{
   meeting: MeetingInfo;
   progress: TranscribeProgress | null;
@@ -636,6 +763,8 @@ const TranscriptSection: React.FC<{
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [confirmAgain, setConfirmAgain] = useState(false);
+  const [vouching, setVouching] = useState(false);
+  const closeVouch = useCallback(() => setVouching(false), []);
   const who = useWho();
   const peopleOf = usePeople();
   const [version, setVersion] = useState(0);
@@ -672,7 +801,10 @@ const TranscriptSection: React.FC<{
   const learnVoice = async () => {
     const result = await commands.learnMyVoiceFrom(meeting.id);
     if (result.status === "error") toast.error(result.error);
-    else toast.success(t("meetings.transcript.learnedVoice", { mic: result.data }));
+    else
+      toast.success(
+        t("meetings.transcript.learnedVoice", { mic: result.data }),
+      );
   };
 
   const copy = async () => {
@@ -787,6 +919,15 @@ const TranscriptSection: React.FC<{
             {t("meetings.transcript.learnVoice")}
           </button>
         )}
+        {status === "done" && !busy && meeting.mode === "call" && (
+          <button
+            onClick={() => setVouching(!vouching)}
+            className={linkButton}
+            title={t("meetings.vouch.openHint")}
+          >
+            {t("meetings.vouch.open")}
+          </button>
+        )}
         {status === "done" &&
           !busy &&
           (confirmAgain ? (
@@ -815,6 +956,9 @@ const TranscriptSection: React.FC<{
             </button>
           ))}
       </div>
+      {vouching && status === "done" && !busy && (
+        <VouchVoices meeting={meeting} onClose={closeVouch} />
+      )}
       {banner && <div className="px-1 text-sm text-text/60">{banner}</div>}
       {progressPercent !== null && (
         <div className="mx-1 h-1 rounded-full bg-stone/15 overflow-hidden">

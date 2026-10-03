@@ -833,6 +833,8 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::set_paragraph_speaker,
             meetings::manager::paragraph_parts,
             meetings::manager::merge_meeting_voices,
+            meetings::manager::meeting_vouch,
+            meetings::manager::vouch_meeting,
             meetings::manager::speaker_doubts,
             meetings::extension::extension_status,
             meetings::extension::install_extension_host,
