@@ -6,6 +6,10 @@
 //!
 //!   cargo run --release --example meeting_model_compare -- <model.gguf> <meeting dir> [call|in_person]
 //!
+//! LIKE_APP=<language> runs each chunk as Felix does, with your settings and
+//! vocabulary, held to that language (`auto` for none); otherwise the model
+//! runs bare.
+//!
 //! Writes `transcript.json` (the app's resumable format) and `transcript.txt`
 //! (plain text) into the folder. At the end prints a summary: model, wall
 //! time, real-time factor, chunk total/failed counts, word count, and flags
@@ -74,6 +78,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("loaded in {:.1}s", load_started.elapsed().as_secs_f64());
 
     let options = RunOptions::default();
+    let like_app = std::env::var("LIKE_APP").ok();
+    let setup = match &like_app {
+        Some(_) => {
+            let app_data = Path::new(&std::env::var("HOME")?)
+                .join("Library/Application Support/com.pais.handy");
+            Some(handy_app_lib::eval::Setup::load(&app_data)?)
+        }
+        None => None,
+    };
+    let language = like_app.as_deref().filter(|l| *l != "auto");
     let started = Instant::now();
     let mut audio_secs = 0.0f64;
     let mut chunk_index = 0usize;
@@ -99,8 +113,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let this_index = chunk_index;
             chunk_index += 1;
             audio_secs += audio.len() as f64 / 16_000.0;
-            match session.run(&audio, &options) {
-                Ok(r) => Ok(r.text),
+            let result = match &setup {
+                Some(setup) => setup.transcribe_meeting(&mut session, &audio, language),
+                None => session
+                    .run(&audio, &options)
+                    .map(|r| r.text)
+                    .map_err(|e| e.to_string()),
+            };
+            match result {
+                Ok(text) => Ok(text),
                 Err(e) => {
                     eprintln!(
                         "\nchunk #{this_index} failed ({:.1}s of audio): {e}",

@@ -95,6 +95,7 @@ const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
     auto_gain: null,
     input_boost_db: null,
     transcriber: null,
+    model: null,
     diarize: null,
     detect_calls: null,
     auto_stop: null,
@@ -296,6 +297,7 @@ const settingUpdaters: {
   meeting_input_boost_db: (value) =>
     meetingUpdate({ input_boost_db: value ?? null }),
   meeting_transcriber: (value) => meetingUpdate({ transcriber: value ?? null }),
+  meeting_model: (value) => meetingUpdate({ model: value ?? null }),
   meeting_diarize: (value) => meetingUpdate({ diarize: value ?? null }),
   meeting_detect_calls: (value) =>
     meetingUpdate({ detect_calls: value ?? null }),

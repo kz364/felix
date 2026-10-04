@@ -14,7 +14,7 @@ use super::remote::Remote;
 use super::summary::{self, Cleaned, Summary};
 use super::transcript::{timestamp, Paragraph};
 use crate::managers::audio::AudioRecordingManager;
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{transcribe_meeting_chunk, TranscriptionManager};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -358,31 +358,35 @@ impl MeetingManager {
                 },
                 progress,
             )
-            .map(|_| ());
+            .and_then(|t| blank_wrong_script(id, &dir, t, &languages));
         }
 
-        // The dictation model doesn't know the meeting's languages: use a
-        // downloaded one that does, loaded just for this meeting.
-        match super::language::route(&models, &settings.selected_model, &languages) {
-            super::language::Route::Other(model_id) => {
-                return self.transcribe_with_own_model(
-                    id,
-                    &dir,
-                    &model_id,
-                    &languages,
-                    info.mode,
-                    &vad,
-                    level,
-                    speaker_model.as_deref(),
-                    voiceprint.as_deref(),
-                    progress,
+        // The meeting model (dictation's, unless another is chosen), or, if
+        // it doesn't know the meeting's languages, a downloaded one that does.
+        let meeting_model = super::local_model(&settings, &models);
+        let model_id = match super::language::route(&models, &meeting_model, &languages) {
+            super::language::Route::Other(model_id) => model_id,
+            super::language::Route::NoModel => {
+                log::warn!(
+                    "No downloaded model knows all of {languages:?}; transcribing meeting {id} with {meeting_model} anyway"
                 );
+                meeting_model
             }
-            super::language::Route::NoModel => log::warn!(
-                "No downloaded model knows all of {languages:?}; transcribing meeting {id} with {} anyway",
-                settings.selected_model
-            ),
-            super::language::Route::Current => {}
+            super::language::Route::Current => meeting_model,
+        };
+        if model_id != settings.selected_model {
+            return self.transcribe_with_own_model(
+                id,
+                &dir,
+                &model_id,
+                &languages,
+                info.mode,
+                &vad,
+                level,
+                speaker_model.as_deref(),
+                voiceprint.as_deref(),
+                progress,
+            );
         }
 
         let tm = self
@@ -391,8 +395,9 @@ impl MeetingManager {
             .ok_or_else(|| "Transcription isn't available".to_string())?
             .inner()
             .clone();
-        let engine = format!("local {}", settings.selected_model);
+        let engine = super::local_engine(&settings.selected_model);
         log::info!("Transcribing meeting {id} with {engine}");
+        let language = super::language::pinned(&languages);
         tm.set_meeting_job(true);
         let result = pipeline::run(
             &dir,
@@ -402,12 +407,12 @@ impl MeetingManager {
             speaker_model.as_deref(),
             voiceprint.as_deref(),
             &engine,
-            |audio| self.transcribe_chunk(&tm, audio),
+            |audio| self.transcribe_chunk(&tm, audio, language),
             progress,
         );
         tm.set_meeting_job(false);
         tm.maybe_unload_immediately("meeting transcription");
-        result.map(|_| ())
+        result.and_then(|t| blank_wrong_script(id, &dir, t, &languages))
     }
 
     /// The languages heard in the recording, from a few stretches of each
@@ -495,7 +500,8 @@ impl MeetingManager {
         result
     }
 
-    /// Transcribe with a model other than dictation's, loaded for this job.
+    /// Transcribe with a model other than dictation's, loaded for this job:
+    /// the one chosen for meetings, or one that knows their languages.
     #[allow(clippy::too_many_arguments)]
     fn transcribe_with_own_model(
         &self,
@@ -520,17 +526,13 @@ impl MeetingManager {
             let model = transcribe_cpp::Model::load(&path)
                 .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
             let mut session = model.session().map_err(|e| e.to_string())?;
-            let options = transcribe_cpp::RunOptions {
-                // One language is named; a mix is left to the model, chunk by chunk.
-                language: (languages.len() == 1).then(|| languages[0].clone()),
-                ..Default::default()
-            };
-            let engine = format!("local {model_id} {}", languages.join("+"));
-            log::info!("Transcribing meeting {id} with {engine}");
+            let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+            // One language is named; a mix is left to the model, chunk by chunk.
+            let language = super::language::pinned(languages);
+            let engine = super::local_engine(model_id);
+            log::info!("Transcribing meeting {id} with {engine} in {languages:?}");
             let mut run = |audio: &[f32]| {
-                session
-                    .run(audio, &options)
-                    .map(|t| t.text)
+                transcribe_meeting_chunk(&settings, &mut session, audio, language)
                     .map_err(|e| e.to_string())
             };
             pipeline::run(
@@ -544,7 +546,7 @@ impl MeetingManager {
                 |audio| split_runaways(&mut run, &audio),
                 progress,
             )
-            .map(|_| ())
+            .and_then(|t| blank_wrong_script(id, dir, t, languages))
         })
     }
 
@@ -554,8 +556,9 @@ impl MeetingManager {
         &self,
         tm: &TranscriptionManager,
         audio: Vec<f32>,
+        language: Option<&str>,
     ) -> Result<String, Stopped> {
-        match self.transcribe_once(tm, &audio) {
+        match self.transcribe_once(tm, &audio, language) {
             Err(Stopped::Failed(e)) if ran_away(&e) => {
                 if audio.len() < 2 * MIN_SPLIT_SAMPLES {
                     log::warn!(
@@ -566,8 +569,8 @@ impl MeetingManager {
                 }
                 let cut = quietest_split(&audio);
                 log::warn!("Meeting chunk ran away; splitting it at {cut} and trying again");
-                let first = self.transcribe_chunk(tm, audio[..cut].to_vec())?;
-                let second = self.transcribe_chunk(tm, audio[cut..].to_vec())?;
+                let first = self.transcribe_chunk(tm, audio[..cut].to_vec(), language)?;
+                let second = self.transcribe_chunk(tm, audio[cut..].to_vec(), language)?;
                 Ok(format!("{} {}", first.trim(), second.trim())
                     .trim()
                     .to_string())
@@ -576,11 +579,16 @@ impl MeetingManager {
         }
     }
 
-    fn transcribe_once(&self, tm: &TranscriptionManager, audio: &[f32]) -> Result<String, Stopped> {
+    fn transcribe_once(
+        &self,
+        tm: &TranscriptionManager,
+        audio: &[f32],
+        language: Option<&str>,
+    ) -> Result<String, Stopped> {
         let mut last_error = String::new();
         for _ in 0..CHUNK_ATTEMPTS {
             self.wait_for_turn(tm)?;
-            match tm.transcribe_for_meeting(audio.to_vec()) {
+            match tm.transcribe_for_meeting(audio.to_vec(), language) {
                 Ok(text) => return Ok(text),
                 // The same audio decodes the same way: no point retrying.
                 Err(e) if ran_away(&e.to_string()) => return Err(Stopped::Failed(e.to_string())),
@@ -936,6 +944,22 @@ pub fn split_runaways(
 }
 
 /// The model decoded until its token cap (usually looping on a phrase).
+/// Blank what the model wrote in another script in a meeting held in
+/// Latin-alphabet languages (see [`super::language::wrong_script`]).
+fn blank_wrong_script(
+    id: &str,
+    dir: &std::path::Path,
+    mut t: super::transcript::Transcript,
+    languages: &[String],
+) -> Result<(), Stopped> {
+    let n = super::language::blank_wrong_script(&mut t.segments, languages);
+    if n > 0 {
+        log::info!("Meeting {id}: left out {n} chunks written in another language's script");
+        pipeline::save(dir, &t)?;
+    }
+    Ok(())
+}
+
 fn ran_away(error: &str) -> bool {
     error.contains("output truncated")
 }

@@ -295,6 +295,9 @@ const MEETING_ENGINE_WAIT: Duration = Duration::from_secs(60);
 thread_local! {
     /// Set on the thread running a meeting chunk, so it never waits for itself.
     static IN_MEETING_CHUNK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The language of the meeting whose chunk this thread is running, when
+    /// it's known: it stands in for dictation's language for that chunk.
+    static MEETING_LANGUAGE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 impl TranscriptionManager {
@@ -442,13 +445,20 @@ impl TranscriptionManager {
 
     /// Transcribe one chunk of a meeting. Dictation that starts meanwhile
     /// waits for the chunk instead of finding the engine missing.
-    pub fn transcribe_for_meeting(&self, audio: Vec<f32>) -> Result<String> {
+    /// `language` is the meeting's, when it's held in just one.
+    pub fn transcribe_for_meeting(
+        &self,
+        audio: Vec<f32>,
+        language: Option<&str>,
+    ) -> Result<String> {
         if self.lock_engine().is_none() {
             return Err(anyhow::anyhow!("The transcription engine is busy"));
         }
         self.meeting_lease.store(true, Ordering::Release);
         IN_MEETING_CHUNK.with(|c| c.set(true));
+        MEETING_LANGUAGE.with(|l| *l.borrow_mut() = language.map(str::to_string));
         let result = self.transcribe(audio);
+        MEETING_LANGUAGE.with(|l| *l.borrow_mut() = None);
         IN_MEETING_CHUNK.with(|c| c.set(false));
         // Clear under the lock so a waiter can't miss the wake-up.
         {
@@ -457,6 +467,17 @@ impl TranscriptionManager {
         }
         self.engine_returned.notify_all();
         result
+    }
+
+    /// Dictation is recording into, or running, the model right now: a
+    /// meeting with a model of its own leaves the GPU to it meanwhile.
+    pub fn is_dictation_busy(&self) -> bool {
+        self.active_stream_worker.load(Ordering::Acquire) != 0
+            || self.active_engine_lease.load(Ordering::Acquire) != 0
+            || *self.is_loading.lock().unwrap()
+            || (self.current_model_id.lock().unwrap().is_some()
+                && self.lock_engine().is_none()
+                && !self.meeting_lease.load(Ordering::Acquire))
     }
 
     pub fn is_model_loaded(&self) -> bool {
@@ -1452,7 +1473,10 @@ impl TranscriptionManager {
 
         // Get current settings for configuration, with the rules file's
         // vocabulary.
-        let settings = crate::rules::with_rules(get_settings(&self.app_handle));
+        let mut settings = crate::rules::with_rules(get_settings(&self.app_handle));
+        if let Some(language) = MEETING_LANGUAGE.with(|l| l.borrow().clone()) {
+            settings.selected_language = language;
+        }
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
@@ -2160,23 +2184,28 @@ fn run_once(
     let failed =
         |e: transcribe_cpp::Error| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e);
     let first = session.run(audio, options);
-    let Some(context) = options.context.as_deref() else {
-        return first.map_err(failed);
-    };
-    let echoed = match &first {
-        Ok(t) => echoes_context(&t.text, context),
-        Err(transcribe_cpp::Error::OutputTruncated { .. }) => true,
+    let steered = options.context.is_some() || !options.bias_phrases.is_empty();
+    // Steered by the vocabulary, a model can run on until the length cap
+    // (Cohere boosting on a short chunk) or read the vocabulary back (Qwen3
+    // over near-silence).
+    let ran_off = match &first {
+        Ok(t) => options
+            .context
+            .as_deref()
+            .is_some_and(|context| echoes_context(&t.text, context)),
+        Err(transcribe_cpp::Error::OutputTruncated { .. }) => steered,
         Err(_) => false,
     };
-    if !echoed {
+    if !ran_off {
         return first.map_err(failed);
     }
     warn!(
-        "The speech model read its vocabulary back on {:.1}s of audio; transcribing without it",
+        "The speech model ran off with its vocabulary on {:.1}s of audio; transcribing without it",
         audio.len() as f32 / 16000.0
     );
     let plain = RunOptions {
         context: None,
+        bias_phrases: Vec::new(),
         ..options.clone()
     };
     session.run(audio, &plain).map_err(failed)
@@ -2275,6 +2304,25 @@ fn run_cpp(
 
 /// Transcribe with a transcribe-cpp model the way a dictation does, then
 /// the same text rules (fillers, normalising). For the benchmark.
+/// A meeting chunk on a model loaded for the meeting, run as dictation runs
+/// it (vocabulary, guards, text rules), in the meeting's language when it's
+/// held in just one.
+pub(crate) fn transcribe_meeting_chunk(
+    settings: &AppSettings,
+    session: &mut Session,
+    audio: &[f32],
+    language: Option<&str>,
+) -> Result<String> {
+    match language {
+        Some(language) => {
+            let mut settings = settings.clone();
+            settings.selected_language = language.to_string();
+            transcribe_like_dictation(&settings, session, audio, None)
+        }
+        None => transcribe_like_dictation(settings, session, audio, None),
+    }
+}
+
 pub(crate) fn transcribe_like_dictation(
     settings: &AppSettings,
     session: &mut Session,

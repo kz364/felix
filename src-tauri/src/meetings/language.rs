@@ -75,6 +75,51 @@ pub fn route(models: &[ModelInfo], current_id: &str, needed: &[String]) -> Route
         .map_or(Route::NoModel, |m| Route::Other(m.id.clone()))
 }
 
+/// The language to hold a meeting's chunks to: its only one, if it has just
+/// one. Unpinned, a model guesses per chunk, and a 1 s "uh" can come out as
+/// another language.
+pub fn pinned(languages: &[String]) -> Option<&str> {
+    match languages {
+        [only] => Some(only.as_str()),
+        _ => None,
+    }
+}
+
+/// Languages written in the Latin alphabet.
+const LATIN: &[&str] = &[
+    "af", "ca", "cs", "cy", "da", "de", "en", "es", "et", "eu", "fi", "fr", "ga", "gl", "hr", "hu",
+    "id", "is", "it", "lt", "lv", "ms", "nb", "nl", "nn", "no", "pl", "pt", "ro", "sk", "sl", "sq",
+    "sv", "sw", "tl", "tr", "vi",
+];
+
+/// Text with letters, none of them Latin, in a meeting held only in
+/// Latin-alphabet languages: a filler or laugh the model wrote in another
+/// language ("嗯。"), not something that was said.
+pub fn wrong_script(text: &str, languages: &[String]) -> bool {
+    if languages.is_empty() || !languages.iter().all(|l| LATIN.contains(&l.as_str())) {
+        return false;
+    }
+    let mut letters = text.chars().filter(|c| c.is_alphabetic()).peekable();
+    letters.peek().is_some() && letters.all(|c| !c.is_ascii() && !matches!(c, '\u{c0}'..='\u{24f}'))
+}
+
+/// Blank the segments in the wrong script (see [`wrong_script`]), as if
+/// nothing was heard there. Returns how many.
+pub fn blank_wrong_script(
+    segments: &mut [super::transcript::Segment],
+    languages: &[String],
+) -> usize {
+    let mut n = 0;
+    for s in segments
+        .iter_mut()
+        .filter(|s| wrong_script(&s.text, languages))
+    {
+        s.text.clear();
+        n += 1;
+    }
+    n
+}
+
 /// A downloaded model that can find the spoken language, for listening to
 /// a recording whose languages weren't chosen: the most accurate one.
 pub fn detector(models: &[ModelInfo]) -> Option<&ModelInfo> {
@@ -163,6 +208,10 @@ fn name(code: &str) -> &str {
 mod tests {
     use super::*;
 
+    fn langs(l: &[&str]) -> Vec<String> {
+        l.iter().map(|s| s.to_string()).collect()
+    }
+
     fn model(id: &str, langs: &[&str], acc: f32, downloaded: bool) -> ModelInfo {
         let mut m: ModelInfo = serde_json::from_value(serde_json::json!({
             "id": id, "name": id, "description": "", "filename": "", "source": {"Url": {"url": "", "sha256": null}},
@@ -184,7 +233,6 @@ mod tests {
             model("whisper", &["en", "id", "ms"], 0.8, true),
             model("qwen", &["en", "id"], 0.85, false),
         ];
-        let langs = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(route(&models, "cohere", &langs(&["en"])), Route::Current);
         assert_eq!(
             route(&models, "cohere", &langs(&["id", "en"])),
@@ -206,5 +254,25 @@ mod tests {
             prompt_for(&["id".into(), "en".into()]).as_deref(),
             Some("The speakers switch between Indonesian and English.")
         );
+    }
+
+    #[test]
+    fn fillers_in_another_script_are_caught_only_in_latin_meetings() {
+        let en = langs(&["en"]);
+        assert!(wrong_script("嗯。", &en));
+        assert!(wrong_script("الله، الله.", &en));
+        assert!(!wrong_script("Uh...", &en));
+        assert!(!wrong_script("Café crème", &langs(&["fr"])));
+        assert!(!wrong_script("…", &en));
+        assert!(!wrong_script("嗯。", &langs(&["zh"])));
+        assert!(!wrong_script("嗯。", &langs(&["en", "zh"])));
+        assert!(!wrong_script("嗯。", &[]));
+    }
+
+    #[test]
+    fn only_a_single_language_is_pinned() {
+        assert_eq!(pinned(&langs(&["en"])), Some("en"));
+        assert_eq!(pinned(&langs(&["en", "id"])), None);
+        assert_eq!(pinned(&[]), None);
     }
 }

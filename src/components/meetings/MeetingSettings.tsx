@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type MeetingLlm, type MeetingTranscriber } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
+import { useModelStore } from "../../stores/modelStore";
 import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Slider } from "../ui/Slider";
@@ -11,6 +12,42 @@ import {
   getLanguageLabel,
   MODEL_CAPABILITY_LANGUAGES,
 } from "../../lib/constants/languages";
+
+/** The model on this Mac that meetings use: dictation's, or one of their own. */
+const MeetingModel: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const { models, currentModel } = useModelStore();
+  const dictation = models.find((m) => m.id === currentModel)?.name ?? "";
+  const own = models.filter(
+    (m) =>
+      m.is_downloaded &&
+      m.engine_type === "TranscribeCpp" &&
+      m.id !== currentModel,
+  );
+  const chosen = getSetting("meeting_model") ?? "";
+  return (
+    <SettingContainer
+      title={t("meetings.settings.model.title")}
+      description={t("meetings.settings.model.description")}
+      descriptionMode="tooltip"
+      grouped
+    >
+      <Dropdown
+        options={[
+          {
+            value: "",
+            label: t("meetings.settings.model.dictation", { model: dictation }),
+          },
+          ...own.map((m) => ({ value: m.id, label: m.name })),
+        ]}
+        selectedValue={own.some((m) => m.id === chosen) ? chosen : ""}
+        onSelect={(v) => updateSetting("meeting_model", v)}
+        disabled={isUpdating("meeting_model")}
+      />
+    </SettingContainer>
+  );
+};
 
 /** How meetings are transcribed, told apart, tidied and summarised. */
 export const MeetingSettings: React.FC = () => {
@@ -70,6 +107,7 @@ export const MeetingSettings: React.FC = () => {
           disabled={isUpdating("meeting_transcriber")}
         />
       </SettingContainer>
+      {(transcriber === "auto" || transcriber === "local") && <MeetingModel />}
       <MeetingLanguages />
       <ToggleSwitch
         checked={getSetting("meeting_diarize") ?? true}

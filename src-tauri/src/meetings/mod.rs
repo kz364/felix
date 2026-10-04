@@ -62,7 +62,7 @@ pub enum MeetingTranscriber {
     /// model on this Mac.
     #[default]
     Auto,
-    /// The model selected for dictation, on this Mac.
+    /// The model on this Mac chosen for meetings (see [`local_model`]).
     Local,
     /// OpenAI's transcription API, with the OpenAI key from cleanup providers.
     Openai,
@@ -74,3 +74,35 @@ pub enum MeetingTranscriber {
     Elevenlabs,
 }
 pub use manager::MeetingManager;
+
+/// The model on this Mac that transcribes meetings: the one chosen for them,
+/// if it's downloaded and runs through transcribe.cpp, otherwise dictation's.
+pub fn local_model(
+    settings: &crate::settings::AppSettings,
+    models: &[crate::managers::model::ModelInfo],
+) -> String {
+    let chosen = &settings.meeting_model;
+    if chosen.is_empty() || *chosen == settings.selected_model {
+        return settings.selected_model.clone();
+    }
+    let usable = models.iter().any(|m| {
+        m.id == *chosen
+            && m.is_downloaded
+            && matches!(
+                m.engine_type,
+                crate::managers::model::EngineType::TranscribeCpp
+            )
+    });
+    if usable {
+        chosen.clone()
+    } else {
+        log::warn!("The meeting model {chosen} isn't downloaded; meetings use the dictation model");
+        settings.selected_model.clone()
+    }
+}
+
+/// How a meeting transcript made on this Mac by `model` is labelled, so the
+/// final pass reuses only what the live pass heard with the same model.
+pub fn local_engine(model: &str) -> String {
+    format!("local {model}")
+}

@@ -2359,6 +2359,11 @@ meeting_input_boost_db?: number;
  */
 meeting_transcriber?: MeetingTranscriber; 
 /**
+ * The model on this Mac that transcribes meetings. Empty: the dictation
+ * model, sharing it with dictation instead of loading a second one.
+ */
+meeting_model?: string; 
+/**
  * Tell voices apart: everyone in an in-person meeting, the other side
  * (and anyone in the room) on a call.
  */
@@ -2897,7 +2902,11 @@ export type MeetingPanelState = { expanded: boolean }
 /**
  * Meeting settings to change; fields left out stay as they are.
  */
-export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
+export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean | null; summary_prompt: string | null; auto_gain: boolean | null; input_boost_db: number | null; transcriber: MeetingTranscriber | null; 
+/**
+ * A model id, or empty for the dictation model.
+ */
+model: string | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */

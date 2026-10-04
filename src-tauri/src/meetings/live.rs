@@ -465,8 +465,37 @@ fn tell_voices(dir: &Path, track: &mut Track, model: &Path) -> Result<(), String
 /// What makes the live transcript.
 enum Engine {
     Remote(Remote),
-    /// The dictation model, when dictation isn't using it.
-    Local(AppHandle),
+    /// The dictation model, when dictation isn't using it, held to the
+    /// meeting's language if it has just one.
+    Local(AppHandle, Option<String>),
+    /// A model loaded for meetings, set aside while dictation runs.
+    Own {
+        app: AppHandle,
+        session: std::sync::Mutex<transcribe_cpp::Session>,
+        settings: Box<crate::settings::AppSettings>,
+        language: Option<String>,
+    },
+}
+
+/// Load the meeting model for the live pass.
+fn own_engine(
+    app: &AppHandle,
+    settings: &crate::settings::AppSettings,
+    model_id: &str,
+) -> Result<Engine, String> {
+    let path = app
+        .try_state::<Arc<crate::managers::model::ModelManager>>()
+        .ok_or("Models aren't available")?
+        .get_model_path(model_id)
+        .map_err(|e| e.to_string())?;
+    let model = transcribe_cpp::Model::load(&path).map_err(|e| e.to_string())?;
+    let session = model.session().map_err(|e| e.to_string())?;
+    Ok(Engine::Own {
+        app: app.clone(),
+        session: std::sync::Mutex::new(session),
+        settings: Box::new(settings.clone()),
+        language: super::language::pinned(&settings.meeting_languages).map(str::to_string),
+    })
 }
 
 /// The model couldn't take a piece this round; try it again next round.
@@ -479,7 +508,31 @@ impl Engine {
                 Ok(tauri::async_runtime::block_on(remote.transcribe(audio))
                     .map_err(|e| e.to_string()))
             }
-            Engine::Local(app) => {
+            Engine::Own {
+                app,
+                session,
+                settings,
+                language,
+            } => {
+                let recording = app
+                    .try_state::<Arc<AudioRecordingManager>>()
+                    .is_some_and(|a| a.is_recording());
+                let dictating = app
+                    .try_state::<Arc<TranscriptionManager>>()
+                    .is_some_and(|tm| tm.is_dictation_busy());
+                if recording || dictating {
+                    return Err(Busy);
+                }
+                let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
+                Ok(crate::managers::transcription::transcribe_meeting_chunk(
+                    settings,
+                    &mut session,
+                    audio,
+                    language.as_deref(),
+                )
+                .map_err(|e| e.to_string()))
+            }
+            Engine::Local(app, language) => {
                 let recording = app
                     .try_state::<Arc<AudioRecordingManager>>()
                     .is_some_and(|a| a.is_recording());
@@ -493,7 +546,7 @@ impl Engine {
                     return Err(Busy);
                 }
                 Ok(tm
-                    .transcribe_for_meeting(audio.to_vec())
+                    .transcribe_for_meeting(audio.to_vec(), language.as_deref())
                     .map_err(|e| e.to_string()))
             }
         }
@@ -503,16 +556,20 @@ impl Engine {
 /// While recording: keep `live.json` up to date until `stop` is set.
 pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBool>) {
     let settings = crate::rules::with_rules(crate::settings::get_settings(app));
-    let (engine, engine_name) = match Remote::from_settings(&settings) {
-        Ok(Some(remote)) => {
-            let remote = remote.for_languages(&settings.meeting_languages);
-            let name = format!("{} {}", remote.name, remote.model);
-            (Engine::Remote(remote), name)
-        }
-        _ => (
-            Engine::Local(app.clone()),
-            format!("local {}", settings.selected_model),
+    // The remote engine, or the local model to use; a model of the meeting's
+    // own is loaded on the live thread, not here.
+    let (remote, local_model) = match Remote::from_settings(&settings) {
+        Ok(Some(remote)) => (
+            Some(remote.for_languages(&settings.meeting_languages)),
+            None,
         ),
+        _ => {
+            let models = app
+                .try_state::<Arc<crate::managers::model::ModelManager>>()
+                .map(|m| m.get_available_models())
+                .unwrap_or_default();
+            (None, Some(super::local_model(&settings, &models)))
+        }
     };
     let vad = match app.path().resolve(
         "resources/models/silero_vad_v4.onnx",
@@ -553,6 +610,31 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(dir.clone(), None);
+            let language = super::language::pinned(&settings.meeting_languages).map(str::to_string);
+            let shared = || {
+                (
+                    Engine::Local(app.clone(), language.clone()),
+                    super::local_engine(&settings.selected_model),
+                )
+            };
+            let (engine, engine_name) = match (remote, local_model) {
+                (Some(remote), _) => {
+                    let name = format!("{} {}", remote.name, remote.model);
+                    (Engine::Remote(remote), name)
+                }
+                (None, Some(model)) if model != settings.selected_model => {
+                    match own_engine(&app, &settings, &model) {
+                        Ok(engine) => (engine, super::local_engine(&model)),
+                        Err(e) => {
+                            log::warn!(
+                                "Couldn't load the meeting model {model}, using dictation's: {e}"
+                            );
+                            shared()
+                        }
+                    }
+                }
+                _ => shared(),
+            };
             let tracks = run(
                 &app,
                 &dir,

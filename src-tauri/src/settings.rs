@@ -773,6 +773,10 @@ pub struct AppSettings {
     /// Which engine transcribes meetings: the local model or a provider.
     #[serde(default)]
     pub meeting_transcriber: crate::meetings::MeetingTranscriber,
+    /// The model on this Mac that transcribes meetings. Empty: the dictation
+    /// model, sharing it with dictation instead of loading a second one.
+    #[serde(default)]
+    pub meeting_model: String,
     /// The languages meetings are held in (ISO codes). Empty: found from
     /// the recording. Meetings go to a model that knows them all.
     #[serde(default)]
@@ -1564,6 +1568,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_gain: true,
         meeting_input_boost_db: 0.0,
         meeting_transcriber: Default::default(),
+        meeting_model: String::new(),
         meeting_languages: Vec::new(),
         meeting_diarize: true,
         meeting_detect_calls: true,

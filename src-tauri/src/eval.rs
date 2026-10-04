@@ -87,6 +87,23 @@ impl Setup {
         .map_err(|e| e.to_string())
     }
 
+    /// A meeting chunk on a model loaded for meetings, as Felix runs it
+    /// (vocabulary, guards, text rules), held to `language` if given.
+    pub fn transcribe_meeting(
+        &self,
+        session: &mut Session,
+        audio: &[f32],
+        language: Option<&str>,
+    ) -> Result<String, String> {
+        crate::managers::transcription::transcribe_meeting_chunk(
+            &self.settings,
+            session,
+            audio,
+            language,
+        )
+        .map_err(|e| e.to_string())
+    }
+
     /// What would be pasted into `app` (`bundle_id`): rules, the cleanup
     /// level's AI pass with your provider and styling. Also whether the AI
     /// pass was used. Not concurrent with another app's cleanup.

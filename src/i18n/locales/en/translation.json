@@ -1334,13 +1334,18 @@
       "open": "Settings",
       "transcriber": {
         "title": "Transcribe with",
-        "description": "Meetings are transcribed in the cloud when they can be: it's much more accurate on long calls with several people. Automatic uses OpenAI or Groq with the API key from Models → Accounts, and this Mac if there's no key. This Mac uses your dictation model, or another downloaded model that knows the meeting's languages, and nothing leaves the Mac.",
+        "description": "Meetings are transcribed in the cloud when they can be: it's much more accurate on long calls with several people. Automatic uses OpenAI or Groq with the API key from Models → Accounts, and this Mac if there's no key. This Mac uses the model chosen below (or another downloaded one if that one doesn't know the meeting's languages), and nothing leaves the Mac.",
         "auto": "Automatic (cloud first)",
         "local": "This Mac",
         "openai": "OpenAI",
         "groq": "Groq",
         "openrouter": "OpenRouter ({{model}})",
         "elevenlabs": "ElevenLabs Scribe v2"
+      },
+      "model": {
+        "title": "Model on this Mac",
+        "description": "The downloaded model that transcribes meetings on this Mac. The dictation model shares memory with dictation; another model is loaded alongside it during meetings and makes way while you dictate.",
+        "dictation": "Same as dictation ({{model}})"
       },
       "languages": {
         "title": "Meeting languages",

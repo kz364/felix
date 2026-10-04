@@ -1610,6 +1610,8 @@ pub struct MeetingSettingsUpdate {
     pub auto_gain: Option<bool>,
     pub input_boost_db: Option<f32>,
     pub transcriber: Option<super::MeetingTranscriber>,
+    /// A model id, or empty for the dictation model.
+    pub model: Option<String>,
     pub languages: Option<Vec<String>>,
     pub diarize: Option<bool>,
     pub detect_calls: Option<bool>,
@@ -1643,6 +1645,9 @@ pub fn change_meeting_settings(
     }
     if let Some(v) = update.transcriber {
         settings.meeting_transcriber = v;
+    }
+    if let Some(v) = update.model {
+        settings.meeting_model = v;
     }
     if let Some(v) = update.languages {
         settings.meeting_languages = v;
