@@ -12,6 +12,7 @@ pub use crate::benchmark::{Guess, Heard, Record};
 
 pub struct Setup {
     settings: AppSettings,
+    piece_samples: Option<usize>,
 }
 
 impl Setup {
@@ -26,6 +27,7 @@ impl Setup {
         crate::rules::read_from(app_data);
         Ok(Self {
             settings: crate::rules::with_rules(crate::settings::from_store_value(stored)),
+            piece_samples: None,
         })
     }
 
@@ -69,10 +71,20 @@ impl Setup {
         crate::managers::transcription::finish_cloud_text_with(&self.settings, raw)
     }
 
+    /// Cut local runs into pieces of at most this many seconds, at pauses.
+    pub fn cut_local_runs(&mut self, seconds: f32) {
+        self.piece_samples = Some((seconds * 16_000.0) as usize);
+    }
+
     /// Transcribe with a model on this Mac as a dictation would.
     pub fn transcribe_local(&self, session: &mut Session, audio: &[f32]) -> Result<String, String> {
-        crate::managers::transcription::transcribe_like_dictation(&self.settings, session, audio)
-            .map_err(|e| e.to_string())
+        crate::managers::transcription::transcribe_like_dictation(
+            &self.settings,
+            session,
+            audio,
+            self.piece_samples,
+        )
+        .map_err(|e| e.to_string())
     }
 
     /// What would be pasted into `app` (`bundle_id`): rules, the cleanup

@@ -1424,6 +1424,8 @@ impl ShortcutAction for TranscribeAction {
         };
         if model_supports_streaming {
             tm.start_stream();
+        } else if !uses_cloud_transcription(&settings) {
+            tm.start_pieces();
         }
         let plan_elapsed = plan_started.elapsed();
 
@@ -1677,7 +1679,7 @@ impl ShortcutAction for TranscribeAction {
                     // running, finalize it and use its text (all audio was already
                     // fed to the stream); otherwise batch-transcribe the samples.
                     let transcription_time = Instant::now();
-                    let transcription_result = match tm.finalize_stream() {
+                    let transcription_result = match tm.finalize_stream(&samples) {
                         // A finalized stream with usable text wins. An empty result
                         // (no active stream, produced nothing, or a finalize error
                         // after the engine was returned) falls back to a full batch

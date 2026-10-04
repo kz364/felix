@@ -101,8 +101,10 @@ pub struct StreamPhaseEvent {
 enum StreamCmd {
     Feed(Vec<f32>),
     /// Flush the stream and reply with the final text, or `None` if no stream
-    /// was ever active (caller should fall back to batch transcription).
-    Finalize(mpsc::Sender<Option<FinalizedStreamText>>),
+    /// was ever active (caller should fall back to batch transcription). Has
+    /// the recording's final audio, which pieces transcribed while recording
+    /// must match.
+    Finalize(mpsc::Sender<Option<FinalizedStreamText>>, Vec<f32>),
     Cancel,
 }
 
@@ -1089,7 +1091,7 @@ impl TranscriptionManager {
                             }
                         }
                     }
-                    StreamCmd::Finalize(reply) => {
+                    StreamCmd::Finalize(reply, _) => {
                         let finalize_start = Instant::now();
                         let result = match stream.finalize() {
                             // After finalize the committed prefix holds the full
@@ -1167,6 +1169,160 @@ impl TranscriptionManager {
         // the engine has been returned to the pool.
     }
 
+    /// For models that can't stream: transcribe the dictation in pieces while
+    /// it's recorded, so stopping only leaves the last stretch. Whenever the
+    /// audio so far holds more than a piece, the piece up to its quietest
+    /// pause is transcribed; [`Self::finalize_stream`] then does the rest and
+    /// returns the whole text. It returns nothing (so the recording is
+    /// transcribed whole, as before) for models without a piece size, when
+    /// nothing was cut yet, or if anything doesn't add up.
+    pub fn start_pieces(&self) {
+        if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
+            warn!("start_pieces called while a stream worker is already active");
+            return;
+        }
+        let worker_id = self.next_stream_worker_id.fetch_add(1, Ordering::Relaxed);
+        if self
+            .active_stream_worker
+            .compare_exchange(0, worker_id, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            warn!("start_pieces lost a race with another stream worker");
+            return;
+        }
+        let rx = self.router.open();
+        self.stream_active.store(false, Ordering::Release);
+
+        let manager = self.clone();
+        thread::spawn(move || manager.run_piece_worker(rx, worker_id));
+    }
+
+    fn run_piece_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
+        let _worker = StreamWorkerGuard {
+            worker_id,
+            active_stream_worker: Arc::clone(&self.active_stream_worker),
+            active_engine_lease: Arc::clone(&self.active_engine_lease),
+            stream_active: Arc::clone(&self.stream_active),
+        };
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            while *is_loading {
+                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+            }
+        }
+        let model_id = self.get_current_model().unwrap_or_default();
+        if self
+            .active_engine_lease
+            .compare_exchange(0, worker_id, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            self.router.clear();
+            drain_until_finalize(rx);
+            return;
+        }
+        let Some(mut engine) = self.lock_engine_after_meeting().take() else {
+            let _ = self.active_engine_lease.compare_exchange(
+                worker_id,
+                0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            self.router.clear();
+            drain_until_finalize(rx);
+            return;
+        };
+        let settings = crate::rules::with_rules(get_settings(&self.app_handle));
+        let language =
+            effective_language_for_model(&settings, self.model_manager.as_ref(), &model_id);
+        let plan = match &engine {
+            LoadedEngine::TranscribeCpp(session) => live_piece_samples(&session.model().arch())
+                .map(|piece| (cpp_dictation_plan(&settings, session, &language), piece)),
+            _ => None,
+        };
+        let Some((plan, piece)) = plan else {
+            self.return_engine(engine, &model_id);
+            drain_until_finalize(rx);
+            return;
+        };
+
+        let mut pieces = Pieces::default();
+        // Set when the engine panicked: it isn't returned to the pool.
+        let mut broken = false;
+        let mut reply = None;
+        while let Ok(cmd) = rx.recv() {
+            match cmd {
+                StreamCmd::Feed(pcm) => {
+                    self.touch_activity();
+                    pieces.fed.extend_from_slice(&pcm);
+                    while !pieces.failed {
+                        let Some(cut) = pieces.next_cut(piece) else {
+                            break;
+                        };
+                        let LoadedEngine::TranscribeCpp(session) = &mut engine else {
+                            break;
+                        };
+                        let rest = &pieces.fed[pieces.covered..];
+                        let started = Instant::now();
+                        let run = catch_unwind(AssertUnwindSafe(|| {
+                            run_once(session, &rest[..cut], &plan.options)
+                        }));
+                        match run {
+                            Ok(Ok(t)) => {
+                                debug!(
+                                    "Transcribed a {:.1}s piece while recording in {:?}",
+                                    cut as f32 / 16000.0,
+                                    started.elapsed()
+                                );
+                                if pieces.detected.is_none() {
+                                    pieces.detected = t.language;
+                                }
+                                let text = t.text.trim().to_string();
+                                if !text.is_empty() {
+                                    pieces.texts.push(text);
+                                }
+                                pieces.covered += cut;
+                            }
+                            Ok(Err(e)) => {
+                                warn!("Transcribing a piece while recording failed: {e}");
+                                pieces.failed = true;
+                            }
+                            Err(_) => {
+                                error!("Transcribing a piece while recording panicked");
+                                pieces.failed = true;
+                                broken = true;
+                            }
+                        }
+                    }
+                }
+                StreamCmd::Finalize(tx, samples) => {
+                    let result = match &mut engine {
+                        LoadedEngine::TranscribeCpp(session) if !broken => {
+                            catch_unwind(AssertUnwindSafe(|| {
+                                pieces.finish(session, &samples, &plan, &settings)
+                            }))
+                            .unwrap_or_else(|_| {
+                                broken = true;
+                                None
+                            })
+                        }
+                        _ => None,
+                    };
+                    reply = Some((tx, result));
+                    break;
+                }
+                StreamCmd::Cancel => break,
+            }
+        }
+        if broken {
+            error!("Dropping the speech model after a panic; it reloads on next use");
+        } else {
+            self.return_engine(engine, &model_id);
+        }
+        if let Some((tx, result)) = reply {
+            let _ = tx.send(result);
+        }
+    }
+
     /// Return the leased engine to the mutex, unless the model was switched or
     /// unloaded during transcription (in which case the stale engine is dropped).
     fn return_engine(&self, engine: LoadedEngine, expected_model_id: &str) {
@@ -1190,12 +1346,15 @@ impl TranscriptionManager {
     /// to batch transcription. `Err` means finalize itself failed or timed out.
     /// A timeout may still leave the worker holding the engine, so callers
     /// should surface it instead of immediately starting a batch fallback.
-    pub fn finalize_stream(&self) -> Result<Option<String>> {
+    pub fn finalize_stream(&self, samples: &[f32]) -> Result<Option<String>> {
         let Some(tx) = self.router.take() else {
             return Ok(None);
         };
         let (reply_tx, reply_rx) = mpsc::channel();
-        if tx.send(StreamCmd::Finalize(reply_tx)).is_err() {
+        if tx
+            .send(StreamCmd::Finalize(reply_tx, samples.to_vec()))
+            .is_err()
+        {
             return Ok(None);
         }
         let finalized = match reply_rx.recv_timeout(STREAM_FINALIZE_REPLY_TIMEOUT) {
@@ -1317,29 +1476,6 @@ impl TranscriptionManager {
             );
         }
 
-        // Whether the loaded transcribe-cpp model advertises
-        // Feature::InitialPrompt. Informational (logged below); the whisper
-        // run extension and the fuzzy-correction skip are gated on
-        // `model_is_whisper` instead, since non-whisper archs can advertise
-        // the feature while rejecting the whisper-kind extension.
-        let mut model_takes_initial_prompt = false;
-        // Whether the loaded model is actually whisper-family (arch string).
-        // Non-whisper archs (e.g. Voxtral Small) can advertise
-        // Feature::InitialPrompt yet reject the whisper-kind run extension
-        // with INVALID_ARG, so the whisper extension must be gated on the
-        // arch, not on the feature (see #1601).
-        let mut model_is_whisper = false;
-        // Whether the model accepts free-text recognition context (Qwen3-ASR,
-        // via the vendored transcribe.cpp patch). Custom words are passed as
-        // background vocabulary; fuzzy post-correction still runs since the
-        // bias is soft.
-        let mut model_takes_context = false;
-        // Whether the model supports decode-time keyword boosting (Cohere,
-        // Canary-Qwen via the vendored transcribe.cpp patch).
-        let mut model_takes_boost = false;
-        // Whether long audio goes in pieces (see `SPLIT_LONG_AUDIO_ARCHS`).
-        let mut model_splits_long_audio = false;
-
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
@@ -1366,7 +1502,6 @@ impl TranscriptionManager {
             // ModelManager copy. The whisper run extension is kind-tagged, so
             // non-whisper archs (parakeet, voxtral, …) reject it with
             // INVALID_ARG; attach it — and translate — only where supported.
-            let mut model_supports_translate = false;
             let mut model_languages = self
                 .model_manager
                 .get_model_info(&active_model)
@@ -1378,19 +1513,13 @@ impl TranscriptionManager {
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
                 let caps = model.capabilities();
-                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
-                model_is_whisper = model.arch() == "whisper";
-                model_takes_context = model.supports(Feature::Context);
-                model_takes_boost = model.supports(Feature::KeywordBoost);
-                model_splits_long_audio = SPLIT_LONG_AUDIO_ARCHS.contains(&model.arch().as_str());
-                model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
                     "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
                     settings.selected_model,
                     model.backend(),
-                    model_takes_initial_prompt,
-                    model_supports_translate,
+                    model.supports(Feature::InitialPrompt),
+                    caps.supports_translate,
                     model_languages
                 );
             }
@@ -1398,48 +1527,21 @@ impl TranscriptionManager {
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
                     LoadedEngine::TranscribeCpp(session) => {
-                        // Custom words become the initial prompt ONLY for models
-                        // that accept one (whisper family). Attaching the
-                        // whisper run extension to a non-whisper arch is rejected
-                        // with INVALID_ARG, so skip it there and let the fuzzy
-                        // post-correction handle custom words instead.
-                        let family = if settings.custom_words.is_empty() || !model_is_whisper {
-                            None
-                        } else {
-                            Some(RunExtension::Whisper(WhisperRunOptions {
-                                initial_prompt: Some(settings.custom_words.join(", ")),
-                                ..Default::default()
-                            }))
-                        };
-
-                        let run_plan = transcribe_cpp_run_plan(
-                            settings.translate_to_english,
-                            &validated_language,
-                            &model_languages,
-                            model_supports_translate,
-                        );
-                        output_was_translated = run_plan.target_language.as_deref() == Some("en");
-                        applied_language_hint = run_plan.language.clone();
-
-                        let run_options = cpp_run_options(
-                            run_plan,
-                            &settings.custom_words,
-                            family,
-                            model_takes_context,
-                            model_takes_boost,
-                        );
+                        let plan = cpp_dictation_plan(&settings, session, &validated_language);
+                        output_was_translated = plan.translated;
+                        applied_language_hint = plan.options.language.clone();
 
                         debug!(
                             "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}, context={}, boost_phrases={}",
-                            run_options.task,
-                            run_options.language,
-                            run_options.family.is_some(),
-                            run_options.context.is_some(),
-                            run_options.bias_phrases.len()
+                            plan.options.task,
+                            plan.options.language,
+                            plan.options.family.is_some(),
+                            plan.options.context.is_some(),
+                            plan.options.bias_phrases.len()
                         );
 
                         let (text, detected) =
-                            run_cpp(session, &audio, &run_options, model_splits_long_audio)?;
+                            run_cpp(session, &audio, &plan.options, plan.max_piece)?;
                         // Whisper's audio-based LID (auto mode only;
                         // `None` when a language hint was passed).
                         model_detected_language = detected;
@@ -1902,21 +2004,226 @@ fn cpp_run_options(
     }
 }
 
+/// Longest piece of a dictation a model gets while you're still talking
+/// (see [`TranscriptionManager::start_pieces`]); `None`: transcribed whole
+/// after you stop.
+fn live_piece_samples(arch: &str) -> Option<usize> {
+    match arch {
+        // The same pieces they get after you stop, so the same text, sooner.
+        a if SPLIT_LONG_AUDIO_ARCHS.contains(&a) => Some(PIECE_SAMPLES),
+        "qwen3_asr" => Some(QWEN_LIVE_PIECE_SAMPLES),
+        _ => None,
+    }
+}
+
+/// Qwen3-ASR spends its time writing (each word is a pass of the language
+/// model), so a dictation is cut into pieces of at most this length while you
+/// talk.
+const QWEN_LIVE_PIECE_SAMPLES: usize = 20 * 16000;
+
+/// A dictation transcribed in pieces while recording.
+#[derive(Default)]
+struct Pieces {
+    /// Everything recorded so far.
+    fed: Vec<f32>,
+    /// How much of `fed` the texts cover.
+    covered: usize,
+    texts: Vec<String>,
+    detected: Option<String>,
+    failed: bool,
+}
+
+impl Pieces {
+    /// Length of the next piece to transcribe, once the audio not yet
+    /// covered holds more than a piece: cut where [`split_at_pauses`] would
+    /// cut the whole recording, so the pieces are the same.
+    fn next_cut(&self, piece: usize) -> Option<usize> {
+        let rest = &self.fed[self.covered..];
+        (rest.len() > piece).then(|| split_at_pauses(rest, piece)[0].len())
+    }
+
+    /// The whole text, after transcribing what's left of the final audio, or
+    /// `None` when nothing was cut while recording or the final audio doesn't
+    /// start with what was transcribed (the caller transcribes it whole).
+    fn finish(
+        &mut self,
+        session: &mut Session,
+        samples: &[f32],
+        plan: &CppPlan,
+        settings: &AppSettings,
+    ) -> Option<FinalizedStreamText> {
+        if self.failed || self.covered == 0 {
+            return None;
+        }
+        if !samples.starts_with(&self.fed[..self.covered]) {
+            warn!(
+                "The recording doesn't match what was transcribed while recording; transcribing it whole"
+            );
+            return None;
+        }
+        let started = Instant::now();
+        let tail = &samples[self.covered..];
+        if !tail.is_empty() {
+            match run_cpp(session, tail, &plan.options, plan.max_piece) {
+                Ok((text, detected)) => {
+                    if self.detected.is_none() {
+                        self.detected = detected;
+                    }
+                    if !text.trim().is_empty() {
+                        self.texts.push(text.trim().to_string());
+                    }
+                }
+                Err(e) => {
+                    warn!("Transcribing the last piece failed: {e}");
+                    return None;
+                }
+            }
+        }
+        info!(
+            "Transcribed {} piece(s) while recording; the last {:.1}s took {:?}",
+            self.texts.len(),
+            tail.len() as f32 / 16000.0,
+            started.elapsed()
+        );
+        Some(FinalizedStreamText {
+            text: self.texts.join(" "),
+            output_language: with_model_detected_language(
+                resolve_output_language_evidence(
+                    settings,
+                    plan.options.language.as_deref(),
+                    &plan.languages,
+                    plan.translated,
+                ),
+                self.detected.take(),
+            ),
+            supported_languages: plan.languages.clone(),
+        })
+    }
+}
+
+/// How a transcribe-cpp model runs on a dictation.
+struct CppPlan {
+    /// Language plan plus your vocabulary in the form the model takes.
+    options: RunOptions,
+    /// Longest piece long audio is cut into, for the models that need it.
+    max_piece: Option<usize>,
+    /// Whether the output is translated to English.
+    translated: bool,
+    languages: Vec<String>,
+}
+
+fn cpp_dictation_plan(settings: &AppSettings, session: &Session, language: &str) -> CppPlan {
+    let model = session.model();
+    let caps = model.capabilities();
+    // Custom words become the initial prompt ONLY for models that accept one
+    // (whisper family). Non-whisper archs can advertise
+    // Feature::InitialPrompt yet reject the whisper-kind run extension with
+    // INVALID_ARG, so gate on the arch (see #1601).
+    let family = (model.arch() == "whisper" && !settings.custom_words.is_empty()).then(|| {
+        RunExtension::Whisper(WhisperRunOptions {
+            initial_prompt: Some(settings.custom_words.join(", ")),
+            ..Default::default()
+        })
+    });
+    let run_plan = transcribe_cpp_run_plan(
+        settings.translate_to_english,
+        language,
+        &caps.languages,
+        caps.supports_translate,
+    );
+    let translated = run_plan.target_language.as_deref() == Some("en");
+    CppPlan {
+        options: cpp_run_options(
+            run_plan,
+            &settings.custom_words,
+            family,
+            model.supports(Feature::Context),
+            model.supports(Feature::KeywordBoost),
+        ),
+        max_piece: SPLIT_LONG_AUDIO_ARCHS
+            .contains(&model.arch().as_str())
+            .then_some(PIECE_SAMPLES),
+        translated,
+        languages: caps.languages,
+    }
+}
+
+/// One transcribe-cpp run. With recognition context (Qwen3-ASR's vocabulary)
+/// a near-silent clip can make the model read the context back
+/// ("Vocabulary: Claude, …") until it runs out of room; then the clip is run
+/// again without it.
+fn run_once(
+    session: &mut Session,
+    audio: &[f32],
+    options: &RunOptions,
+) -> Result<transcribe_cpp::Transcript> {
+    let failed =
+        |e: transcribe_cpp::Error| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e);
+    let first = session.run(audio, options);
+    let Some(context) = options.context.as_deref() else {
+        return first.map_err(failed);
+    };
+    let echoed = match &first {
+        Ok(t) => echoes_context(&t.text, context),
+        Err(transcribe_cpp::Error::OutputTruncated { .. }) => true,
+        Err(_) => false,
+    };
+    if !echoed {
+        return first.map_err(failed);
+    }
+    warn!(
+        "The speech model read its vocabulary back on {:.1}s of audio; transcribing without it",
+        audio.len() as f32 / 16000.0
+    );
+    let plain = RunOptions {
+        context: None,
+        ..options.clone()
+    };
+    session.run(audio, &plain).map_err(failed)
+}
+
+/// Whether a transcript repeats the recognition context: it starts with the
+/// context's label, or has three of its terms in a row.
+fn echoes_context(text: &str, context: &str) -> bool {
+    let norm = |s: &str| {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let text = norm(text);
+    let (label, terms) = context.split_once(':').unwrap_or(("", context));
+    let label = norm(label);
+    if !label.is_empty() && (text == label || text.starts_with(&format!("{label} "))) {
+        return true;
+    }
+    let terms: Vec<String> = terms
+        .split(',')
+        .map(norm)
+        .filter(|t| !t.is_empty())
+        .collect();
+    let text = format!(" {text} ");
+    terms
+        .windows(3)
+        .any(|run| text.contains(&format!(" {} ", run.join(" "))))
+}
+
 /// Transcribe a dictation's audio, in pieces for the models that need them;
 /// also returns the language Whisper detected, if any.
 fn run_cpp(
     session: &mut Session,
     audio: &[f32],
     run_options: &RunOptions,
-    model_splits_long_audio: bool,
+    max_piece: Option<usize>,
 ) -> Result<(String, Option<String>)> {
+    let model_splits_long_audio = max_piece.is_some();
     let mut detected = None;
     // Models that drop sentences from long audio get it in
     // pieces cut at pauses; every other model as before.
-    let pieces = if model_splits_long_audio {
-        split_at_pauses(audio, PIECE_SAMPLES)
-    } else {
-        vec![audio]
+    let pieces = match max_piece {
+        Some(max) => split_at_pauses(audio, max),
+        None => vec![audio],
     };
     if pieces.len() > 1 {
         debug!(
@@ -1927,9 +2234,7 @@ fn run_cpp(
     }
     let mut texts = Vec::with_capacity(pieces.len());
     for piece in pieces {
-        let t = session
-            .run(piece, run_options)
-            .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))?;
+        let t = run_once(session, piece, run_options)?;
         if detected.is_none() {
             detected = t.language;
         }
@@ -1946,9 +2251,7 @@ fn run_cpp(
     if !model_splits_long_audio && looks_cut_short(&text, audio.len()) {
         let mut pieces = Vec::new();
         for piece in split_at_pauses(audio, PIECE_SAMPLES) {
-            let t = session
-                .run(piece, run_options)
-                .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))?;
+            let t = run_once(session, piece, run_options)?;
             let t = t.text.trim().to_string();
             if !t.is_empty() {
                 pieces.push(t);
@@ -1976,37 +2279,21 @@ pub(crate) fn transcribe_like_dictation(
     settings: &AppSettings,
     session: &mut Session,
     audio: &[f32],
+    piece_samples: Option<usize>,
 ) -> Result<String> {
-    let model = session.model();
-    let caps = model.capabilities();
-    let is_whisper = model.arch() == "whisper";
-    let family = (is_whisper && !settings.custom_words.is_empty()).then(|| {
-        RunExtension::Whisper(WhisperRunOptions {
-            initial_prompt: Some(settings.custom_words.join(", ")),
-            ..Default::default()
-        })
-    });
-    let plan = transcribe_cpp_run_plan(
-        settings.translate_to_english,
-        &settings.selected_language,
-        &caps.languages,
-        caps.supports_translate,
-    );
-    let options = cpp_run_options(
-        plan,
-        &settings.custom_words,
-        family,
-        model.supports(Feature::Context),
-        model.supports(Feature::KeywordBoost),
-    );
-    let splits = SPLIT_LONG_AUDIO_ARCHS.contains(&model.arch().as_str());
-    let (text, detected) = run_cpp(session, audio, &options, splits)?;
+    let plan = cpp_dictation_plan(settings, session, &settings.selected_language);
+    let (text, detected) = run_cpp(
+        session,
+        audio,
+        &plan.options,
+        piece_samples.or(plan.max_piece),
+    )?;
     let evidence = with_model_detected_language(
         resolve_output_language_evidence(
             settings,
-            options.language.as_deref(),
-            &caps.languages,
-            options.target_language.as_deref() == Some("en"),
+            plan.options.language.as_deref(),
+            &plan.languages,
+            plan.translated,
         ),
         detected,
     );
@@ -2014,7 +2301,7 @@ pub(crate) fn transcribe_like_dictation(
         text,
         settings,
         &evidence,
-        &caps.languages,
+        &plan.languages,
     ))
 }
 
@@ -2159,7 +2446,7 @@ fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
     while let Ok(cmd) = rx.recv() {
         match cmd {
             StreamCmd::Feed(_) => {}
-            StreamCmd::Finalize(reply) => {
+            StreamCmd::Finalize(reply, _) => {
                 let _ = reply.send(None);
                 break;
             }
@@ -2450,6 +2737,51 @@ mod tests {
             super::boost_phrases(&words, true),
             vec!["kubectl".to_string(), "Handy".to_string()]
         );
+    }
+
+    #[test]
+    fn a_transcript_reading_the_vocabulary_back_is_caught() {
+        let context = "Vocabulary: Claude, Jev, Felix, VAD, Cohere";
+        assert!(echoes_context(
+            "Vocabulary: Claude, Jev, Felix, VAD, Cohere, Claude, Jev",
+            context
+        ));
+        assert!(echoes_context("vocabulary claude", context));
+        assert!(echoes_context("ok so jev, felix, vad and more", context));
+        assert!(!echoes_context("Ask Claude whether Felix is on", context));
+        assert!(!echoes_context("The vocabulary is fine", context));
+        assert!(!echoes_context("", context));
+    }
+
+    #[test]
+    fn pieces_cut_while_recording_match_cutting_afterwards() {
+        // 75 s of "speech" with short quiet gaps at irregular places.
+        let audio: Vec<f32> = (0..75 * 16000)
+            .map(|i| {
+                let quiet = (i / 1600) % 17 == 3 || (i / 1600) % 29 == 11;
+                if quiet {
+                    0.001
+                } else {
+                    ((i as f32) * 0.05).sin() * 0.3
+                }
+            })
+            .collect();
+        let whole: Vec<usize> = split_at_pauses(&audio, PIECE_SAMPLES)
+            .iter()
+            .map(|p| p.len())
+            .collect();
+        let mut pieces = Pieces::default();
+        let mut cuts = Vec::new();
+        for frame in audio.chunks(512) {
+            pieces.fed.extend_from_slice(frame);
+            while let Some(cut) = pieces.next_cut(PIECE_SAMPLES) {
+                cuts.push(cut);
+                pieces.covered += cut;
+            }
+        }
+        cuts.push(audio.len() - pieces.covered);
+        assert_eq!(cuts, whole);
+        assert!(cuts.len() >= 3);
     }
 
     #[test]

@@ -11,7 +11,9 @@
 //! `--plan` makes no network calls: clips, minutes and estimated cost.
 //! Hosted models run only with `--pay`. `--only a,b` keeps candidates whose
 //! label contains one of those; `--no-local`, `--no-cleanup`, `--limit N`,
-//! `--local <model.gguf>` (repeatable; default: the four baselines).
+//! `--local <model.gguf>` (repeatable; default: the four baselines),
+//! `--words <file>` (extra vocabulary), `--pieces <seconds>` (local runs cut
+//! at pauses into pieces of at most that long).
 //!
 //! Results are cached per clip and model under the benchmark folder
 //! (`hosted_eval/`), so reruns only do what's new. Transcripts stay there,
@@ -255,6 +257,7 @@ fn main() -> Result<(), String> {
     let (mut only, mut locals, mut limit, mut key_file): (Vec<String>, Vec<PathBuf>, usize, _) =
         (Vec::new(), Vec::new(), usize::MAX, None::<PathBuf>);
     let mut words_file: Option<PathBuf> = None;
+    let mut pieces: Option<f32> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--plan" => plan = true,
@@ -278,6 +281,13 @@ fn main() -> Result<(), String> {
             }
             "--key-file" => key_file = Some(args.next().ok_or("--key-file <path>")?.into()),
             "--words" => words_file = Some(args.next().ok_or("--words <file>")?.into()),
+            "--pieces" => {
+                pieces = Some(
+                    args.next()
+                        .and_then(|n| n.parse().ok())
+                        .ok_or("--pieces <seconds>")?,
+                )
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -296,6 +306,14 @@ fn main() -> Result<(), String> {
             cache.join(format!("with-{name}"))
         }
         None => cache.clone(),
+    };
+    // Local runs cut into pieces at pauses, as if transcribed while you talk.
+    let runs = match pieces {
+        Some(seconds) => {
+            setup.cut_local_runs(seconds);
+            runs.join(format!("pieces-{seconds}s"))
+        }
+        None => runs,
     };
     if let Some(path) = key_file {
         let key = std::fs::read_to_string(&path).map_err(|e| format!("key file: {e}"))?;
