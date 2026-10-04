@@ -107,6 +107,10 @@ struct QwenAsrModel final : public transcribe_model {
 
 struct QwenAsrSession final : public transcribe_session {
     transcribe::causal_lm::KvCache kv_cache;
+    // Prompt-prefix ids whose K/V rows [0, size) are valid in kv_cache from the
+    // last run; a run with the same prefix (same context) prefills only the
+    // audio + suffix. Empty whenever those rows can't be trusted.
+    std::vector<int32_t> kv_prefix_ids;
 
     // Batched KV cache for offline transcribe_run_batch (n_batch slabs).
     // Allocated/resized lazily by run_batch; freed in the destructor.

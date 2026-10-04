@@ -240,6 +240,79 @@ PrefillBuild build_prefill_graph(ggml_context *                   ctx,
     return pb;
 }
 
+PrefillTailBuild build_prefill_tail_graph(ggml_context *                   ctx,
+                                          const QwenAsrWeights &           weights,
+                                          const QwenAsrHParams &           hp,
+                                          transcribe::causal_lm::KvCache & kv_cache,
+                                          int                              n_past,
+                                          int                              T_enc,
+                                          int                              suffix_len,
+                                          bool                             use_flash) {
+    PrefillTailBuild pb{};
+    const int        T_tail   = T_enc + suffix_len;
+    const int        max_n_kv = n_past + T_tail;
+    if (ctx == nullptr || n_past <= 0 || T_enc <= 0 || suffix_len <= 0) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr tail prefill: invalid arg (n_past=%d, T_enc=%d, suffix=%d)",
+                n_past, T_enc, suffix_len);
+        return pb;
+    }
+    if (kv_cache.self_k == nullptr || max_n_kv > kv_cache.n_ctx) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr tail prefill: kv_cache missing or too small (%d > %d)",
+                max_n_kv, kv_cache.n_ctx);
+        return pb;
+    }
+
+    const int64_t hidden  = hp.dec_hidden;
+    const int64_t vocab   = hp.dec_vocab_size;
+    const int     n_layer = hp.dec_n_layers;
+    const auto    bp      = to_block_params(hp);
+
+    pb.suffix_ids_in = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, suffix_len);
+    named(pb.suffix_ids_in, "dec.tail.suffix_ids");
+    ggml_set_input(pb.suffix_ids_in);
+
+    pb.enc_out_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hp.enc_output_dim, T_enc);
+    named(pb.enc_out_in, "dec.tail.enc_out");
+    ggml_set_input(pb.enc_out_in);
+
+    pb.positions_in = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T_tail);
+    named(pb.positions_in, "dec.tail.positions");
+    ggml_set_input(pb.positions_in);
+
+    pb.kv_idx_in = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, T_tail);
+    named(pb.kv_idx_in, "dec.tail.kv_idx");
+    ggml_set_input(pb.kv_idx_in);
+
+    pb.mask_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, max_n_kv, T_tail);
+    named(pb.mask_in, "dec.tail.attn_mask");
+    ggml_set_input(pb.mask_in);
+
+    ggml_cgraph * gf = ggml_new_graph_custom(ctx, /*size=*/16384, /*grads=*/false);
+    if (gf == nullptr) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr tail prefill: ggml_new_graph_custom failed");
+        return pb;
+    }
+    pb.graph = gf;
+
+    ggml_tensor * x_suffix = ggml_get_rows(ctx, weights.dec_embed.token_w, pb.suffix_ids_in);
+    ggml_tensor * x        = ggml_concat(ctx, pb.enc_out_in, x_suffix, /*dim=*/1);
+
+    for (int il = 0; il < n_layer; ++il) {
+        x = causal_lm::block_step_n(ctx, gf, x, to_block_view(weights.dec_blocks[il]), bp, kv_cache, il, T_tail,
+                                    max_n_kv, pb.mask_in, pb.positions_in, pb.kv_idx_in, use_flash);
+    }
+
+    ggml_tensor * last_x = ggml_cont(ctx, ggml_view_2d(ctx, x, hidden, 1, ggml_element_size(x) * hidden,
+                                                       ggml_element_size(x) * hidden * static_cast<size_t>(T_tail - 1)));
+    last_x               = ggml_mul(ctx, ggml_rms_norm(ctx, last_x, hp.dec_rms_norm_eps), weights.dec_final.norm_w);
+
+    ggml_tensor * logits = ggml_mul_mat(ctx, weights.dec_embed.token_w, last_x);
+    pb.out               = ggml_reshape_1d(ctx, logits, vocab);
+    ggml_set_output(pb.out);
+    ggml_build_forward_expand(gf, pb.out);
+    return pb;
+}
+
 // Step graph (single-token decode)
 
 StepBuild build_step_graph(ggml_context *                   ctx,

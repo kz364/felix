@@ -86,6 +86,31 @@ PrefillBuild build_prefill_graph(ggml_context *                   ctx,
                                  int                              kv_batch_slot = 0,
                                  int                              kv_n_batch    = 1);
 
+// ---------- Tail prefill (prompt prefix already in the KV cache) ----------
+
+struct PrefillTailBuild {
+    ggml_tensor * suffix_ids_in = nullptr;  // [suffix_len] i32
+    ggml_tensor * enc_out_in    = nullptr;  // [enc_output_dim, T_enc] f32
+    ggml_tensor * positions_in  = nullptr;  // [T_tail] i32 (n_past + i)
+    ggml_tensor * kv_idx_in     = nullptr;  // [T_tail] i64 (n_past + i)
+    ggml_tensor * mask_in       = nullptr;  // [n_past + T_tail, T_tail] f16
+    ggml_tensor * out           = nullptr;  // [vocab_size] — last-position logits
+    ggml_cgraph * graph         = nullptr;
+};
+
+// Prefill only [encoder_output | suffix_emb] on top of `n_past` prompt-prefix
+// rows already in kv_cache. The prefix (system turn + context + audio_start)
+// doesn't depend on the audio, so a session reusing the same context skips
+// re-encoding it. Callers set kv_cache.n / .head = n_past + T_enc + suffix_len.
+PrefillTailBuild build_prefill_tail_graph(ggml_context *                   ctx,
+                                          const QwenAsrWeights &           weights,
+                                          const QwenAsrHParams &           hp,
+                                          transcribe::causal_lm::KvCache & kv_cache,
+                                          int                              n_past,
+                                          int                              T_enc,
+                                          int                              suffix_len,
+                                          bool                             use_flash);
+
 // ---------- Step graph (one token) ----------
 
 struct StepBuild {

@@ -771,6 +771,12 @@ transcribe_status run(transcribe_session *          session,
     if (cc->kv_cache.ctx != nullptr && cc->kv_cache.n_ctx < want_n_ctx) {
         cc->kv_cache.free();
     }
+    // Dumps need the full prefill graph's intermediates, so they never reuse.
+    const bool dumps_on     = transcribe::debug::enabled();
+    const bool reuse_prefix = !dumps_on && cc->kv_cache.ctx != nullptr && prefix_len > 0 && suffix_len > 0 &&
+                              cc->kv_prefix_ids.size() == static_cast<size_t>(prefix_len) &&
+                              std::equal(cc->kv_prefix_ids.begin(), cc->kv_prefix_ids.end(), prompt_ids.begin());
+    cc->kv_prefix_ids.clear();
     if (cc->kv_cache.ctx == nullptr) {
         ggml_type kv_type = GGML_TYPE_F16;
         if (cc->kv_type == TRANSCRIBE_KV_TYPE_F32) {
@@ -786,6 +792,11 @@ transcribe_status run(transcribe_session *          session,
                                 cm->hparams.dec_n_layers);
             return TRANSCRIBE_ERR_OOM;
         }
+    } else if (reuse_prefix) {
+        // Rows [0, prefix_len) still hold this prefix; everything past it is
+        // overwritten by the tail prefill or masked out by the step loop.
+        cc->kv_cache.n    = prefix_len;
+        cc->kv_cache.head = prefix_len;
     } else {
         // Clear stale positions for a fresh prefill.
         if (cc->kv_cache.buffer != nullptr) {
@@ -795,65 +806,110 @@ transcribe_status run(transcribe_session *          session,
         cc->kv_cache.head = 0;
     }
 
-    // Prefill graph. slice_last false: last block's FFN + final norm run on
-    // every position (needed for dump parity). true: slice to just the final
-    // position before the last FFN (llama.cpp's inp_out_ids trick, ~25 ms).
-    const bool   dumps_on   = transcribe::debug::enabled();
-    const bool   slice_last = !dumps_on;
-    PrefillBuild pb = build_prefill_graph(cc->compute_ctx, cm->weights, cm->hparams, cc->kv_cache, T_prompt, T_enc,
-                                          prefix_len, suffix_len,
-                                          /*use_flash=*/cc->decoder_use_flash, slice_last);
-    if (pb.graph == nullptr || pb.out == nullptr) {
-        return TRANSCRIBE_ERR_GGUF;
-    }
-
-    // Allocate + compute prefill on the same scheduler.
-    ggml_backend_sched_reset(cc->sched);
-    if (!ggml_backend_sched_alloc_graph(cc->sched, pb.graph)) {
-        transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
-                            "qwen3_asr run: prefill graph allocation failed (T_prompt=%d) — "
-                            "out of memory. Lower transcribe_session_params.n_ctx or shorten "
-                            "the audio.",
-                            T_prompt);
-        return TRANSCRIBE_ERR_OOM;
-    }
-
-    // Upload prefill inputs.
-    ggml_backend_tensor_set(pb.input_ids_in, prompt_ids.data(), 0, prompt_ids.size() * sizeof(int32_t));
-    ggml_backend_tensor_set(pb.enc_out_in, cc->enc_host.data(), 0, cc->enc_host.size() * sizeof(float));
-
-    {
-        std::vector<int32_t> positions(T_prompt);
-        for (int i = 0; i < T_prompt; ++i) {
-            positions[i] = i;
+    ggml_tensor * prefill_out = nullptr;
+    PrefillBuild  pb{};
+    if (reuse_prefix) {
+        const int        T_tail = T_prompt - prefix_len;
+        PrefillTailBuild tb     = build_prefill_tail_graph(cc->compute_ctx, cm->weights, cm->hparams, cc->kv_cache,
+                                                           prefix_len, T_enc, suffix_len, cc->decoder_use_flash);
+        if (tb.graph == nullptr || tb.out == nullptr) {
+            return TRANSCRIBE_ERR_GGUF;
         }
-        ggml_backend_tensor_set(pb.positions_in, positions.data(), 0, positions.size() * sizeof(int32_t));
-    }
+        ggml_backend_sched_reset(cc->sched);
+        if (!ggml_backend_sched_alloc_graph(cc->sched, tb.graph)) {
+            transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                                "qwen3_asr run: tail prefill graph allocation failed (T_prompt=%d) — out of memory.",
+                                T_prompt);
+            return TRANSCRIBE_ERR_OOM;
+        }
+        ggml_backend_tensor_set(tb.suffix_ids_in, prompt_ids.data() + prefix_len + T_enc, 0,
+                                static_cast<size_t>(suffix_len) * sizeof(int32_t));
+        ggml_backend_tensor_set(tb.enc_out_in, cc->enc_host.data(), 0, cc->enc_host.size() * sizeof(float));
+        std::vector<int32_t> positions(T_tail);
+        std::vector<int64_t> kv_idx(T_tail);
+        for (int i = 0; i < T_tail; ++i) {
+            positions[i] = prefix_len + i;
+            kv_idx[i]    = prefix_len + i;
+        }
+        ggml_backend_tensor_set(tb.positions_in, positions.data(), 0, positions.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(tb.kv_idx_in, kv_idx.data(), 0, kv_idx.size() * sizeof(int64_t));
+        std::vector<ggml_fp16_t> mask(static_cast<size_t>(T_prompt) * T_tail);
+        transcribe::causal_lm::fill_prefill_chunk_mask(mask.data(), T_prompt, T_tail, /*n_past=*/prefix_len);
+        ggml_backend_tensor_set(tb.mask_in, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
 
-    {
-        // Causal mask in F16 (matches pb.mask_in): row r col c is 0 if c <= r,
-        // else -inf, row-major. F16 upload avoids a per-layer ggml_cast.
-        const ggml_fp16_t        mask_zero    = ggml_fp32_to_fp16(0.0f);
-        const ggml_fp16_t        mask_neg_inf = ggml_fp32_to_fp16(-INFINITY);
-        std::vector<ggml_fp16_t> mask(static_cast<size_t>(T_prompt) * T_prompt, mask_neg_inf);
-        for (int r = 0; r < T_prompt; ++r) {
-            for (int c = 0; c <= r; ++c) {
-                mask[static_cast<size_t>(r) * T_prompt + c] = mask_zero;
+        const int64_t t_prefill_compute_start = ggml_time_us();
+        t_prefill_build_us                    = t_prefill_compute_start - t_prefill_build_start;
+        if (const ggml_status gs = ggml_backend_sched_graph_compute(cc->sched, tb.graph); gs != GGML_STATUS_SUCCESS) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr run: tail prefill compute failed (%d)",
+                    static_cast<int>(gs));
+            return TRANSCRIBE_ERR_GGUF;
+        }
+        t_prefill_compute_us = ggml_time_us() - t_prefill_compute_start;
+        cc->kv_cache.n       = T_prompt;
+        cc->kv_cache.head    = T_prompt;
+        prefill_out          = tb.out;
+    } else {
+        // Prefill graph. slice_last false: last block's FFN + final norm run on
+        // every position (needed for dump parity). true: slice to just the final
+        // position before the last FFN (llama.cpp's inp_out_ids trick, ~25 ms).
+        const bool   slice_last = !dumps_on;
+        pb = build_prefill_graph(cc->compute_ctx, cm->weights, cm->hparams, cc->kv_cache, T_prompt, T_enc,
+                                              prefix_len, suffix_len,
+                                              /*use_flash=*/cc->decoder_use_flash, slice_last);
+        if (pb.graph == nullptr || pb.out == nullptr) {
+            return TRANSCRIBE_ERR_GGUF;
+        }
+
+        // Allocate + compute prefill on the same scheduler.
+        ggml_backend_sched_reset(cc->sched);
+        if (!ggml_backend_sched_alloc_graph(cc->sched, pb.graph)) {
+            transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                                "qwen3_asr run: prefill graph allocation failed (T_prompt=%d) — "
+                                "out of memory. Lower transcribe_session_params.n_ctx or shorten "
+                                "the audio.",
+                                T_prompt);
+            return TRANSCRIBE_ERR_OOM;
+        }
+
+        // Upload prefill inputs.
+        ggml_backend_tensor_set(pb.input_ids_in, prompt_ids.data(), 0, prompt_ids.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(pb.enc_out_in, cc->enc_host.data(), 0, cc->enc_host.size() * sizeof(float));
+
+        {
+            std::vector<int32_t> positions(T_prompt);
+            for (int i = 0; i < T_prompt; ++i) {
+                positions[i] = i;
             }
+            ggml_backend_tensor_set(pb.positions_in, positions.data(), 0, positions.size() * sizeof(int32_t));
         }
-        ggml_backend_tensor_set(pb.mask_in, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
-    }
 
-    const int64_t t_prefill_compute_start = ggml_time_us();
-    t_prefill_build_us                    = t_prefill_compute_start - t_prefill_build_start;
-    if (const ggml_status gs = ggml_backend_sched_graph_compute(cc->sched, pb.graph); gs != GGML_STATUS_SUCCESS) {
-        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr run: prefill graph compute failed (%d)", static_cast<int>(gs));
-        return TRANSCRIBE_ERR_GGUF;
-    }
-    t_prefill_compute_us = ggml_time_us() - t_prefill_compute_start;
+        {
+            // Causal mask in F16 (matches pb.mask_in): row r col c is 0 if c <= r,
+            // else -inf, row-major. F16 upload avoids a per-layer ggml_cast.
+            const ggml_fp16_t        mask_zero    = ggml_fp32_to_fp16(0.0f);
+            const ggml_fp16_t        mask_neg_inf = ggml_fp32_to_fp16(-INFINITY);
+            std::vector<ggml_fp16_t> mask(static_cast<size_t>(T_prompt) * T_prompt, mask_neg_inf);
+            for (int r = 0; r < T_prompt; ++r) {
+                for (int c = 0; c <= r; ++c) {
+                    mask[static_cast<size_t>(r) * T_prompt + c] = mask_zero;
+                }
+            }
+            ggml_backend_tensor_set(pb.mask_in, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        }
 
-    cc->kv_cache.n    = T_prompt;
-    cc->kv_cache.head = T_prompt;
+        const int64_t t_prefill_compute_start = ggml_time_us();
+        t_prefill_build_us                    = t_prefill_compute_start - t_prefill_build_start;
+        if (const ggml_status gs = ggml_backend_sched_graph_compute(cc->sched, pb.graph); gs != GGML_STATUS_SUCCESS) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "qwen3_asr run: prefill graph compute failed (%d)", static_cast<int>(gs));
+            return TRANSCRIBE_ERR_GGUF;
+        }
+        t_prefill_compute_us = ggml_time_us() - t_prefill_compute_start;
+
+        cc->kv_cache.n    = T_prompt;
+        cc->kv_cache.head = T_prompt;
+        prefill_out = pb.out;
+    }
+    cc->kv_prefix_ids.assign(prompt_ids.begin(), prompt_ids.begin() + prefix_len);
 
     // Dump dec.* intermediates.
     try_dump("dec.token_emb", pb.dumps.token_emb, "dec.token_emb");
@@ -871,7 +927,7 @@ transcribe_status run(transcribe_session *          session,
     const int64_t      t_prefill_logits_start = ggml_time_us();
     const int          vocab                  = cm->hparams.dec_vocab_size;
     std::vector<float> logits(vocab);
-    ggml_backend_tensor_get(pb.out, logits.data(), 0, logits.size() * sizeof(float));
+    ggml_backend_tensor_get(prefill_out, logits.data(), 0, logits.size() * sizeof(float));
 
     auto argmax = [&](const std::vector<float> & v) -> int32_t {
         int32_t best   = 0;
