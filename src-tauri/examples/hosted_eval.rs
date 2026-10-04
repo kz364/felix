@@ -254,6 +254,7 @@ fn main() -> Result<(), String> {
     let (mut plan, mut pay, mut no_local, mut no_cleanup) = (false, false, false, false);
     let (mut only, mut locals, mut limit, mut key_file): (Vec<String>, Vec<PathBuf>, usize, _) =
         (Vec::new(), Vec::new(), usize::MAX, None::<PathBuf>);
+    let mut words_file: Option<PathBuf> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--plan" => plan = true,
@@ -276,6 +277,7 @@ fn main() -> Result<(), String> {
                     .ok_or("--limit N")?
             }
             "--key-file" => key_file = Some(args.next().ok_or("--key-file <path>")?.into()),
+            "--words" => words_file = Some(args.next().ok_or("--words <file>")?.into()),
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -284,6 +286,17 @@ fn main() -> Result<(), String> {
     let bench = app_data.join("benchmark");
     let cache = bench.join("hosted_eval");
     let mut setup = Setup::load(&app_data)?;
+    // Extra vocabulary (one term per line): a separate set of runs, scored
+    // against the same references.
+    let runs = match &words_file {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("words: {e}"))?;
+            setup.add_vocabulary(text.lines().map(str::trim).filter(|l| !l.is_empty()));
+            let name = Path::new(path).file_stem().unwrap().to_string_lossy();
+            cache.join(format!("with-{name}"))
+        }
+        None => cache.clone(),
+    };
     if let Some(path) = key_file {
         let key = std::fs::read_to_string(&path).map_err(|e| format!("key file: {e}"))?;
         setup.use_api_key("openrouter", &key);
@@ -333,6 +346,13 @@ fn main() -> Result<(), String> {
         });
     }
     let minutes = clips.iter().map(|c| c.audio.len()).sum::<usize>() as f64 / 16000.0 / 60.0;
+    write_json(
+        &cache.join("kinds.json"),
+        &clips
+            .iter()
+            .map(|c| (c.id.clone(), c.kind))
+            .collect::<BTreeMap<_, _>>(),
+    );
     let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
     for c in &clips {
         *kinds.entry(c.kind).or_default() += 1;
@@ -353,7 +373,7 @@ fn main() -> Result<(), String> {
         if !keep(label) {
             continue;
         }
-        let todo: f64 = todo(&clips, &cache.join(slug(label)))
+        let todo: f64 = todo(&clips, &runs.join(slug(label)))
             .iter()
             .map(|c| c.audio.len() as f64 / 16000.0 / 3600.0 * per_hour)
             .sum();
@@ -411,7 +431,7 @@ fn main() -> Result<(), String> {
 
     // Hosted, a few requests at a time per model.
     for (label, remote) in &hosted {
-        let dir = cache.join(slug(label));
+        let dir = runs.join(slug(label));
         let todo = todo(&clips, &dir);
         if !todo.is_empty() && !pay {
             println!("{label}: {} clips not run (add --pay)", todo.len());
@@ -448,7 +468,7 @@ fn main() -> Result<(), String> {
 
     // Local, one model loaded at a time.
     for (label, path) in &local_paths {
-        let dir = cache.join(slug(label));
+        let dir = runs.join(slug(label));
         let todo = todo(&clips, &dir);
         if todo.is_empty() {
             continue;
@@ -484,7 +504,7 @@ fn main() -> Result<(), String> {
         .chain(local_paths.iter().map(|(l, _)| l.clone()))
         .collect();
     for label in &labels {
-        let dir = cache.join(slug(label));
+        let dir = runs.join(slug(label));
         let got = results.entry(label.clone()).or_default();
         for c in &clips {
             if let Some(h) = read_json::<Heard1>(&dir.join(format!("{}.json", c.id))) {
@@ -565,7 +585,7 @@ fn main() -> Result<(), String> {
                 if h.error.is_some() {
                     continue;
                 }
-                let path = cache
+                let path = runs
                     .join("cleanup")
                     .join(slug(label))
                     .join(format!("{}.json", c.id));
@@ -702,7 +722,6 @@ fn main() -> Result<(), String> {
         ));
     }
     println!("\n{report}");
-    write_json(&cache.join("report.json"), &report);
-    let _ = std::fs::write(cache.join("report.md"), &report);
+    let _ = std::fs::write(runs.join("report.md"), &report);
     Ok(())
 }

@@ -41,6 +41,15 @@ impl Setup {
         crate::local_llm::stop();
     }
 
+    /// Add terms to the vocabulary for this run only (never saved).
+    pub fn add_vocabulary<'a>(&mut self, terms: impl IntoIterator<Item = &'a str>) {
+        for term in terms {
+            if !self.settings.custom_words.iter().any(|w| w == term) {
+                self.settings.custom_words.push(term.to_string());
+            }
+        }
+    }
+
     pub fn vocabulary(&self) -> &[String] {
         &self.settings.custom_words
     }
