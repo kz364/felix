@@ -128,19 +128,54 @@ mod mac {
     }
 
     /// Electron apps build their accessibility tree only once asked to.
+    /// Apps that renamed their Electron framework (the ChatGPT app's "Codex
+    /// Framework") show only the window's three buttons even then, and
+    /// build it for a screen reader's switch: that's set for them only, so
+    /// Electron apps (Claude, Slack) are left as they were.
     pub fn expose_electron_tree(pid: i32) {
         use core_foundation::boolean::CFBoolean;
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
         unsafe { AXUIElementSetMessagingTimeout(app.0, 0.5) };
-        let attribute = CFString::new("AXManualAccessibility");
-        // SAFETY: app and the boolean are live CF objects.
-        unsafe {
-            AXUIElementSetAttributeValue(
-                app.0,
-                attribute.as_concrete_TypeRef(),
-                CFBoolean::true_value().as_CFTypeRef(),
-            )
+        let set = |name: &str| {
+            let attribute = CFString::new(name);
+            // SAFETY: app and the boolean are live CF objects.
+            unsafe {
+                AXUIElementSetAttributeValue(
+                    app.0,
+                    attribute.as_concrete_TypeRef(),
+                    CFBoolean::true_value().as_CFTypeRef(),
+                )
+            }
         };
+        let manual = set("AXManualAccessibility");
+        if manual != AX_SUCCESS || renamed_electron(pid) {
+            let enhanced = set("AXEnhancedUserInterface");
+            log::debug!(
+                "Accessibility tree of pid {pid}: AXManualAccessibility {manual}, AXEnhancedUserInterface {enhanced}"
+            );
+        }
+    }
+
+    /// Whether the app ships Chromium under its own framework name instead
+    /// of "Electron Framework".
+    fn renamed_electron(pid: i32) -> bool {
+        let Some(path) =
+            objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+                .and_then(|app| app.bundleURL())
+                .and_then(|url| url.path())
+        else {
+            return false;
+        };
+        let frameworks = std::path::Path::new(&path.to_string()).join("Contents/Frameworks");
+        !frameworks.join("Electron Framework.framework").exists()
+            && std::fs::read_dir(&frameworks).is_ok_and(|entries| {
+                entries.flatten().any(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .ends_with(" Framework.framework")
+                        && e.path().join("Resources/chrome_100_percent.pak").exists()
+                })
+            })
     }
 
     pub fn window_titles(pid: i32) -> Vec<String> {
