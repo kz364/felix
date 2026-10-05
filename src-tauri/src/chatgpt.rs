@@ -1021,7 +1021,14 @@ impl Reply {
                         &serde_json::json!({ "error": error }).to_string(),
                     )));
                 }
-                let message = error["message"].as_str().unwrap_or("unknown error");
+                let message = error["message"]
+                    .as_str()
+                    .filter(|m| !m.is_empty())
+                    .or_else(|| error["code"].as_str())
+                    .unwrap_or("unknown error");
+                if message == "unknown error" {
+                    log::warn!("ChatGPT failed with no message: {}", error);
+                }
                 Some(Err(format!("ChatGPT request failed: {message}")))
             }
             "response.incomplete" => {
