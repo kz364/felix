@@ -93,6 +93,61 @@ pub fn calendar_access() -> String {
     access().to_string()
 }
 
+/// A meeting coming up on the calendar, for the Meetings tab.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct Upcoming {
+    pub id: String,
+    pub title: String,
+    /// Unix milliseconds.
+    pub start_ms: i64,
+    pub end_ms: i64,
+    /// Everyone invited but the user.
+    pub attendees: Vec<String>,
+    /// The video call link in the event, if it has one.
+    pub link: Option<String>,
+}
+
+/// How far ahead the Meetings tab looks.
+const UPCOMING_HOURS: i64 = 24;
+/// At most this many are shown.
+const UPCOMING_MAX: usize = 8;
+
+/// The meetings from now (including ones under way) to a day ahead: events
+/// with someone else invited or a call link, not all-day, not declined or
+/// cancelled. Empty without Calendar access.
+#[tauri::command]
+#[specta::specta]
+pub async fn upcoming_meetings() -> Vec<Upcoming> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut events = imp::upcoming(now, now + UPCOMING_HOURS * 60 * 60 * 1000);
+        events.sort_by_key(|e| e.start_ms);
+        events.truncate(UPCOMING_MAX);
+        events
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// The first video call link (Meet, Zoom, Teams, Webex) in an event's
+/// fields, as written there.
+pub fn call_link(fields: &[&str]) -> Option<String> {
+    const HOSTS: &[&str] = &[
+        "meet.google.com/",
+        "zoom.us/j/",
+        "zoom.us/my/",
+        "teams.microsoft.com/l/meetup-join",
+        "teams.live.com/meet",
+        "webex.com/",
+    ];
+    fields.iter().find_map(|f| {
+        f.split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '(' | ')'))
+            .map(|w| w.trim_end_matches(['.', ',', ';']))
+            .find(|w| w.starts_with("https://") && HOSTS.iter().any(|h| w.contains(h)))
+            .map(str::to_string)
+    })
+}
+
 /// Names from attendee display names; e-mail-only attendees become the part
 /// before the @, tidied ("sam.rivera" → "Sam Rivera").
 pub fn display_name(name: Option<&str>, url: Option<&str>) -> Option<String> {
@@ -212,6 +267,77 @@ mod imp {
         }
         best.map(|(_, i)| i)
     }
+
+    pub fn upcoming(from_ms: i64, to_ms: i64) -> Vec<super::Upcoming> {
+        use objc2_event_kit::{EKEventStatus, EKParticipantStatus};
+        if access() != "full" {
+            return Vec::new();
+        }
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let secs = |ms: i64| (ms - now_ms) as f64 / 1000.0;
+        let store = unsafe { EKEventStore::new() };
+        let from = NSDate::dateWithTimeIntervalSinceNow(secs(from_ms));
+        let to = NSDate::dateWithTimeIntervalSinceNow(secs(to_ms));
+        let events = unsafe {
+            let predicate =
+                store.predicateForEventsWithStartDate_endDate_calendars(&from, &to, None);
+            store.eventsMatchingPredicate(&predicate)
+        };
+        let mut out = Vec::new();
+        for event in events.iter() {
+            if unsafe { event.isAllDay() } || unsafe { event.status() } == EKEventStatus::Canceled {
+                continue;
+            }
+            let start_ms = (unsafe { event.startDate() }.timeIntervalSince1970() * 1000.0) as i64;
+            let end_ms = (unsafe { event.endDate() }.timeIntervalSince1970() * 1000.0) as i64;
+            if end_ms <= from_ms {
+                continue;
+            }
+            let mut attendees = Vec::new();
+            let mut declined = false;
+            if let Some(list) = unsafe { event.attendees() } {
+                for a in list.iter() {
+                    if unsafe { a.isCurrentUser() } {
+                        declined =
+                            unsafe { a.participantStatus() } == EKParticipantStatus::Declined;
+                        continue;
+                    }
+                    let name = unsafe { a.name() }.map(|n| n.to_string());
+                    let url = unsafe { a.URL() }.absoluteString().map(|u| u.to_string());
+                    if let Some(n) = display_name(name.as_deref(), url.as_deref()) {
+                        if !attendees.contains(&n) {
+                            attendees.push(n);
+                        }
+                    }
+                }
+            }
+            let url = unsafe { event.URL() }
+                .and_then(|u| u.absoluteString())
+                .map(|u| u.to_string())
+                .unwrap_or_default();
+            let location = unsafe { event.location() }
+                .map(|l| l.to_string())
+                .unwrap_or_default();
+            let notes = unsafe { event.notes() }
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let link = super::call_link(&[&url, &location, &notes]);
+            if declined || (attendees.is_empty() && link.is_none()) {
+                continue;
+            }
+            out.push(super::Upcoming {
+                id: unsafe { event.eventIdentifier() }
+                    .map(|i| i.to_string())
+                    .unwrap_or_else(|| format!("{start_ms}")),
+                title: unsafe { event.title() }.to_string(),
+                start_ms,
+                end_ms,
+                attendees,
+                link,
+            });
+        }
+        out
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -224,11 +350,34 @@ mod imp {
     pub fn invite_between(_: i64, _: i64) -> Option<Invite> {
         None
     }
+    pub fn upcoming(_: i64, _: i64) -> Vec<super::Upcoming> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_call_link_is_found_in_any_field() {
+        assert_eq!(
+            call_link(&[
+                "",
+                "Room 4",
+                "Join: <https://meet.google.com/abc-defg-hij>."
+            ]),
+            Some("https://meet.google.com/abc-defg-hij".into())
+        );
+        assert_eq!(
+            call_link(&["https://us02web.zoom.us/j/123?pwd=x", "", ""]),
+            Some("https://us02web.zoom.us/j/123?pwd=x".into())
+        );
+        assert_eq!(
+            call_link(&["https://example.com/agenda", "Cafe", "lunch"]),
+            None
+        );
+    }
 
     #[test]
     fn the_invites_names_are_this_meetings_words_but_not_handles() {

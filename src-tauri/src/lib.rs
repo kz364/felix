@@ -844,6 +844,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::extension::reveal_extension_folder,
             meetings::calendar::calendar_access,
             meetings::calendar::request_calendar_access,
+            meetings::calendar::upcoming_meetings,
             meetings::remembered::remembered_voices,
             meetings::remembered::set_remember_voices,
             meetings::remembered::rename_remembered_voice,

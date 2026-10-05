@@ -1309,6 +1309,14 @@
     "stop": "Stop",
     "recordingFor": "Recording {{time}}",
     "startedAt": "Started {{time}}",
+    "upcoming": {
+      "title": "Coming up",
+      "now": "Now",
+      "record": "Record",
+      "busy": "Already recording",
+      "untitled": "Untitled event",
+      "andMore": "{{names}} and {{count}} more"
+    },
     "systemAudio": "System audio",
     "noSystemAudio": "No system audio",
     "interrupted": "Interrupted",

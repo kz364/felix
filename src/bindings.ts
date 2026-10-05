@@ -1018,6 +1018,14 @@ async calendarAccess() : Promise<string> {
 async requestCalendarAccess() : Promise<string> {
     return await TAURI_INVOKE("request_calendar_access");
 },
+/**
+ * The meetings from now (including ones under way) to a day ahead: events
+ * with someone else invited or a call link, not all-day, not declined or
+ * cancelled. Empty without Calendar access.
+ */
+async upcomingMeetings() : Promise<Upcoming[]> {
+    return await TAURI_INVOKE("upcoming_meetings");
+},
 async rememberedVoices() : Promise<Result<RememberedVoices, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remembered_voices") };
@@ -3354,6 +3362,22 @@ export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranscribeProgress = { id: string; stage: Stage; done: number; total: number }
 export type TranscriptStatus = "queued" | "transcribing" | "done" | "failed"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * A meeting coming up on the calendar, for the Meetings tab.
+ */
+export type Upcoming = { id: string; title: string; 
+/**
+ * Unix milliseconds.
+ */
+start_ms: number; end_ms: number; 
+/**
+ * Everyone invited but the user.
+ */
+attendees: string[]; 
+/**
+ * The video call link in the event, if it has one.
+ */
+link: string | null }
 export type VadBackend = "silero" | "earshot"
 /**
  * A spoken phrase that, said at the very end of a dictation, is removed from

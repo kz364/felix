@@ -46,6 +46,7 @@ import {
   type Paragraph,
   type Summary,
   type TranscribeProgress,
+  type Upcoming,
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { PageHeader } from "../ui/PageHeader";
@@ -1616,6 +1617,118 @@ const RecorderCard: React.FC<{
   );
 };
 
+/** How often the calendar is read again while the tab is open. */
+const UPCOMING_REFRESH_MS = 60_000;
+
+/** Meetings coming up on the calendar, each with a button to record it. */
+const UpcomingMeetings: React.FC<{
+  recording: boolean;
+  onStarted: () => void;
+}> = ({ recording, onStarted }) => {
+  const { t, i18n } = useTranslation();
+  const { getSetting } = useSettings();
+  const [events, setEvents] = useState<Upcoming[]>([]);
+  const [startingId, setStartingId] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  const load = useCallback(async () => {
+    setEvents(await commands.upcomingMeetings());
+    setNow(Date.now());
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, UPCOMING_REFRESH_MS);
+    window.addEventListener("focus", load);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", load);
+    };
+  }, [load]);
+
+  if (events.length === 0) return null;
+
+  const record = async (event: Upcoming) => {
+    setStartingId(event.id);
+    const auto = getSetting("meeting_detect_mode") ?? true;
+    const result = await commands.startMeeting(
+      auto ? null : (getSetting("meeting_mode") ?? null),
+    );
+    if (result.status === "error") {
+      toast.error(t("meetings.errors.start", { error: result.error }));
+    } else if (event.title.trim()) {
+      await commands.renameMeeting(result.data.id, event.title.trim());
+    }
+    setStartingId(null);
+    onStarted();
+  };
+
+  const time = (ms: number) =>
+    new Date(ms).toLocaleTimeString(i18n.language, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  const when = (e: Upcoming) => {
+    if (e.start_ms <= now) return t("meetings.upcoming.now");
+    const day = dayLabel(e.start_ms, i18n.language, t);
+    const today = dayLabel(now, i18n.language, t);
+    return day === today
+      ? `${time(e.start_ms)} – ${time(e.end_ms)}`
+      : `${day}, ${time(e.start_ms)}`;
+  };
+  const people = (names: string[]) =>
+    names.length <= 3
+      ? names.join(", ")
+      : t("meetings.upcoming.andMore", {
+          names: names.slice(0, 3).join(", "),
+          count: names.length - 3,
+        });
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 px-1 text-sm font-medium text-text/70">
+        <Calendar className="w-3.5 h-3.5" />
+        {t("meetings.upcoming.title")}
+      </div>
+      <div className="rounded-xl border border-stone/20 bg-surface px-4 divide-y divide-stone/15">
+        {events.map((e) => (
+          <div key={e.id} className="flex items-center gap-3 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium">
+                  {e.title || t("meetings.upcoming.untitled")}
+                </span>
+                {e.link && (
+                  <Video className="w-3.5 h-3.5 shrink-0 text-text/50" />
+                )}
+              </div>
+              <div className="truncate text-sm text-text/60">
+                <span className={e.start_ms <= now ? "text-accent" : undefined}>
+                  {when(e)}
+                </span>
+                {e.attendees.length > 0 && ` · ${people(e.attendees)}`}
+              </div>
+            </div>
+            <button
+              onClick={() => record(e)}
+              disabled={recording || startingId !== null}
+              title={recording ? t("meetings.upcoming.busy") : undefined}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-stone/25 px-3 py-1 text-sm text-text/80 hover:text-text hover:border-stone/40 cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            >
+              {startingId === e.id ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-error" />
+              )}
+              {t("meetings.upcoming.record")}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const MeetingRow: React.FC<{
   meeting: MeetingInfo;
   progress: TranscribeProgress | null;
@@ -1806,6 +1919,11 @@ export const MeetingsPage: React.FC = () => {
       </p>
 
       <RecorderCard live={live} onChanged={refresh} />
+
+      <UpcomingMeetings
+        recording={live.recording !== null}
+        onStarted={refresh}
+      />
 
       {groups.length === 0 ? (
         <p className="px-1 py-6 text-center font-display text-lg text-text/50">
