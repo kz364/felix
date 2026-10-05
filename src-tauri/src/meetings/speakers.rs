@@ -658,10 +658,12 @@ fn by_clues_and_elimination(
     // Clues, per voice.
     let mut score: BTreeMap<u32, BTreeMap<String, f32>> = BTreeMap::new();
     let mut not: BTreeMap<u32, Vec<String>> = BTreeMap::new();
-    for e in evidence
-        .iter()
-        .filter(|e| matches!(e.from, Kind::Clue | Kind::NotClue))
-    {
+    // Lines the conversation handed to someone count too in the room (the
+    // mic); on the call they named the voices already (`call_app_names`).
+    for e in evidence.iter().filter(|e| {
+        matches!(e.from, Kind::Clue | Kind::NotClue)
+            || (e.from == Kind::Floor && e.track == Source::Mic)
+    }) {
         let (Some(n), Some(v)) = (
             name_of(e),
             voice_at(segments, e.track, e.start_ms, e.end_ms),
@@ -674,7 +676,7 @@ fn by_clues_and_elimination(
         }
         let n = full_name(&n, &known, &handles);
         let entry = score.entry(v).or_default().entry(n.clone()).or_default();
-        if e.from == Kind::Clue {
+        if matches!(e.from, Kind::Clue | Kind::Floor) {
             *entry += e.strength;
         } else {
             *entry -= e.strength;
@@ -697,10 +699,12 @@ fn by_clues_and_elimination(
     }
 
     // Elimination: one voice that talks and one person left.
+    // People known to be there, and names a clue says someone is (not
+    // ones only ever ruled out: "Felix", "Claude" said in passing).
     let mut candidates: Vec<String> = known.clone();
     for s in score.values() {
-        for n in s.keys() {
-            if !candidates.iter().any(|c| same_name(c, n)) {
+        for (n, w) in s {
+            if *w > 0.0 && !candidates.iter().any(|c| same_name(c, n)) {
                 candidates.push(n.clone());
             }
         }
@@ -765,8 +769,9 @@ fn one_letter_off(a: &str, b: &str) -> bool {
 /// knows: matched to the invite ("joseph" is "Joseph Chong" when the invite
 /// has "Josephchong"). Lines handed to the user are dropped (on a call
 /// they're never on the call's track, and their mic is theirs anyway), and
-/// with an invite so are names nobody invited sounds like: speech
-/// recognition's mishearings.
+/// with an invite so are names on the call nobody invited sounds like:
+/// speech recognition's mishearings. In the room (the mic) a guest needn't
+/// be on the invite.
 pub fn floor_turns(
     turns: &[super::floor::Turn],
     invite: Option<&super::calendar::Invite>,
@@ -804,9 +809,10 @@ pub fn floor_turns(
                     sounds_like(said, a).then(|| a.clone())
                 })
                 .collect();
+            // Someone in the room with the user (the mic) needn't be invited.
             let name = match matches.as_slice() {
                 [one] => one.clone(),
-                [] if invite.attendees.is_empty() => said.to_string(),
+                [] if invite.attendees.is_empty() || t.source == Source::Mic => said.to_string(),
                 _ => return None,
             };
             Some(super::floor::Turn { name, ..t.clone() })
@@ -1240,6 +1246,65 @@ mod tests {
         let mut names = BTreeMap::new();
         name_me(&segments[1..], &evidence, Some("Kaspar"), &mut names);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn in_the_room_a_guest_named_in_passing_and_the_one_invited_get_named() {
+        use super::super::diarize::ME;
+        let mut segments = vec![
+            seg(0, 40, Some(0)),
+            seg(40, 70, Some(2)),
+            seg(70, 200, Some(ME)),
+        ];
+        for s in &mut segments {
+            s.source = Source::Mic;
+        }
+        let invite = super::super::calendar::Invite {
+            attendees: vec!["Shubham Rampalliwar".into()],
+            me: Some("Kaspar".into()),
+            ..Default::default()
+        };
+        // The conversation hands lines to "Bering", who wasn't invited.
+        let floor = vec![super::super::floor::Turn {
+            source: Source::Mic,
+            start_ms: 45_000,
+            end_ms: 60_000,
+            name: "Bering".into(),
+            said: "Bering".into(),
+        }];
+        let turns = floor_turns(&floor, Some(&invite));
+        assert_eq!(turns.len(), 1);
+        let ruled_out = |name: &str, at_s: u64| Evidence {
+            track: Source::Mic,
+            start_ms: at_s * 1000,
+            end_ms: (at_s + 5) * 1000,
+            who: Who::Name(name.into()),
+            strength: 0.5,
+            from: Kind::NotClue,
+        };
+        let mut evidence: Vec<Evidence> = turns
+            .into_iter()
+            .map(|t| Evidence {
+                track: t.source,
+                start_ms: t.start_ms,
+                end_ms: t.end_ms,
+                who: Who::Name(t.name),
+                strength: FLOOR,
+                from: Kind::Floor,
+            })
+            .collect();
+        evidence.extend([
+            ruled_out("Felix", 50),
+            ruled_out("Claude", 5),
+            name_evidence("Shubham Rampalliwar", Kind::Invited),
+            name_evidence("Kaspar", Kind::Myself),
+        ]);
+        let names = resolve(&mut segments, &evidence, &BTreeMap::new());
+        assert_eq!(names.get(&2).map(String::as_str), Some("Bering"));
+        assert_eq!(
+            names.get(&0).map(String::as_str),
+            Some("Shubham Rampalliwar")
+        );
     }
 
     fn seen(at_s: u64, name: &str) -> Seen {
