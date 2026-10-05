@@ -48,6 +48,22 @@ impl Job {
     }
 }
 
+/// The invited people's names, spelled right in this meeting only (see
+/// [`super::calendar::name_words`]). Reads the invite and keeps it with the
+/// meeting.
+fn invite_words(dir: &std::path::Path) -> Vec<String> {
+    let Some(info) = super::manager::read_info(dir) else {
+        return Vec::new();
+    };
+    let end = info.ended_at.unwrap_or(info.started_at + 60 * 60 * 1000);
+    super::calendar::for_meeting(dir, info.started_at, end);
+    let words = super::calendar::name_words(dir, info.started_at, end);
+    if !words.is_empty() {
+        log::info!("Meeting vocabulary: {} words from the invite", words.len());
+    }
+    words
+}
+
 impl MeetingManager {
     /// Queue work that was waiting or running when Handy last quit.
     pub fn resume_transcriptions(&self) {
@@ -404,6 +420,7 @@ impl MeetingManager {
         let engine = super::local_engine(&settings.selected_model);
         log::info!("Transcribing meeting {id} with {engine}");
         let language = super::language::pinned(&languages);
+        let words = invite_words(&dir);
         tm.set_meeting_job(true);
         let result = pipeline::run(
             &dir,
@@ -413,7 +430,7 @@ impl MeetingManager {
             speaker_model.as_deref(),
             voiceprint.as_deref(),
             &engine,
-            |audio| self.transcribe_chunk(&tm, audio, language),
+            |audio| self.transcribe_chunk(&tm, audio, language, &words),
             progress,
         );
         tm.set_meeting_job(false);
@@ -532,7 +549,8 @@ impl MeetingManager {
             let model = transcribe_cpp::Model::load(&path)
                 .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
             let mut session = model.session().map_err(|e| e.to_string())?;
-            let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+            let mut settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+            crate::managers::transcription::add_words(&mut settings, &invite_words(dir));
             // One language is named; a mix is left to the model, chunk by chunk.
             let language = super::language::pinned(languages);
             let engine = super::local_engine(model_id);
@@ -563,8 +581,9 @@ impl MeetingManager {
         tm: &TranscriptionManager,
         audio: Vec<f32>,
         language: Option<&str>,
+        words: &[String],
     ) -> Result<String, Stopped> {
-        match self.transcribe_once(tm, &audio, language) {
+        match self.transcribe_once(tm, &audio, language, words) {
             Err(Stopped::Failed(e)) if ran_away(&e) => {
                 if audio.len() < 2 * MIN_SPLIT_SAMPLES {
                     log::warn!(
@@ -575,8 +594,8 @@ impl MeetingManager {
                 }
                 let cut = quietest_split(&audio);
                 log::warn!("Meeting chunk ran away; splitting it at {cut} and trying again");
-                let first = self.transcribe_chunk(tm, audio[..cut].to_vec(), language)?;
-                let second = self.transcribe_chunk(tm, audio[cut..].to_vec(), language)?;
+                let first = self.transcribe_chunk(tm, audio[..cut].to_vec(), language, words)?;
+                let second = self.transcribe_chunk(tm, audio[cut..].to_vec(), language, words)?;
                 Ok(format!("{} {}", first.trim(), second.trim())
                     .trim()
                     .to_string())
@@ -590,11 +609,12 @@ impl MeetingManager {
         tm: &TranscriptionManager,
         audio: &[f32],
         language: Option<&str>,
+        words: &[String],
     ) -> Result<String, Stopped> {
         let mut last_error = String::new();
         for _ in 0..CHUNK_ATTEMPTS {
             self.wait_for_turn(tm)?;
-            match tm.transcribe_for_meeting(audio.to_vec(), language) {
+            match tm.transcribe_for_meeting(audio.to_vec(), language, words) {
                 Ok(text) => return Ok(text),
                 // The same audio decodes the same way: no point retrying.
                 Err(e) if ran_away(&e.to_string()) => return Err(Stopped::Failed(e.to_string())),

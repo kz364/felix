@@ -50,6 +50,25 @@ pub fn for_meeting(dir: &Path, start_ms: i64, end_ms: i64) -> Option<Invite> {
     Some(invite)
 }
 
+/// The words of the invited people's names, to spell right in this
+/// meeting's transcript only. Not e-mail handles ("Peterlai"): nobody says
+/// those. Read from the saved invite, or else the calendar without saving
+/// (while recording, the end is still a guess).
+pub fn name_words(dir: &Path, start_ms: i64, end_ms: i64) -> Vec<String> {
+    let Some(invite) = load(dir).or_else(|| imp::invite_between(start_ms, end_ms)) else {
+        return Vec::new();
+    };
+    let mut words: Vec<String> = Vec::new();
+    for name in invite.attendees.iter().filter(|a| !invite.handles.contains(a)) {
+        for w in crate::rules::name_words(name) {
+            if !words.contains(&w) {
+                words.push(w);
+            }
+        }
+    }
+    words
+}
+
 /// "full", "denied", "not_determined" (or "restricted", "write_only").
 pub fn access() -> &'static str {
     imp::access()
@@ -206,6 +225,20 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_invites_names_are_this_meetings_words_but_not_handles() {
+        let dir = tempfile::tempdir().unwrap();
+        let invite = Invite {
+            title: "Sync".into(),
+            attendees: vec!["Sam Rivera".into(), "Priya".into(), "Peterlai".into()],
+            me: Some("Kaspar".into()),
+            handles: vec!["Peterlai".into()],
+            version: VERSION,
+        };
+        super::super::summary::save_json(dir.path(), FILE, &invite).unwrap();
+        assert_eq!(name_words(dir.path(), 0, 0), vec!["Sam", "Rivera", "Priya"]);
+    }
 
     #[test]
     fn attendee_names_come_from_names_or_addresses() {

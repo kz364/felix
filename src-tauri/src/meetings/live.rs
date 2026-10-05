@@ -467,7 +467,8 @@ enum Engine {
     Remote(Remote),
     /// The dictation model, when dictation isn't using it, held to the
     /// meeting's language if it has just one.
-    Local(AppHandle, Option<String>),
+    /// The dictation model, in the meeting's language, with its own words.
+    Local(AppHandle, Option<String>, Vec<String>),
     /// A model loaded for meetings, set aside while dictation runs.
     Own {
         app: AppHandle,
@@ -532,7 +533,7 @@ impl Engine {
                 )
                 .map_err(|e| e.to_string()))
             }
-            Engine::Local(app, language) => {
+            Engine::Local(app, language, words) => {
                 let recording = app
                     .try_state::<Arc<AudioRecordingManager>>()
                     .is_some_and(|a| a.is_recording());
@@ -546,7 +547,7 @@ impl Engine {
                     return Err(Busy);
                 }
                 Ok(tm
-                    .transcribe_for_meeting(audio.to_vec(), language.as_deref())
+                    .transcribe_for_meeting(audio.to_vec(), language.as_deref(), words)
                     .map_err(|e| e.to_string()))
             }
         }
@@ -555,7 +556,7 @@ impl Engine {
 
 /// While recording: keep `live.json` up to date until `stop` is set.
 pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBool>) {
-    let settings = crate::rules::with_rules(crate::settings::get_settings(app));
+    let mut settings = crate::rules::with_rules(crate::settings::get_settings(app));
     // The remote engine, or the local model to use; a model of the meeting's
     // own is loaded on the live thread, not here.
     let (remote, local_model) = match Remote::from_settings(&settings) {
@@ -610,10 +611,15 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(dir.clone(), None);
+            // The invited people's names, for this meeting only.
+            let now = chrono::Utc::now().timestamp_millis();
+            let started = super::manager::read_info(&dir).map_or(now, |i| i.started_at);
+            let words = super::calendar::name_words(&dir, started, now.max(started) + 30 * 60 * 1000);
+            crate::managers::transcription::add_words(&mut settings, &words);
             let language = super::language::pinned(&settings.meeting_languages).map(str::to_string);
             let shared = || {
                 (
-                    Engine::Local(app.clone(), language.clone()),
+                    Engine::Local(app.clone(), language.clone(), words.clone()),
                     super::local_engine(&settings.selected_model),
                 )
             };

@@ -298,6 +298,8 @@ thread_local! {
     /// The language of the meeting whose chunk this thread is running, when
     /// it's known: it stands in for dictation's language for that chunk.
     static MEETING_LANGUAGE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// The meeting's own vocabulary (its attendees' names), for this chunk.
+    static MEETING_WORDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 impl TranscriptionManager {
@@ -450,6 +452,7 @@ impl TranscriptionManager {
         &self,
         audio: Vec<f32>,
         language: Option<&str>,
+        words: &[String],
     ) -> Result<String> {
         if self.lock_engine().is_none() {
             return Err(anyhow::anyhow!("The transcription engine is busy"));
@@ -457,7 +460,9 @@ impl TranscriptionManager {
         self.meeting_lease.store(true, Ordering::Release);
         IN_MEETING_CHUNK.with(|c| c.set(true));
         MEETING_LANGUAGE.with(|l| *l.borrow_mut() = language.map(str::to_string));
+        MEETING_WORDS.with(|w| *w.borrow_mut() = words.to_vec());
         let result = self.transcribe(audio);
+        MEETING_WORDS.with(|w| w.borrow_mut().clear());
         MEETING_LANGUAGE.with(|l| *l.borrow_mut() = None);
         IN_MEETING_CHUNK.with(|c| c.set(false));
         // Clear under the lock so a waiter can't miss the wake-up.
@@ -1477,6 +1482,7 @@ impl TranscriptionManager {
         if let Some(language) = MEETING_LANGUAGE.with(|l| l.borrow().clone()) {
             settings.selected_language = language;
         }
+        MEETING_WORDS.with(|w| add_words(&mut settings, &w.borrow()));
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
@@ -2300,6 +2306,15 @@ fn run_cpp(
         }
     }
     Ok((text, detected))
+}
+
+/// Add `words` to the vocabulary, once each.
+pub(crate) fn add_words(settings: &mut AppSettings, words: &[String]) {
+    for w in words {
+        if !settings.custom_words.iter().any(|c| c.trim() == w) {
+            settings.custom_words.push(w.clone());
+        }
+    }
 }
 
 /// Transcribe with a transcribe-cpp model the way a dictation does, then

@@ -330,7 +330,7 @@ fn mac_name() -> &'static str {
 }
 
 /// Name words worth spelling: letters only, two or more of them.
-fn name_words(full: &str) -> Vec<String> {
+pub(crate) fn name_words(full: &str) -> Vec<String> {
     full.split_whitespace()
         .filter(|w| w.chars().count() >= 2 && w.chars().all(char::is_alphabetic))
         .map(str::to_string)
