@@ -850,6 +850,7 @@ pub fn label_with(
     let (mut speakers, window_margins) =
         group_voices_with(embeddings, &Grouping::default(), &names);
     merge_same_voices(embeddings, &mut speakers, &names);
+    split_mixed_voices(embeddings, &mut speakers, &names);
     if let Some(print) = voiceprint {
         mark_me(embeddings, &mut speakers, print);
     }
@@ -943,6 +944,110 @@ pub fn merge_same_voices(embeddings: &[Vec<f32>], speakers: &mut [u32], names: &
         let r = root(*s as usize);
         let i = order.iter().position(|&o| o == r).unwrap_or_else(|| {
             order.push(r);
+            order.len() - 1
+        });
+        *s = i as u32;
+    }
+}
+
+/// A part of a voice that's at least this share of its windows...
+const SPLIT_SHARE: f32 = 0.15;
+/// ...and this many windows (about 45 s) can be someone else.
+const SPLIT_WINDOWS: usize = 30;
+
+/// Look inside each voice again, on its own. Grouping takes the meeting's
+/// mean off first, and when one person talks most of the time that mean is
+/// their voice: everyone else then looks alike and they become one voice.
+/// In an in-person meeting where the user talked three quarters of the time,
+/// two others (0.27 alike) came out as one; grouped alone they part. Only
+/// sizeable parts plainly not one person (below [`super::remembered::SAME_PERSON`])
+/// are split off. Renumbers in order of first window.
+pub fn split_mixed_voices(embeddings: &[Vec<f32>], speakers: &mut [u32], names: &[Option<u32>]) {
+    let n = speakers.iter().max().map_or(0, |m| *m as usize + 1);
+    let mut next = n as u32;
+    for v in 0..n as u32 {
+        let idx: Vec<usize> = (0..speakers.len()).filter(|&i| speakers[i] == v).collect();
+        if idx.len() < 2 * SPLIT_WINDOWS {
+            continue;
+        }
+        let sub: Vec<Vec<f32>> = idx.iter().map(|&i| embeddings[i].clone()).collect();
+        let sub_names: Vec<Option<u32>> =
+            idx.iter().map(|&i| names.get(i).copied().flatten()).collect();
+        let (mut parts, _) = group_voices_with(&sub, &Grouping::default(), &sub_names);
+        merge_same_voices(&sub, &mut parts, &sub_names);
+        let k = parts.iter().max().map_or(0, |m| *m as usize + 1);
+        if k < 2 {
+            continue;
+        }
+        let dim = sub[0].len();
+        let mut sums = vec![vec![0.0f32; dim]; k];
+        let mut counts = vec![0usize; k];
+        for (&p, e) in parts.iter().zip(&sub) {
+            for (a, x) in sums[p as usize].iter_mut().zip(unit(e.clone())) {
+                *a += x;
+            }
+            counts[p as usize] += 1;
+        }
+        let min = SPLIT_WINDOWS.max((idx.len() as f32 * SPLIT_SHARE).ceil() as usize);
+        let sim = |a: usize, b: usize| {
+            cosine(&sums[a], &sums[b]) / (norm(&sums[a]) * norm(&sums[b])).max(1e-9)
+        };
+        // Sizeable parts, joined where they could be one person.
+        let big: Vec<usize> = (0..k).filter(|&p| counts[p] >= min).collect();
+        let mut root: Vec<usize> = (0..k).collect();
+        let find = |root: &Vec<usize>, mut p: usize| {
+            while root[p] != p {
+                p = root[p];
+            }
+            p
+        };
+        for (i, &a) in big.iter().enumerate() {
+            for &b in &big[i + 1..] {
+                if sim(a, b) >= super::remembered::SAME_PERSON {
+                    let (ra, rb) = (find(&root, a), find(&root, b));
+                    if ra != rb {
+                        root[rb] = ra;
+                    }
+                }
+            }
+        }
+        let mut people: Vec<usize> = big.iter().map(|&p| find(&root, p)).collect();
+        people.sort_unstable();
+        people.dedup();
+        if people.len() < 2 {
+            continue;
+        }
+        // Small parts go with the nearest sizeable one.
+        let person_of = |p: usize| -> usize {
+            if counts[p] >= min {
+                find(&root, p)
+            } else {
+                *big.iter()
+                    .max_by(|&&a, &&b| sim(p, a).total_cmp(&sim(p, b)))
+                    .map(|b| find(&root, *b))
+                    .as_ref()
+                    .unwrap()
+            }
+        };
+        let label: std::collections::BTreeMap<usize, u32> = people
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| (p, if i == 0 { v } else { next + i as u32 - 1 }))
+            .collect();
+        next += people.len() as u32 - 1;
+        for (j, &i) in idx.iter().enumerate() {
+            speakers[i] = label[&person_of(parts[j] as usize)];
+        }
+        log::info!(
+            "Meeting diarization: voice {v} ({} windows) was {} people",
+            idx.len(),
+            people.len()
+        );
+    }
+    let mut order: Vec<u32> = Vec::new();
+    for s in speakers.iter_mut() {
+        let i = order.iter().position(|o| o == s).unwrap_or_else(|| {
+            order.push(*s);
             order.len() - 1
         });
         *s = i as u32;
@@ -1483,6 +1588,28 @@ mod tests {
         assert_ne!(named[0], named[1]);
         assert!(named.iter().step_by(2).all(|&l| l == named[0]));
         assert_eq!(margins.len(), 40);
+    }
+
+    #[test]
+    fn two_people_grouped_as_one_voice_are_split_but_one_person_isnt() {
+        let a: Vec<f32> = (0..32).map(|i| if i < 16 { 1.0 } else { 0.0 }).collect();
+        let b: Vec<f32> = (0..32).map(|i| if i < 16 { 0.0 } else { 1.0 }).collect();
+        let c: Vec<f32> = unit((0..32).map(|i| (i as f32).sin()).collect());
+        // Voice 0 is really a and b taking turns; voice 1 is just c.
+        let mut embs: Vec<Vec<f32>> = (0..80u32)
+            .map(|i| around(if i < 50 { &a } else { &b }, 0.2, i))
+            .collect();
+        embs.extend((0..70u32).map(|i| around(&c, 0.2, 100 + i)));
+        let mut speakers: Vec<u32> = (0..150).map(|i| u32::from(i >= 80)).collect();
+        split_mixed_voices(&embs, &mut speakers, &[]);
+        assert!(speakers[..50].iter().all(|&s| s == 0), "{speakers:?}");
+        assert!(speakers[50..80].iter().all(|&s| s == 1), "{speakers:?}");
+        assert!(speakers[80..].iter().all(|&s| s == 2), "{speakers:?}");
+        // Too little of anyone else to split off.
+        let few: Vec<Vec<f32>> = [&embs[..50], &embs[50..60], &embs[80..90]].concat();
+        let mut speakers = vec![0; few.len()];
+        split_mixed_voices(&few, &mut speakers, &[]);
+        assert!(speakers.iter().all(|&s| s == 0), "{speakers:?}");
     }
 
     #[test]
