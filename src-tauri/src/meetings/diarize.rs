@@ -971,8 +971,10 @@ pub fn split_mixed_voices(embeddings: &[Vec<f32>], speakers: &mut [u32], names: 
             continue;
         }
         let sub: Vec<Vec<f32>> = idx.iter().map(|&i| embeddings[i].clone()).collect();
-        let sub_names: Vec<Option<u32>> =
-            idx.iter().map(|&i| names.get(i).copied().flatten()).collect();
+        let sub_names: Vec<Option<u32>> = idx
+            .iter()
+            .map(|&i| names.get(i).copied().flatten())
+            .collect();
         let (mut parts, _) = group_voices_with(&sub, &Grouping::default(), &sub_names);
         merge_same_voices(&sub, &mut parts, &sub_names);
         let k = parts.iter().max().map_or(0, |m| *m as usize + 1);

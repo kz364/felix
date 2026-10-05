@@ -614,7 +614,8 @@ pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBoo
             // The invited people's names, for this meeting only.
             let now = chrono::Utc::now().timestamp_millis();
             let started = super::manager::read_info(&dir).map_or(now, |i| i.started_at);
-            let words = super::calendar::name_words(&dir, started, now.max(started) + 30 * 60 * 1000);
+            let words =
+                super::calendar::name_words(&dir, started, now.max(started) + 30 * 60 * 1000);
             crate::managers::transcription::add_words(&mut settings, &words);
             let language = super::language::pinned(&settings.meeting_languages).map(str::to_string);
             let shared = || {

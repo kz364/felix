@@ -59,7 +59,11 @@ pub fn name_words(dir: &Path, start_ms: i64, end_ms: i64) -> Vec<String> {
         return Vec::new();
     };
     let mut words: Vec<String> = Vec::new();
-    for name in invite.attendees.iter().filter(|a| !invite.handles.contains(a)) {
+    for name in invite
+        .attendees
+        .iter()
+        .filter(|a| !invite.handles.contains(a))
+    {
         for w in crate::rules::name_words(name) {
             if !words.contains(&w) {
                 words.push(w);
