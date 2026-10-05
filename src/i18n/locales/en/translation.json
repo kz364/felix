@@ -1347,6 +1347,11 @@
         "description": "The downloaded model that transcribes meetings on this Mac. The dictation model shares memory with dictation; another model is loaded alongside it during meetings and makes way while you dictate.",
         "dictation": "Same as dictation ({{model}})"
       },
+      "userName": {
+        "title": "Your name",
+        "description": "How your name is written. Your own voice in meetings is always labelled with it, and it's always spelled right when you dictate. Empty uses your Mac account's name.",
+        "placeholder": "Your Mac account's name"
+      },
       "languages": {
         "title": "Meeting languages",
         "description": "The languages your meetings are held in. Pick more than one if people switch between them. Automatic listens to a few stretches of each meeting to find out. Meetings go to a model that knows them all.",

@@ -51,7 +51,7 @@ fn main() -> Result<(), String> {
         ))?;
         summary::save_json(dir, floor::FILE, &turns)?;
     }
-    let names = speakers::apply(dir);
+    let names = speakers::apply(dir, std::env::var("ME").ok().as_deref());
     let after = pipeline::load(dir).ok_or("no transcript")?;
     println!("after:  {:?}", talk(&after.segments, &names));
     Ok(())

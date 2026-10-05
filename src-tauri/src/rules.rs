@@ -294,30 +294,38 @@ pub(crate) fn add_to(settings: &mut AppSettings, rules: &Rules) {
 }
 
 /// The settings with the current rules file added, and the user's own name
-/// (from their Mac account) as vocabulary.
+/// (see [`user_name`]) as vocabulary.
 pub(crate) fn with_rules(mut settings: AppSettings) -> AppSettings {
     add_to(&mut settings, &current());
-    for word in my_name() {
+    let words = name_words(&user_name(&settings).unwrap_or_default());
+    for word in words {
         if !settings.custom_words.iter().any(|w| w.trim() == word) {
-            settings.custom_words.push(word.clone());
+            settings.custom_words.push(word);
         }
     }
     settings
 }
 
-/// The words of the Mac account's full name ("Kaspar Hidayat"), so the
-/// user's own name is always spelled right. Read once.
-fn my_name() -> &'static [String] {
-    static NAME: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+/// The user's name: as they set it, or else their Mac account's full name
+/// ("Kaspar Hidayat").
+pub(crate) fn user_name(settings: &AppSettings) -> Option<String> {
+    Some(settings.user_name.trim())
+        .filter(|n| !n.is_empty())
+        .or_else(|| Some(mac_name()).filter(|n| !n.is_empty()))
+        .map(str::to_string)
+}
+
+/// The Mac account's full name. Read once.
+fn mac_name() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     NAME.get_or_init(|| {
-        let full = std::process::Command::new("/usr/bin/id")
+        std::process::Command::new("/usr/bin/id")
             .arg("-F")
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
-        name_words(&full)
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
     })
 }
 

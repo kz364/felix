@@ -8,7 +8,7 @@
 //! `--write` also saves the names into the meeting's `meeting.json`, to fix
 //! a real meeting's names. Only with Felix quit, so it can't save over them.
 
-use handy_app_lib::meetings::{pipeline, speakers, transcript::Source};
+use handy_app_lib::meetings::{pipeline, speakers};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -16,7 +16,7 @@ fn main() {
     let dir = std::env::args().nth(1).expect("meeting dir");
     let write = std::env::args().any(|a| a == "--write");
     let dir = Path::new(&dir);
-    let names = speakers::apply(dir);
+    let names = speakers::apply(dir, std::env::var("ME").ok().as_deref());
     if write {
         let path = dir.join("meeting.json");
         let mut info: serde_json::Value =
@@ -28,7 +28,7 @@ fn main() {
     }
     let t = pipeline::load(dir).expect("transcript");
     let mut talk: BTreeMap<u32, u64> = BTreeMap::new();
-    for s in t.segments.iter().filter(|s| s.source == Source::System) {
+    for s in &t.segments {
         if let Some(v) = s.speaker {
             *talk.entry(v).or_default() += s.end_ms - s.start_ms;
         }

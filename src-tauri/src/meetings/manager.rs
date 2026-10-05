@@ -1372,9 +1372,10 @@ pub async fn vouch_meeting(
     }
     let info = read_info(&dir).ok_or("The meeting isn't there any more")?;
     let task_id = id.clone();
+    let me = crate::rules::user_name(&crate::settings::get_settings(&app));
     let (names, data) = tauri::async_runtime::spawn_blocking(move || {
         super::remembered::set_vouch(&data, &task_id, info.started_at, &vouch)?;
-        Ok::<_, String>((super::speakers::apply(&dir), data))
+        Ok::<_, String>((super::speakers::apply(&dir, me.as_deref()), data))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -1612,6 +1613,8 @@ pub struct MeetingSettingsUpdate {
     pub transcriber: Option<super::MeetingTranscriber>,
     /// A model id, or empty for the dictation model.
     pub model: Option<String>,
+    /// How the user's name is written (see `AppSettings::user_name`).
+    pub user_name: Option<String>,
     pub languages: Option<Vec<String>>,
     pub diarize: Option<bool>,
     pub detect_calls: Option<bool>,
@@ -1648,6 +1651,9 @@ pub fn change_meeting_settings(
     }
     if let Some(v) = update.model {
         settings.meeting_model = v;
+    }
+    if let Some(v) = update.user_name {
+        settings.user_name = v.trim().to_string();
     }
     if let Some(v) = update.languages {
         settings.meeting_languages = v;

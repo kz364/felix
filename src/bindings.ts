@@ -2364,6 +2364,12 @@ meeting_transcriber?: MeetingTranscriber;
  */
 meeting_model?: string; 
 /**
+ * The user's name as it should be written: their voice in a meeting
+ * is always labelled with it, and it's always spelled right. Empty:
+ * the Mac account's name.
+ */
+user_name?: string; 
+/**
  * Tell voices apart: everyone in an in-person meeting, the other side
  * (and anyone in the room) on a call.
  */
@@ -2906,7 +2912,7 @@ export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean |
 /**
  * A model id, or empty for the dictation model.
  */
-model: string | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
+model: string | null; user_name: string | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */

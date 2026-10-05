@@ -777,6 +777,11 @@ pub struct AppSettings {
     /// model, sharing it with dictation instead of loading a second one.
     #[serde(default)]
     pub meeting_model: String,
+    /// The user's name as it should be written: their voice in a meeting
+    /// is always labelled with it, and it's always spelled right. Empty:
+    /// the Mac account's name.
+    #[serde(default)]
+    pub user_name: String,
     /// The languages meetings are held in (ISO codes). Empty: found from
     /// the recording. Meetings go to a model that knows them all.
     #[serde(default)]
@@ -1569,6 +1574,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_input_boost_db: 0.0,
         meeting_transcriber: Default::default(),
         meeting_model: String::new(),
+        user_name: String::new(),
         meeting_languages: Vec::new(),
         meeting_diarize: true,
         meeting_detect_calls: true,

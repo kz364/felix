@@ -244,6 +244,11 @@ impl MeetingManager {
         }
     }
 
+    /// The user's name, for their own voice.
+    fn user_name(&self) -> Option<String> {
+        crate::rules::user_name(&crate::settings::get_settings(&self.app))
+    }
+
     /// Transcribe one meeting. True if it's done and can be summarised.
     fn transcribe(&self, id: &str) -> bool {
         match self.transcribe_inner(id) {
@@ -251,9 +256,10 @@ impl MeetingManager {
                 log::info!("Meeting {id} transcribed");
                 self.apply_corrections(id);
                 self.carry_names(id);
+                let me = self.user_name();
                 let names = self
                     .dir_of(id)
-                    .map(|dir| super::speakers::apply(&dir))
+                    .map(|dir| super::speakers::apply(&dir, me.as_deref()))
                     .unwrap_or_default();
                 self.update_info(id, |i| {
                     i.transcript = Some(TranscriptStatus::Done);
@@ -782,12 +788,13 @@ impl MeetingManager {
         };
         let end = info.ended_at.unwrap_or(info.started_at + 60 * 60 * 1000);
         let invite = super::calendar::for_meeting(dir, info.started_at, end).unwrap_or_default();
+        let me = self.user_name().or(invite.me);
         let turns = match super::floor::find(
             careful.as_ref().unwrap_or(llm),
             &transcript.segments,
             &label,
             &invite.attendees,
-            invite.me.as_deref(),
+            me.as_deref(),
             summary::CLEANUP_EFFORT,
         )
         .await
@@ -806,7 +813,7 @@ impl MeetingManager {
         if turns.is_empty() {
             return None;
         }
-        let names = super::speakers::apply(dir);
+        let names = super::speakers::apply(dir, self.user_name().as_deref());
         self.update_info(id, |i| i.app_speakers = names);
         let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());
         super::manager::read_info(dir)
@@ -840,7 +847,7 @@ impl MeetingManager {
         );
         summary::save_json(dir, super::clues::TURNS_FILE, &turns).ok()?;
         summary::save_json(dir, super::clues::FILE, &clues).ok()?;
-        let names = super::speakers::apply(dir);
+        let names = super::speakers::apply(dir, self.user_name().as_deref());
         if names == info.app_speakers {
             if !turns.is_empty() {
                 let _ = tauri::Emitter::emit(&self.app, "meetings-changed", ());

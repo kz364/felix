@@ -442,6 +442,37 @@ fn finish(
     guessed
 }
 
+/// The user's own voice, when it's labelled (in person), always has their
+/// name: as set, or else from the invite. Never a clue's spelling of it
+/// ("Casper").
+fn name_me(
+    segments: &[Segment],
+    evidence: &[Evidence],
+    me: Option<&str>,
+    names: &mut BTreeMap<u32, String>,
+) {
+    let me = me.map(str::to_string).or_else(|| {
+        evidence
+            .iter()
+            .filter(|e| e.from == Kind::Myself)
+            .find_map(|e| match &e.who {
+                Who::Name(n) => Some(n.clone()),
+                Who::Voice(_) => None,
+            })
+    });
+    let heard = segments
+        .iter()
+        .any(|s| s.speaker == Some(super::diarize::ME));
+    match me {
+        Some(me) if heard => {
+            names.insert(super::diarize::ME, me);
+        }
+        _ => {
+            names.remove(&super::diarize::ME);
+        }
+    }
+}
+
 fn same_name(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
@@ -637,6 +668,10 @@ fn by_clues_and_elimination(
         ) else {
             continue;
         };
+        // The user's own voice is named from the settings, not clues.
+        if v == super::diarize::ME {
+            continue;
+        }
         let n = full_name(&n, &known, &handles);
         let entry = score.entry(v).or_default().entry(n.clone()).or_default();
         if e.from == Kind::Clue {
@@ -984,8 +1019,9 @@ pub fn record(dir: &Path, t: &Transcript) -> Vec<Evidence> {
 
 /// After transcription (and again once clues are found): record the
 /// evidence and work out the names. Writes the transcript back if the
-/// names split the system track.
-pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
+/// names split the system track. `me` is the user's name (see
+/// [`crate::rules::user_name`]): their own voice always gets it.
+pub fn apply(dir: &Path, me: Option<&str>) -> BTreeMap<u32, String> {
     let Some(mut t) = super::pipeline::load(dir) else {
         return BTreeMap::new();
     };
@@ -1011,7 +1047,10 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
             &BTreeMap::<String, u32>::new(),
         );
     }
-    let evidence = record(dir, &t);
+    let mut evidence = record(dir, &t);
+    if let Some(me) = me {
+        evidence.push(name_evidence(me, Kind::Myself));
+    }
     // Only voices still numbered as when their prints were taken.
     let prints: BTreeMap<u32, Vec<f32>> = if regrouped {
         BTreeMap::new()
@@ -1034,6 +1073,7 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
         &mut names,
         &Remembered { named, unknown },
     );
+    name_me(&t.segments, &evidence, me, &mut names);
     let doubts = doubts(dir, &t.segments, &user, &guessed);
     let _ = super::summary::save_json(dir, DOUBTS_FILE, &doubts);
     // Saved when the voices were told apart again or the names took over
@@ -1164,6 +1204,42 @@ mod tests {
             echo: false,
             speaker,
         }
+    }
+
+    #[test]
+    fn the_users_voice_has_their_name_never_a_clues_spelling() {
+        use super::super::diarize::ME;
+        let mut segments = vec![seg(0, 30, Some(ME)), seg(30, 60, Some(0))];
+        for s in &mut segments {
+            s.source = Source::Mic;
+        }
+        let clue = |name: &str, from_s: u64| Evidence {
+            track: Source::Mic,
+            start_ms: from_s * 1000,
+            end_ms: (from_s + 10) * 1000,
+            who: Who::Name(name.into()),
+            strength: 1.0,
+            from: Kind::Clue,
+        };
+        let mut evidence = vec![
+            clue("Casper", 5),
+            clue("Casper", 15),
+            clue("Shubham", 35),
+            name_evidence("Kaspar", Kind::Myself),
+        ];
+        let mut names = resolve(&mut segments, &evidence, &BTreeMap::new());
+        name_me(&segments, &evidence, Some("Kaspar Hidayat"), &mut names);
+        assert_eq!(names.get(&ME).map(String::as_str), Some("Kaspar Hidayat"));
+        assert_eq!(names.get(&0).map(String::as_str), Some("Shubham"));
+        // Without a setting, the invite's name for the user.
+        evidence.retain(|e| e.from != Kind::Clue);
+        let mut names = BTreeMap::new();
+        name_me(&segments, &evidence, None, &mut names);
+        assert_eq!(names.get(&ME).map(String::as_str), Some("Kaspar"));
+        // On a call the user's voice isn't labelled: nothing to name.
+        let mut names = BTreeMap::new();
+        name_me(&segments[1..], &evidence, Some("Kaspar"), &mut names);
+        assert!(names.is_empty());
     }
 
     fn seen(at_s: u64, name: &str) -> Seen {

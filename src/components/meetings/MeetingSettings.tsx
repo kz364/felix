@@ -4,6 +4,7 @@ import { commands, type MeetingLlm, type MeetingTranscriber } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { useModelStore } from "../../stores/modelStore";
 import { Dropdown } from "../ui/Dropdown";
+import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Slider } from "../ui/Slider";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
@@ -49,6 +50,38 @@ const MeetingModel: React.FC = () => {
   );
 };
 
+/** The user's name: always their voice's label, always spelled right. */
+const UserName: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const saved = getSetting("user_name") ?? "";
+  const [name, setName] = useState(saved);
+  useEffect(() => setName(saved), [saved]);
+  const save = () => {
+    if (name.trim() !== saved) updateSetting("user_name", name.trim());
+  };
+  return (
+    <SettingContainer
+      title={t("meetings.settings.userName.title")}
+      description={t("meetings.settings.userName.description")}
+      descriptionMode="tooltip"
+      grouped
+      layout="horizontal"
+    >
+      <Input
+        type="text"
+        value={name}
+        placeholder={t("meetings.settings.userName.placeholder")}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+        disabled={isUpdating("user_name")}
+        className="w-48"
+      />
+    </SettingContainer>
+  );
+};
+
 /** How meetings are transcribed, told apart, tidied and summarised. */
 export const MeetingSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -69,6 +102,7 @@ export const MeetingSettings: React.FC = () => {
 
   return (
     <>
+      <UserName />
       <SettingContainer
         title={t("meetings.settings.transcriber.title")}
         description={t("meetings.settings.transcriber.description")}
