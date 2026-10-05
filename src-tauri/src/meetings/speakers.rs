@@ -227,7 +227,10 @@ fn from_extension(segments: &[Segment], heard: &[super::extension::Logged]) -> V
     for h in heard {
         match &h.message {
             Message::Speaking { names, .. } if names.len() <= 2 => {
-                out.extend(names.iter().map(|name| Evidence {
+                // Meet's tooltips can come through as names ("Others might
+                // still see your full video.").
+                let names = names.iter().filter(|n| active_speaker::looks_like_name(n));
+                out.extend(names.map(|name| Evidence {
                     track: Source::System,
                     start_ms: h.at_ms,
                     end_ms: h.at_ms + active_speaker::TTL_MS,
@@ -237,7 +240,7 @@ fn from_extension(segments: &[Segment], heard: &[super::extension::Logged]) -> V
                 }));
             }
             Message::Participants { names, .. } => {
-                for n in names {
+                for n in names.iter().filter(|n| active_speaker::looks_like_name(n)) {
                     if !out.iter().any(|e: &Evidence| {
                         e.from == Kind::Participant && e.who == Who::Name(n.clone())
                     }) {
@@ -304,7 +307,7 @@ pub fn resolve(
     evidence: &[Evidence],
     user: &BTreeMap<u32, String>,
 ) -> BTreeMap<u32, String> {
-    let mut names = call_app_names(segments, evidence);
+    let mut names = call_app_names(segments, evidence, &BTreeMap::new());
     finish(segments, evidence, user, &mut names, &Remembered::default());
     names
 }
@@ -318,8 +321,14 @@ pub struct Remembered {
     pub unknown: BTreeMap<u32, String>,
 }
 
-/// The names the call app (or the extension) put on voices.
-pub fn call_app_names(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeMap<u32, String> {
+/// The names the call app (or the extension) put on voices. `prints` are
+/// the voices' prints, which tell one person split into several voices
+/// from a room of people on one account.
+pub fn call_app_names(
+    segments: &mut [Segment],
+    evidence: &[Evidence],
+    prints: &BTreeMap<u32, Vec<f32>>,
+) -> BTreeMap<u32, String> {
     // The extension sees the page itself; when it was there, the
     // accessibility tree's guesses are left out.
     let has_extension = evidence
@@ -330,9 +339,13 @@ pub fn call_app_names(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeM
         Kind::Extension | Kind::Caption | Kind::Floor => true,
         _ => false,
     };
+    let mine = my_tile(segments, evidence);
     let mut seen: Vec<Seen> = Vec::new();
     for e in evidence.iter().filter(marks) {
         let Who::Name(name) = &e.who else { continue };
+        if mine.as_deref() == Some(name.as_str()) && e.from != Kind::Floor {
+            continue;
+        }
         let votes = if matches!(e.from, Kind::Caption | Kind::Floor) {
             CAPTION_VOTES
         } else {
@@ -346,8 +359,58 @@ pub fn call_app_names(segments: &mut [Segment], evidence: &[Evidence]) -> BTreeM
         }
     }
     seen.sort_by_key(|s| s.at_ms);
-    active_speaker::names_for(segments, &seen)
+    active_speaker::names_for(segments, &seen, prints)
 }
+
+/// The user's own tile lights up when they talk, and that's the mic, not a
+/// voice on the call: their name in the call app, if one is. It's the name
+/// marked talking mostly while the mic has speech, or their name on the
+/// invite marked at least as often during the mic as during the call.
+fn my_tile(segments: &[Segment], evidence: &[Evidence]) -> Option<String> {
+    let me = evidence.iter().find_map(|e| match (&e.from, &e.who) {
+        (Kind::Myself, Who::Name(n)) => Some(n.to_lowercase()),
+        _ => None,
+    });
+    let talking = |track: Source, at: u64| {
+        segments.iter().any(|s| {
+            s.source == track
+                && !s.echo
+                && !s.text.trim().is_empty()
+                && s.start_ms <= at
+                && at <= s.end_ms
+        })
+    };
+    let mut counts: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
+    for e in evidence
+        .iter()
+        .filter(|e| matches!(e.from, Kind::Extension | Kind::ActiveSpeaker))
+    {
+        let Who::Name(name) = &e.who else { continue };
+        let c = counts.entry(name.as_str()).or_default();
+        c.0 += 1;
+        c.1 += usize::from(talking(Source::Mic, e.start_ms));
+        c.2 += usize::from(talking(Source::System, e.start_ms));
+    }
+    let is_me = |name: &str| {
+        me.as_deref().is_some_and(|me| {
+            let first = |n: &str| n.split_whitespace().next().unwrap_or("").to_lowercase();
+            name.to_lowercase() == me || first(name) == first(me)
+        })
+    };
+    counts
+        .into_iter()
+        .filter(|(name, (all, mic, system))| {
+            (*all >= MY_TILE_MIN && *mic as f32 >= MY_TILE_SHARE * *all as f32 && mic > system)
+                || (is_me(name) && mic >= system && *mic > 0)
+        })
+        .max_by_key(|(_, (_, mic, _))| *mic)
+        .map(|(name, _)| name.to_string())
+}
+
+/// Marks it takes to tell the user's tile by when it lights up…
+const MY_TILE_MIN: usize = 10;
+/// …and the share of them while the mic has speech.
+const MY_TILE_SHARE: f32 = 0.5;
 
 /// After the call app: remembered voices, then clues and elimination, then
 /// "Unknown voice N" for the rest that were heard before.
@@ -949,7 +1012,20 @@ pub fn apply(dir: &Path) -> BTreeMap<u32, String> {
         );
     }
     let evidence = record(dir, &t);
-    let mut names = call_app_names(&mut t.segments, &evidence);
+    // Only voices still numbered as when their prints were taken.
+    let prints: BTreeMap<u32, Vec<f32>> = if regrouped {
+        BTreeMap::new()
+    } else {
+        super::summary::load_json::<BTreeMap<u32, super::remembered::Print>>(
+            dir,
+            super::remembered::PRINTS_FILE,
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(v, p)| (v, p.print))
+        .collect()
+    };
+    let mut names = call_app_names(&mut t.segments, &evidence, &prints);
     let (named, unknown) = super::remembered::apply(dir, &user, &names);
     let guessed = finish(
         &t.segments,
@@ -1126,7 +1202,7 @@ mod tests {
         let mut direct = segments.clone();
         assert_eq!(
             resolve(&mut via_evidence, &evidence, &BTreeMap::new()),
-            active_speaker::names_for(&mut direct, &sightings)
+            active_speaker::names_for(&mut direct, &sightings, &BTreeMap::new())
         );
         assert_eq!(via_evidence, direct);
         assert_eq!(
@@ -1155,7 +1231,7 @@ mod tests {
         let (mut a, mut b) = (one.clone(), one);
         assert_eq!(
             resolve(&mut a, &evidence, &BTreeMap::new()),
-            active_speaker::names_for(&mut b, &sightings)
+            active_speaker::names_for(&mut b, &sightings, &BTreeMap::new())
         );
         assert_eq!(a, b);
     }
@@ -1423,5 +1499,45 @@ mod tests {
         let names = names_by_overlap(&segments, &stretches);
         assert_eq!(names.get(&105).map(String::as_str), Some("Aditya"));
         assert_eq!(names.get(&106), None);
+    }
+
+    #[test]
+    fn the_users_own_tile_never_names_a_voice_on_the_call() {
+        // The user talks 0–20 s on the mic, Sam 20–40 s on the call; the
+        // user's tile ("Kaspar Hidayat") lingers into Sam's first seconds.
+        let mut segments = vec![
+            Segment {
+                source: Source::Mic,
+                ..seg(0, 20, None)
+            },
+            seg(20, 40, Some(100)),
+            seg(40, 42, Some(101)),
+        ];
+        let mut evidence: Vec<Evidence> = (0..22)
+            .map(|i| Evidence {
+                track: Source::System,
+                start_ms: i * 1000,
+                end_ms: i * 1000 + 1500,
+                who: Who::Name("Kaspar Hidayat".into()),
+                strength: EXTENSION_SPEAKING,
+                from: Kind::Extension,
+            })
+            .collect();
+        let mark = evidence[0].clone();
+        evidence.extend((24..40).map(|i| Evidence {
+            who: Who::Name("Sam Rivera".into()),
+            start_ms: i * 1000,
+            end_ms: i * 1000 + 1500,
+            ..mark.clone()
+        }));
+        // A blip at the hand-over has more of the user's marks than Sam's.
+        evidence.extend((40..43).map(|i| Evidence {
+            start_ms: i * 1000,
+            end_ms: i * 1000 + 1500,
+            ..mark.clone()
+        }));
+        let names = call_app_names(&mut segments, &evidence, &BTreeMap::new());
+        assert_eq!(names.get(&100).map(String::as_str), Some("Sam Rivera"));
+        assert!(names.values().all(|n| n != "Kaspar Hidayat"));
     }
 }

@@ -55,7 +55,7 @@ const USABLE_WINDOWS: usize = 40;
 /// like them this much (cosine to their print): the same person through
 /// different mics came out 0.66–0.80 on the user's calls, other people
 /// 0.14–0.32.
-const SAME_PERSON: f32 = 0.6;
+pub const SAME_PERSON: f32 = 0.6;
 /// The extension's speaking marks are trusted this far inside a stretch:
 /// the ring lights up a beat late and lingers.
 const TRIM_MS: u64 = 500;

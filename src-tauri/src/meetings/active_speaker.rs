@@ -29,10 +29,14 @@ const MIN_SHARE: f32 = 0.6;
 /// One voice on the call's track is several people only when a second name
 /// has at least this share of the sightings.
 const SPLIT_SHARE: f32 = 0.1;
-/// One name on several voices, each talking at least this long, is a
-/// room on the call (several people on one account): the voices are
-/// numbered instead of all getting the same name.
+/// One name on several voices that sound like different people, each
+/// talking at least this long, is a room on the call (several people on one
+/// account): the voices are numbered instead of all getting the same name.
 const ROOM_VOICE_MS: u64 = 20_000;
+/// A voice nobody clearly won takes a name no voice has yet when at least
+/// this share of that name's sightings fell on it: someone who spoke little,
+/// with a busier tile lighting up over them.
+const LEFTOVER_SHARE: f32 = 0.5;
 /// Limits on one read of the call app, so a huge browser tree can't stall.
 const MAX_NODES: usize = 4_000;
 const READ_BUDGET: Duration = Duration::from_millis(400);
@@ -98,7 +102,7 @@ fn is_speaker_id(text: &str) -> bool {
     t.contains("speakername") || t.contains("active-speaker") || t.contains("activespeaker")
 }
 
-fn looks_like_name(text: &str) -> bool {
+pub(super) fn looks_like_name(text: &str) -> bool {
     let t = text.trim();
     let words = t.split_whitespace().count();
     let lower = t.to_lowercase();
@@ -187,10 +191,16 @@ fn winner(votes: &BTreeMap<String, usize>, min_votes: usize) -> Option<String> {
 }
 
 /// Names for the voices told apart on the system track (ids from
-/// [`SYSTEM_SPEAKERS`]), where the sightings clearly agree. Several people
-/// in one room on the call show as one name; their voices become
-/// "Name (1)", "Name (2)" in the order they first spoke.
-pub fn name_voices(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
+/// [`SYSTEM_SPEAKERS`]), where the sightings clearly agree. Several voices
+/// under one name that sound like the same person (`prints`, by voice) are
+/// one person the voice step split, and share the name. Voices that sound
+/// different are a room on one account: "Name (1)", "Name (2)" in the order
+/// they first spoke.
+pub fn name_voices(
+    segments: &[Segment],
+    seen: &[Seen],
+    prints: &BTreeMap<u32, Vec<f32>>,
+) -> BTreeMap<u32, String> {
     let mut names = vote_names(segments, seen);
     // How long each voice talks, and when it first does.
     let mut talk: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
@@ -206,19 +216,63 @@ pub fn name_voices(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String>
         by_name.entry(name.clone()).or_default().push(*id);
     }
     for (name, mut ids) in by_name {
-        let talks = |id: &u32| talk.get(id).map_or(0, |t| t.0) >= ROOM_VOICE_MS;
-        if ids.len() < 2 || !ids.iter().all(talks) {
+        if ids.len() < 2 {
             continue;
         }
         ids.sort_by_key(|id| talk.get(id).map_or(u64::MAX, |t| t.1));
-        for (n, id) in ids.into_iter().enumerate() {
-            names.insert(id, format!("{name} ({})", n + 1));
+        let people = same_people(&ids, prints);
+        let talks = |group: &Vec<u32>| {
+            group
+                .iter()
+                .map(|id| talk.get(id).map_or(0, |t| t.0))
+                .sum::<u64>()
+                >= ROOM_VOICE_MS
+        };
+        if people.len() < 2 || !people.iter().all(talks) {
+            continue;
+        }
+        for (n, group) in people.iter().enumerate() {
+            for id in group {
+                names.insert(*id, format!("{name} ({})", n + 1));
+            }
         }
     }
     names
 }
 
-fn vote_names(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
+/// `ids` (in the order they first spoke) grouped into people: a voice joins
+/// the first group with a voice it sounds like (any, as a brief voice's
+/// print is a poor stand-in for the group). Without prints each voice is
+/// its own.
+fn same_people(ids: &[u32], prints: &BTreeMap<u32, Vec<f32>>) -> Vec<Vec<u32>> {
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    for &id in ids {
+        let sounds_like = |other: &u32| match (prints.get(other), prints.get(&id)) {
+            (Some(a), Some(b)) => cosine(a, b) >= super::remembered::SAME_PERSON,
+            _ => false,
+        };
+        let alike = |g: &&mut Vec<u32>| g.iter().any(sounds_like);
+        match groups.iter_mut().find(alike) {
+            Some(g) => g.push(id),
+            None => groups.push(vec![id]),
+        }
+    }
+    groups
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let n = norm(a) * norm(b);
+    if n > 0.0 {
+        dot / n
+    } else {
+        0.0
+    }
+}
+
+/// Each voice's sightings, by name.
+fn votes_by_voice(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, BTreeMap<String, usize>> {
     let mut votes: BTreeMap<u32, BTreeMap<String, usize>> = BTreeMap::new();
     for s in segments.iter().filter(|s| s.source == Source::System) {
         let Some(id) = s.speaker.filter(|&n| n >= SYSTEM_SPEAKERS) else {
@@ -233,9 +287,40 @@ fn vote_names(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
         }
     }
     votes
-        .into_iter()
-        .filter_map(|(id, v)| winner(&v, MIN_VOTES).map(|name| (id, name)))
-        .collect()
+}
+
+/// The clear winners, then, for the voices left, names no voice has yet
+/// whose sightings mostly fell on them (see [`LEFTOVER_SHARE`]).
+fn vote_names(segments: &[Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
+    let votes = votes_by_voice(segments, seen);
+    let mut names: BTreeMap<u32, String> = votes
+        .iter()
+        .filter_map(|(id, v)| winner(v, MIN_VOTES).map(|name| (*id, name)))
+        .collect();
+    let mut on_voices: BTreeMap<&str, usize> = BTreeMap::new();
+    for v in votes.values() {
+        for (name, n) in v {
+            *on_voices.entry(name.as_str()).or_default() += n;
+        }
+    }
+    for (id, v) in &votes {
+        if names.contains_key(id) {
+            continue;
+        }
+        let free: BTreeMap<String, usize> = v
+            .iter()
+            .filter(|(name, _)| !names.values().any(|n| n == *name))
+            .map(|(name, n)| (name.clone(), *n))
+            .collect();
+        let Some(name) = winner(&free, MIN_VOTES) else {
+            continue;
+        };
+        let share = free[&name] as f32 / on_voices.get(name.as_str()).copied().unwrap_or(1) as f32;
+        if share >= LEFTOVER_SHARE {
+            names.insert(*id, name);
+        }
+    }
+    names
 }
 
 /// Without speaker detection: give each system segment the name seen while
@@ -258,7 +343,11 @@ pub fn split_by_name(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, S
 /// The names the call app gave, by speaker id. Without voices on the system
 /// track, or with one voice but several names (a muddy line), the names
 /// split the track instead, setting the segments' speakers.
-pub fn names_for(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, String> {
+pub fn names_for(
+    segments: &mut [Segment],
+    seen: &[Seen],
+    prints: &BTreeMap<u32, Vec<f32>>,
+) -> BTreeMap<u32, String> {
     if seen.is_empty() {
         return BTreeMap::new();
     }
@@ -278,7 +367,7 @@ pub fn names_for(segments: &mut [Segment], seen: &[Seen]) -> BTreeMap<u32, Strin
         .filter(|n| **n as f32 >= SPLIT_SHARE * seen.len() as f32)
         .count();
     if !voices.is_empty() && !(voices.len() == 1 && names_seen >= 2) {
-        return name_voices(segments, seen);
+        return name_voices(segments, seen, prints);
     }
     if voices.len() == 1 {
         for s in segments.iter_mut().filter(|s| s.source == Source::System) {
@@ -434,11 +523,11 @@ mod tests {
         ];
         let mut sightings: Vec<Seen> = (0..5).map(|i| seen(i * 1_000, "Sam")).collect();
         sightings.extend((6..10).map(|i| seen(i * 1_000, "Ana")));
-        let names = name_voices(&segments, &sightings);
+        let names = name_voices(&segments, &sightings, &BTreeMap::new());
         assert_eq!(names.get(&a).unwrap(), "Sam");
         assert_eq!(names.get(&b).unwrap(), "Ana");
         // Too few sightings: no name.
-        assert!(!name_voices(&segments, &sightings[..2]).contains_key(&a));
+        assert!(!name_voices(&segments, &sightings[..2], &BTreeMap::new()).contains_key(&a));
     }
 
     #[test]
@@ -457,7 +546,7 @@ mod tests {
             seg(Source::System, 0, 30_000, Some(a)),
         ];
         let sightings: Vec<Seen> = (0..60).map(|i| seen(i * 1_000, "Yohannes")).collect();
-        let names = name_voices(&segments, &sightings);
+        let names = name_voices(&segments, &sightings, &BTreeMap::new());
         assert_eq!(names[&a], "Yohannes (1)");
         assert_eq!(names[&b], "Yohannes (2)");
         // A brief second voice is more likely the same person: one name.
@@ -465,7 +554,7 @@ mod tests {
             seg(Source::System, 0, 50_000, Some(a)),
             seg(Source::System, 50_000, 55_000, Some(b)),
         ];
-        let names = name_voices(&segments, &sightings);
+        let names = name_voices(&segments, &sightings, &BTreeMap::new());
         assert_eq!(names[&a], "Yohannes");
         assert_eq!(names[&b], "Yohannes");
     }
@@ -497,8 +586,47 @@ mod tests {
             .collect();
         let mut sightings: Vec<Seen> = (0..30).map(|i| seen(i * 5_000 + 1_000, "Era")).collect();
         sightings.push(seen(12_000, "Eugene"));
-        let names = names_for(&mut segments, &sightings);
+        let names = names_for(&mut segments, &sightings, &BTreeMap::new());
         assert_eq!(names[&100], "Era");
         assert!(segments.iter().all(|s| s.speaker == Some(100)));
+    }
+
+    #[test]
+    fn one_person_split_into_voices_keeps_one_name() {
+        let (a, b) = (SYSTEM_SPEAKERS, SYSTEM_SPEAKERS + 1);
+        let segments = vec![
+            seg(Source::System, 0, 30_000, Some(a)),
+            seg(Source::System, 30_000, 60_000, Some(b)),
+        ];
+        let sightings: Vec<Seen> = (0..60).map(|i| seen(i * 1_000, "Hai Song")).collect();
+        // The voice step split one person: the voices sound alike.
+        let alike = BTreeMap::from([(a, vec![1.0, 0.2, 0.0]), (b, vec![0.9, 0.3, 0.1])]);
+        let names = name_voices(&segments, &sightings, &alike);
+        assert_eq!(names[&a], "Hai Song");
+        assert_eq!(names[&b], "Hai Song");
+        // Two people in one room: they don't.
+        let apart = BTreeMap::from([(a, vec![1.0, 0.0, 0.0]), (b, vec![0.0, 1.0, 0.0])]);
+        let names = name_voices(&segments, &sightings, &apart);
+        assert_eq!(names[&a], "Hai Song (1)");
+        assert_eq!(names[&b], "Hai Song (2)");
+    }
+
+    #[test]
+    fn a_quiet_speaker_under_a_busy_tile_gets_their_name() {
+        let (a, b) = (SYSTEM_SPEAKERS, SYSTEM_SPEAKERS + 1);
+        let segments = vec![
+            seg(Source::System, 0, 60_000, Some(a)),
+            seg(Source::System, 60_000, 66_000, Some(b)),
+        ];
+        // Hai Song's tile lights over everyone; Xu speaks once, briefly.
+        let mut sightings: Vec<Seen> = (0..67).map(|i| seen(i * 1_000, "Hai Song")).collect();
+        sightings.extend((60..67).map(|i| seen(i * 1_000, "Xu")));
+        let names = name_voices(&segments, &sightings, &BTreeMap::new());
+        assert_eq!(names[&a], "Hai Song");
+        assert_eq!(names[&b], "Xu");
+        // A name that lit up all over isn't pinned on a voice by leftovers.
+        sightings.extend((0..40).map(|i| seen(i * 1_000 + 500, "Xu")));
+        let names = name_voices(&segments, &sightings, &BTreeMap::new());
+        assert!(!names.contains_key(&b));
     }
 }
