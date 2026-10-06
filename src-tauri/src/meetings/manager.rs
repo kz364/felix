@@ -742,7 +742,18 @@ impl MeetingManager {
     }
 }
 
-/// Show "● 12:34" next to the tray icon until `stop` is set.
+/// How long the meeting has run, for the menu bar. Minutes only, so it can't
+/// be mistaken for the clock beside it.
+fn menu_bar_elapsed(d: Duration) -> String {
+    let m = d.as_secs() / 60;
+    if m >= 60 {
+        format!("Rec {}h {:02}m", m / 60, m % 60)
+    } else {
+        format!("Rec {m}m")
+    }
+}
+
+/// Show "Rec 12m" next to the tray icon until `stop` is set.
 fn spawn_menu_bar_timer(app: &AppHandle, stop: Arc<AtomicBool>, already: Duration) {
     let app = app.clone();
     let started = std::time::Instant::now()
@@ -758,7 +769,7 @@ fn spawn_menu_bar_timer(app: &AppHandle, stop: Arc<AtomicBool>, already: Duratio
             });
         };
         while !stop.load(Ordering::Acquire) {
-            set_title(Some(format!("● {}", format_elapsed(started.elapsed()))));
+            set_title(Some(menu_bar_elapsed(started.elapsed())));
             std::thread::sleep(Duration::from_millis(500));
         }
         set_title(None);
@@ -1599,6 +1610,13 @@ mod tests {
         assert_eq!(format_elapsed(Duration::from_secs(5)), "0:05");
         assert_eq!(format_elapsed(Duration::from_secs(754)), "12:34");
         assert_eq!(format_elapsed(Duration::from_secs(3723)), "1:02:03");
+    }
+
+    #[test]
+    fn the_menu_bar_shows_minutes_not_a_clock() {
+        assert_eq!(menu_bar_elapsed(Duration::from_secs(5)), "Rec 0m");
+        assert_eq!(menu_bar_elapsed(Duration::from_secs(1137)), "Rec 18m");
+        assert_eq!(menu_bar_elapsed(Duration::from_secs(3723)), "Rec 1h 02m");
     }
 }
 
