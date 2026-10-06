@@ -16,7 +16,7 @@ pub mod echo;
 pub mod extension;
 pub mod floor;
 mod jobs;
-pub use jobs::split_runaways;
+pub use jobs::{about_meeting, split_runaways};
 pub mod language;
 pub mod level;
 pub mod live;

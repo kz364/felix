@@ -2124,13 +2124,25 @@ app: string | null;
 extension_dir: string }
 export type ActionItem = { task: string; 
 /**
- * Who does it, if said; empty otherwise.
+ * Who does it, if said; empty otherwise. "Me" is the user.
  */
 owner: string; 
 /**
  * Where in the meeting it came up.
  */
-at_ms: number | null }
+at_ms: number | null; 
+/**
+ * When it's due, in the meeting's words ("by Friday"); empty if no one said.
+ */
+due?: string; 
+/**
+ * What was said when it was taken on.
+ */
+quote?: string; 
+/**
+ * "I'll try to", "maybe I can": taken on, but not firmly.
+ */
+tentative?: boolean }
 export type AgentAnswer = "always_allow" | "allow_once" | "deny" | "always_deny" | "confirm" | "cancel"
 /**
  * An app Felix may always use for computer tasks ("Always allow"), or

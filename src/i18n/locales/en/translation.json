@@ -1575,6 +1575,11 @@
       "keyPoints": "Key points",
       "decisions": "Decisions",
       "actionItems": "Action items",
+      "actionItemsMine": "Your action items",
+      "actionItemsOthers": "Others' action items",
+      "actionItemsNoOwner": "No owner yet",
+      "due": "due {{when}}",
+      "tentative": "tentative",
       "by": "Written by {{model}}",
       "afterTranscript": "Notes are written once the transcript is done."
     },

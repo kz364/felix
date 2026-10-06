@@ -119,7 +119,12 @@ fn summary_text(summary: Option<&Summary>) -> String {
         } else {
             format!(" ({})", a.owner)
         };
-        out.push_str(&format!("- To do: {}{owner}\n", a.task));
+        let due = if a.due.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", a.due)
+        };
+        out.push_str(&format!("- To do: {}{owner}{due}\n", a.task));
     }
     out
 }

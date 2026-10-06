@@ -32,13 +32,22 @@ pub fn paragraph_key(p: &Paragraph) -> String {
     format!("{source}-{}", p.start_ms)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
 pub struct ActionItem {
     pub task: String,
-    /// Who does it, if said; empty otherwise.
+    /// Who does it, if said; empty otherwise. "Me" is the user.
     pub owner: String,
     /// Where in the meeting it came up.
     pub at_ms: Option<u64>,
+    /// When it's due, in the meeting's words ("by Friday"); empty if no one said.
+    #[serde(default)]
+    pub due: String,
+    /// What was said when it was taken on.
+    #[serde(default)]
+    pub quote: String,
+    /// "I'll try to", "maybe I can": taken on, but not firmly.
+    #[serde(default)]
+    pub tentative: bool,
 }
 
 /// `summary.json`.
@@ -285,15 +294,49 @@ pub const DEFAULT_SUMMARY_GUIDANCE: &str = "- Title: short and specific, at most
 - Decisions: only what was actually decided.
 - Action items: tasks someone took on or was asked to do. Give the owner if it's clear (\"Me\" for the user) and the [m:ss] where it came up.";
 
+/// What makes an action item, for finding them in a transcript. They get
+/// their own pass over the transcript itself: a summary loses the small
+/// ones, the numbers and the conditional ones.
+const ACTIONS_FRAME: &str = "You find the action items in a meeting transcript: every commitment someone made to do something after the meeting. \
+The user is \"Me\" in the transcript. Transcript lines start with [m:ss] timestamps.
+
+What counts:
+- Someone taking a task on: \"I'll…\", \"I can…\", \"let me…\", \"I'll try to…\", or being asked (\"can you…?\", \"X, please…\") and agreeing or not objecting.
+- Small ones said in passing count, and so do tentative ones (\"I'll try\", \"maybe I can\": mark them tentative) and conditional ones (put the condition in the task: \"If the p99 is bad, open a ticket\").
+- \"We should…\", \"it'd be good to…\", \"what if…\" with no one taking it on is an idea, not an action item. Leave it out.
+- Leave out topics (\"pricing\"), things done during the meeting itself, and things the meeting decided not to do.
+
+How to write each one:
+- task: starts with a verb and names the concrete thing to deliver. Keep the specifics: names, numbers, systems, who it's for (\"Send Kevin the rack power figures for the Helios site\", not \"Follow up on power\").
+- owner: who took it on, as labelled in the transcript, \"Me\" for the user. If it was asked of someone and they agreed, it's theirs. \"We\" on the user's side is \"Me\" only if the user is the one doing it. If you can't tell who will do it, leave the owner empty. Never guess from someone's role.
+- due: copy when it's due as said (\"by Friday\", \"before the next call\"). Empty if no one said. Never make one up.
+- quote: the words where it was taken on, short and verbatim from the transcript.
+- at: the [m:ss] of that line.
+- If the same task comes up more than once, list it once with the final wording, owner and due date.
+
+An empty list is a fine answer. Don't pad.";
+
+fn candidate_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"action_items": {"type": "array", "items": item_schema()}},
+        "required": ["action_items"],
+        "additionalProperties": false
+    })
+}
+
 fn item_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "task": {"type": "string"},
             "owner": {"type": "string", "description": "Who does it, or empty"},
+            "due": {"type": "string", "description": "When it's due as said, or empty"},
+            "quote": {"type": "string", "description": "Where it was taken on, verbatim, or empty"},
+            "tentative": {"type": "boolean"},
             "at": {"type": "string", "description": "m:ss where it came up, or empty"}
         },
-        "required": ["task", "owner", "at"],
+        "required": ["task", "owner", "due", "quote", "tentative", "at"],
         "additionalProperties": false
     })
 }
@@ -361,6 +404,9 @@ fn action_items(v: &Value) -> Vec<ActionItem> {
                 task,
                 owner: item["owner"].as_str().unwrap_or("").trim().to_string(),
                 at_ms: item["at"].as_str().and_then(parse_timestamp),
+                due: item["due"].as_str().unwrap_or("").trim().to_string(),
+                quote: item["quote"].as_str().unwrap_or("").trim().to_string(),
+                tentative: item["tentative"].as_bool().unwrap_or(false),
             })
         })
         .collect()
@@ -438,6 +484,103 @@ pub fn previous_block(title: &str, when: &str, previous: &Summary) -> String {
     text
 }
 
+const CHECK_FRAME: &str = "You check a list of possible action items from a meeting against what was said. \
+The user is \"Me\". Each candidate comes with the part of the transcript around it.
+
+For each candidate:
+- Keep it only if someone really took it on or agreed to it. Drop ideas no one took on (\"we should…\"), topics, and anything the excerpt shows was done during the meeting or dropped.
+- Fix the owner if the excerpt shows someone else took it on. Leave it empty if it's unclear; never guess.
+- Keep due only if it was said. Keep the quote verbatim.
+- Merge candidates that are the same task, keeping the final wording, owner and due date and the earliest [m:ss].
+
+Return the action items that survive. Keep the task wording concrete. An empty list is a fine answer.";
+
+/// The `at` of a transcript line (`[m:ss] Who: text`).
+fn line_ms(line: &str) -> Option<u64> {
+    let end = line.find(']')?;
+    parse_timestamp(&line[..=end])
+}
+
+/// The transcript around `at_ms`: a few lines before it and more after, to
+/// see who took it on and whether it was finished before the meeting ended.
+fn excerpt(lines: &[String], at_ms: Option<u64>) -> String {
+    let Some(at) = at_ms else {
+        return "(no timestamp)".into();
+    };
+    let i = lines
+        .iter()
+        .rposition(|l| line_ms(l).is_some_and(|ms| ms <= at))
+        .unwrap_or(0);
+    lines[i.saturating_sub(4)..(i + 9).min(lines.len())].join("\n")
+}
+
+fn describe(a: &ActionItem) -> String {
+    let at = a.at_ms.map(timestamp).unwrap_or_default();
+    format!(
+        "task: {}\nowner: {}\ndue: {}\ntentative: {}\nquote: {}\nat: {at}",
+        a.task, a.owner, a.due, a.tentative, a.quote
+    )
+}
+
+/// Every commitment in the meeting: found in the transcript part by part,
+/// then each checked against the lines around it.
+pub async fn find_action_items(
+    llm: &Llm,
+    about: &str,
+    notes: &str,
+    lines: &[String],
+) -> Result<Vec<ActionItem>, String> {
+    let parts = sections(lines, llm.budget().summary);
+    let total = parts.len();
+    let schema = candidate_schema();
+    let mut candidates = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let heading = if total > 1 {
+            format!("Transcript, part {} of {total}", i + 1)
+        } else {
+            "Transcript".to_string()
+        };
+        let input = format!("# Meeting\n{about}\n\n# My notes\n{notes}\n\n# {heading}\n{part}");
+        let v = llm
+            .ask_json(ACTIONS_FRAME, &input, &schema, "medium")
+            .await?;
+        candidates.extend(action_items(&v["action_items"]));
+    }
+    if candidates.is_empty() {
+        return Ok(candidates);
+    }
+    let listed: Vec<String> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            format!(
+                "## Candidate {}\n{}\n\nTranscript around it:\n{}",
+                i + 1,
+                describe(a),
+                excerpt(lines, a.at_ms)
+            )
+        })
+        .collect();
+    let input = format!("# Meeting\n{about}\n\n{}", listed.join("\n\n"));
+    let v = llm.ask_json(CHECK_FRAME, &input, &schema, "medium").await?;
+    let mut checked = action_items(&v["action_items"]);
+    checked.sort_by_key(|a| a.at_ms.unwrap_or(u64::MAX));
+    Ok(checked)
+}
+
+/// Action items the transcript gave the user's name (in person, where their
+/// voice is labelled with it) are "Me", like the rest of theirs.
+pub fn own_items_as_me(summary: &mut Summary, me: Option<&str>) {
+    let Some(me) = me.map(str::trim).filter(|m| !m.is_empty()) else {
+        return;
+    };
+    for a in &mut summary.action_items {
+        if a.owner.trim().eq_ignore_ascii_case(me) {
+            a.owner = "Me".into();
+        }
+    }
+}
+
 /// Write the summary. `about` describes the meeting (date, length, who's
 /// who); `lines` is the transcript, one `[m:ss] Speaker: text` per line.
 /// Long meetings are noted section by section first, then summarised from
@@ -467,6 +610,8 @@ pub async fn summarize(
     if context.british {
         instructions.push_str("\n\nUse British spelling.");
     }
+    // The action items are this meeting's alone, so not the previous one's.
+    let this_meeting = about;
     let about = match &context.previous {
         Some(p) => format!("{about}\n\n# Previous meeting\n{p}"),
         None => about.to_string(),
@@ -528,10 +673,17 @@ the points made, decisions, and action items with owners and [m:ss] timestamps. 
     let input = format!(
         "# Meeting\n{about}\n\n# My notes\n{notes_block}\n\n# Transcript\n{transcript_block}"
     );
-    let v = llm
-        .ask_json(&instructions, &input, &summary_schema(), "medium")
-        .await?;
-    let mut summary = parse_summary(&v)?;
+    let schema = summary_schema();
+    let (v, actions) = futures_util::join!(
+        llm.ask_json(&instructions, &input, &schema, "medium"),
+        find_action_items(llm, this_meeting, &notes_block, lines)
+    );
+    let mut summary = parse_summary(&v?)?;
+    // The summary's own list stays only if the closer look failed.
+    match actions {
+        Ok(actions) => summary.action_items = actions,
+        Err(e) => log::warn!("Meeting action items: {e}; keeping the summary's own"),
+    }
     summary.model = llm.label();
     summary.generated_at = chrono::Utc::now().timestamp_millis();
     Ok(summary)
@@ -566,6 +718,13 @@ pub fn to_markdown(
                 md.push_str(&format!("- [ ] {}", a.task));
                 if !a.owner.is_empty() {
                     md.push_str(&format!(" — {}", a.owner));
+                }
+                if !a.due.is_empty() {
+                    md.push_str(if a.owner.is_empty() { " — " } else { ", " });
+                    md.push_str(&a.due);
+                }
+                if a.tentative {
+                    md.push_str(" (tentative)");
                 }
                 if let Some(ms) = a.at_ms {
                     md.push_str(&format!(" ([{}])", timestamp(ms)));
@@ -704,6 +863,9 @@ mod tests {
                 task: "Send the deck".into(),
                 owner: "Me".into(),
                 at_ms: Some(65_000),
+                due: "by Friday".into(),
+                tentative: true,
+                ..Default::default()
             }],
             model: String::new(),
             generated_at: 0,
@@ -717,7 +879,47 @@ mod tests {
         );
         assert_eq!(
             md,
-            "# Launch sync\nThu 24 Sep · 12:30\n\n## Summary\nWe agreed to ship.\n\n### Key points\n- Beta is ready\n\n## Action items\n- [ ] Send the deck — Me ([1:05])\n\n## My notes\nask about budget\n\n## Transcript\n**[0:00] Me:** Hi.\n"
+            "# Launch sync\nThu 24 Sep · 12:30\n\n## Summary\nWe agreed to ship.\n\n### Key points\n- Beta is ready\n\n## Action items\n- [ ] Send the deck — Me, by Friday (tentative) ([1:05])\n\n## My notes\nask about budget\n\n## Transcript\n**[0:00] Me:** Hi.\n"
         );
+    }
+
+    #[test]
+    fn notes_written_before_due_dates_and_quotes_still_open() {
+        let old = r#"{"title":"t","overview":"o","key_points":[],"decisions":[],
+            "action_items":[{"task":"Send it","owner":"Me","at_ms":5000}],"model":"m","generated_at":0}"#;
+        let s: Summary = serde_json::from_str(old).unwrap();
+        assert_eq!(s.action_items[0].due, "");
+        assert!(!s.action_items[0].tentative);
+    }
+
+    #[test]
+    fn a_candidate_is_checked_against_the_lines_around_it() {
+        let lines: Vec<String> = (0..20)
+            .map(|i| format!("[0:{i:02}] Me: line {i}"))
+            .collect();
+        let text = excerpt(&lines, Some(10_500));
+        assert!(text.starts_with("[0:06]"));
+        assert!(text.ends_with("line 18"));
+        assert_eq!(
+            excerpt(&lines, Some(0)).lines().next(),
+            Some("[0:00] Me: line 0")
+        );
+        assert_eq!(excerpt(&lines, None), "(no timestamp)");
+    }
+
+    #[test]
+    fn the_users_own_name_as_owner_is_me() {
+        let item = |owner: &str| ActionItem {
+            task: "t".into(),
+            owner: owner.into(),
+            ..Default::default()
+        };
+        let mut s = Summary {
+            action_items: vec![item("Sam Rivera"), item("Baidi"), item("Me")],
+            ..Default::default()
+        };
+        own_items_as_me(&mut s, Some("Sam Rivera"));
+        let owners: Vec<&str> = s.action_items.iter().map(|a| a.owner.as_str()).collect();
+        assert_eq!(owners, ["Me", "Baidi", "Me"]);
     }
 }

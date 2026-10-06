@@ -776,6 +776,8 @@ impl MeetingManager {
             |done, total| self.progress_to(id, Stage::Summarizing, done, total),
         )
         .await?;
+        let mut summary = summary;
+        summary::own_items_as_me(&mut summary, self.user_name().as_deref());
         summary::save_json(&dir, summary::SUMMARY_FILE, &summary)?;
         Ok(summary)
     }
@@ -910,11 +912,7 @@ impl MeetingManager {
 
 /// What the summariser (and the in-meeting questions) are told about the
 /// meeting itself: when, who took part, and how to read "we".
-pub(super) fn about_meeting(
-    info: &MeetingInfo,
-    paragraphs: &[Paragraph],
-    me: Option<&str>,
-) -> String {
+pub fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph], me: Option<&str>) -> String {
     let has_speakers = paragraphs.iter().any(|p| p.speaker.is_some());
     let who = match info.mode {
         super::MeetingMode::Call if has_speakers => {

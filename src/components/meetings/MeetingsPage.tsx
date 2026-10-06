@@ -36,6 +36,7 @@ import {
 import {
   type ParagraphPart,
   commands,
+  type ActionItem,
   type LiveQuestion,
   type MeetingInfo,
   type MeetingVouch,
@@ -1170,18 +1171,40 @@ const SummarySection: React.FC<{
             title={t("meetings.summary.decisions")}
             items={summary.decisions}
           />
-          <SummaryList
-            title={t("meetings.summary.actionItems")}
-            items={summary.action_items.map((a) => (
-              <>
-                {a.owner && (
-                  <span className="font-medium me-1">{a.owner}:</span>
-                )}
-                {a.task}
-                {jump(a.at_ms)}
-              </>
-            ))}
-          />
+          {(
+            [
+              ["actionItemsMine", (a: ActionItem) => a.owner === "Me"],
+              [
+                "actionItemsOthers",
+                (a: ActionItem) => a.owner !== "" && a.owner !== "Me",
+              ],
+              ["actionItemsNoOwner", (a: ActionItem) => a.owner === ""],
+            ] as const
+          ).map(([key, belongs]) => (
+            <SummaryList
+              key={key}
+              title={t(`meetings.summary.${key}`)}
+              items={summary.action_items.filter(belongs).map((a) => (
+                <span title={a.quote ? `“${a.quote}”` : undefined}>
+                  {key === "actionItemsOthers" && (
+                    <span className="font-medium me-1">{a.owner}:</span>
+                  )}
+                  {a.task}
+                  {a.due && (
+                    <span className="ms-1.5 text-xs text-text/55">
+                      {t("meetings.summary.due", { when: a.due })}
+                    </span>
+                  )}
+                  {a.tentative && (
+                    <span className="ms-1.5 text-xs text-text/45">
+                      {t("meetings.summary.tentative")}
+                    </span>
+                  )}
+                  {jump(a.at_ms)}
+                </span>
+              ))}
+            />
+          ))}
           <p className="text-xs text-text/40">
             {t("meetings.summary.by", { model: summary.model })}
           </p>
