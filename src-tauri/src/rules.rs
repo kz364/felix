@@ -306,6 +306,20 @@ pub(crate) fn with_rules(mut settings: AppSettings) -> AppSettings {
     settings
 }
 
+/// [`with_rules`] for meetings: without the assistant's name, which only
+/// matters when the user talks to Felix. Left in, it pulls words like
+/// "Featherless" towards "Felix".
+pub(crate) fn for_meetings(settings: AppSettings) -> AppSettings {
+    let mut settings = with_rules(settings);
+    let name = settings.assistant_name.trim().to_lowercase();
+    if !name.is_empty() {
+        settings
+            .custom_words
+            .retain(|w| w.trim().to_lowercase() != name);
+    }
+    settings
+}
+
 /// The user's name: as they set it, or else their Mac account's full name
 /// ("Kaspar Hidayat").
 pub(crate) fn user_name(settings: &AppSettings) -> Option<String> {
@@ -1728,5 +1742,15 @@ expect = "run cube cuddle apply"
         assert_eq!(name_words("Sam Rivera\n"), vec!["Sam", "Rivera"]);
         assert_eq!(name_words("J. Rivera-Lee 2"), Vec::<String>::new());
         assert!(name_words("").is_empty());
+    }
+
+    #[test]
+    fn meetings_leave_out_the_assistants_name() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.assistant_name = "Felix".into();
+        settings.custom_words = vec!["felix".into(), "Featherless".into()];
+        let words = for_meetings(settings).custom_words;
+        assert!(words.iter().any(|w| w == "Featherless"));
+        assert!(!words.iter().any(|w| w.eq_ignore_ascii_case("felix")));
     }
 }

@@ -1478,7 +1478,11 @@ impl TranscriptionManager {
 
         // Get current settings for configuration, with the rules file's
         // vocabulary.
-        let mut settings = crate::rules::with_rules(get_settings(&self.app_handle));
+        let mut settings = if IN_MEETING_CHUNK.with(|c| c.get()) {
+            crate::rules::for_meetings(get_settings(&self.app_handle))
+        } else {
+            crate::rules::with_rules(get_settings(&self.app_handle))
+        };
         if let Some(language) = MEETING_LANGUAGE.with(|l| l.borrow().clone()) {
             settings.selected_language = language;
         }

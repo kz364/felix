@@ -134,7 +134,7 @@ pub struct TidiedChunk {
 /// need the model. Paragraphs are only known once the voices are told
 /// apart, so it tidies chunk by chunk, each with the ones around it.
 fn spawn_cleanup(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBool>) {
-    let settings = crate::rules::with_rules(crate::settings::get_settings(app));
+    let settings = crate::rules::for_meetings(crate::settings::get_settings(app));
     if !settings.meeting_cleanup {
         return;
     }
@@ -556,7 +556,7 @@ impl Engine {
 
 /// While recording: keep `live.json` up to date until `stop` is set.
 pub fn spawn(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<AtomicBool>) {
-    let mut settings = crate::rules::with_rules(crate::settings::get_settings(app));
+    let mut settings = crate::rules::for_meetings(crate::settings::get_settings(app));
     // The remote engine, or the local model to use; a model of the meeting's
     // own is loaded on the live thread, not here.
     let (remote, local_model) = match Remote::from_settings(&settings) {

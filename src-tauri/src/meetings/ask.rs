@@ -97,7 +97,7 @@ fn answer_schema() -> Value {
 }
 
 fn llm(app: &AppHandle) -> Result<Llm, String> {
-    Llm::from_settings(&crate::rules::with_rules(crate::settings::get_settings(
+    Llm::from_settings(&crate::rules::for_meetings(crate::settings::get_settings(
         app,
     )))
 }
@@ -139,7 +139,7 @@ pub async fn ask_live(app: AppHandle, question: LiveQuestion) -> Result<String, 
         return Ok(String::new());
     }
     let llm = llm(&app)?;
-    let about = about_meeting(&info, &paragraphs);
+    let about = about_meeting(&info, &paragraphs, user_name(&app).as_deref());
     let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
     let (task, transcript) = match question {
         LiveQuestion::Missed => (
@@ -162,10 +162,15 @@ something not yet answered, in their voice, one sentence. Reply with only the qu
     Ok(v["answer"].as_str().unwrap_or("").trim().to_string())
 }
 
+fn user_name(app: &AppHandle) -> Option<String> {
+    crate::rules::user_name(&crate::settings::get_settings(app))
+}
+
 /// What a finished meeting's questions are asked with.
 fn meeting_context(
     dir: &Path,
     info: &MeetingInfo,
+    me: Option<&str>,
     budget: usize,
 ) -> Result<(String, String), String> {
     let paragraphs = match super::pipeline::load(dir).filter(|t| t.complete) {
@@ -178,7 +183,7 @@ fn meeting_context(
     }
     let summary: Option<Summary> = summary::load_json(dir, summary::SUMMARY_FILE);
     let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
-    let about = about_meeting(info, &paragraphs);
+    let about = about_meeting(info, &paragraphs, me);
     let context = format!(
         "# Meeting\n{about}\n\n# Meeting notes (written from the transcript)\n{}\n# My notes\n{notes}\n\n# Transcript\n{}",
         summary_text(summary.as_ref()),
@@ -234,7 +239,12 @@ pub async fn ask_meeting(
     }
     let (dir, info) = meeting(&app, &id)?;
     let llm = llm(&app)?;
-    let (context, _) = meeting_context(&dir, &info, llm.budget().summary)?;
+    let (context, _) = meeting_context(
+        &dir,
+        &info,
+        user_name(&app).as_deref(),
+        llm.budget().summary,
+    )?;
 
     if asks_to_change_notes(&question) {
         if let Some(current) = summary::load_json::<Summary>(&dir, summary::SUMMARY_FILE) {
@@ -284,7 +294,12 @@ keep everything else as it is.",
 pub async fn draft_follow_up_email(app: AppHandle, id: String) -> Result<String, String> {
     let (dir, info) = meeting(&app, &id)?;
     let llm = llm(&app)?;
-    let (context, _) = meeting_context(&dir, &info, llm.budget().summary)?;
+    let (context, _) = meeting_context(
+        &dir,
+        &info,
+        user_name(&app).as_deref(),
+        llm.budget().summary,
+    )?;
     let task = "Draft the follow-up email the user sends the others after this meeting: a subject line, \
 a short thank-you, what was agreed, and next steps with owners (the user's own only where they committed). \
 Plain text, first person, friendly and brief. No placeholders for things the transcript doesn't say.";

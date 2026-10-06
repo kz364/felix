@@ -243,7 +243,7 @@ impl MeetingManager {
         let Some(mut t) = pipeline::load(&dir) else {
             return;
         };
-        let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+        let settings = crate::rules::for_meetings(crate::settings::get_settings(&self.app));
         let mut changed = 0;
         for seg in &mut t.segments {
             let text = summary::corrected(&seg.text, &settings);
@@ -308,7 +308,7 @@ impl MeetingManager {
         else {
             return Err(Stopped::Cancelled);
         };
-        let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+        let settings = crate::rules::for_meetings(crate::settings::get_settings(&self.app));
         let level = Some(super::level::LevelSettings::new(
             settings.meeting_input_boost_db,
             settings.meeting_auto_gain,
@@ -549,7 +549,7 @@ impl MeetingManager {
             let model = transcribe_cpp::Model::load(&path)
                 .map_err(|e| format!("Couldn't load {model_id}: {e}"))?;
             let mut session = model.session().map_err(|e| e.to_string())?;
-            let mut settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+            let mut settings = crate::rules::for_meetings(crate::settings::get_settings(&self.app));
             crate::managers::transcription::add_words(&mut settings, &invite_words(dir));
             // One language is named; a mix is left to the model, chunk by chunk.
             let language = super::language::pinned(languages);
@@ -685,7 +685,7 @@ impl MeetingManager {
 
     async fn summarize_inner(&self, id: &str, info: &MeetingInfo) -> Result<Summary, String> {
         let dir = self.dir_of(id)?;
-        let settings = crate::rules::with_rules(crate::settings::get_settings(&self.app));
+        let settings = crate::rules::for_meetings(crate::settings::get_settings(&self.app));
         let llm = Llm::from_settings(&settings)?;
         let transcript = pipeline::load(&dir)
             .filter(|t| t.complete)
@@ -756,7 +756,11 @@ impl MeetingManager {
             return Err("No speech was found in the recording".into());
         }
         let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
-        let about = about_meeting(info, &paragraphs_of(&dir, &transcript));
+        let about = about_meeting(
+            info,
+            &paragraphs_of(&dir, &transcript),
+            self.user_name().as_deref(),
+        );
         let context = summary::SummaryContext {
             previous: self.previous_in_series(info),
             british: tauri_plugin_os::locale().is_some_and(|l| summary::spells_british(&l)),
@@ -906,7 +910,11 @@ impl MeetingManager {
 
 /// What the summariser (and the in-meeting questions) are told about the
 /// meeting itself: when, who took part, and how to read "we".
-pub(super) fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph]) -> String {
+pub(super) fn about_meeting(
+    info: &MeetingInfo,
+    paragraphs: &[Paragraph],
+    me: Option<&str>,
+) -> String {
     let has_speakers = paragraphs.iter().any(|p| p.speaker.is_some());
     let who = match info.mode {
         super::MeetingMode::Call if has_speakers => {
@@ -940,7 +948,11 @@ pub(super) fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph]) -> Str
             "\nAn action item is the user's only if they committed to it themselves; otherwise it belongs to whoever took it on."
         }
     };
-    format!("{}\n{who}{title}{block}{we}", meta_line(info))
+    // Without it the model goes by how the transcript heard the name.
+    let me = me
+        .map(|n| format!("\nThe user (\"Me\") is {n}; spell their name that way."))
+        .unwrap_or_default();
+    format!("{}\n{who}{me}{title}{block}{we}", meta_line(info))
 }
 
 /// Transcribe a chunk; one the model runs away on is split at its quietest
