@@ -129,6 +129,25 @@ pub async fn upcoming_meetings() -> Vec<Upcoming> {
     .unwrap_or_default()
 }
 
+/// A meeting starting this much later still counts as the one being
+/// recorded: people join a few minutes early.
+const EARLY_MS: i64 = 10 * 60 * 1000;
+
+/// Of the calendar's meetings, the one a recording started at `now_ms` is
+/// of: under way or about to start, the one starting nearest to now.
+pub fn meeting_at(events: Vec<Upcoming>, now_ms: i64) -> Option<Upcoming> {
+    events
+        .into_iter()
+        .filter(|e| e.start_ms <= now_ms + EARLY_MS && e.end_ms > now_ms)
+        .min_by_key(|e| (e.start_ms - now_ms).abs())
+}
+
+/// The calendar meeting being recorded now, if there is one.
+pub fn meeting_now() -> Option<Upcoming> {
+    let now = chrono::Utc::now().timestamp_millis();
+    meeting_at(imp::upcoming(now, now + EARLY_MS), now)
+}
+
 /// The first video call link (Meet, Zoom, Teams, Webex) in an event's
 /// fields, as written there.
 pub fn call_link(fields: &[&str]) -> Option<String> {
@@ -408,5 +427,33 @@ mod tests {
             Some("Priya K")
         );
         assert_eq!(display_name(None, Some("mailto:12345@example.com")), None);
+    }
+
+    #[test]
+    fn a_recording_is_of_the_meeting_under_way_or_about_to_start() {
+        let min = 60 * 1000;
+        let event = |title: &str, start: i64, end: i64| Upcoming {
+            id: title.into(),
+            title: title.into(),
+            start_ms: start * min,
+            end_ms: end * min,
+            attendees: vec![],
+            link: None,
+        };
+        let now = 100 * min;
+        let pick = |events| meeting_at(events, now).map(|e| e.title);
+        // Joined five minutes early, while a long block is still on.
+        let events = vec![event("Focus block", 60, 180), event("HPE call", 105, 135)];
+        assert_eq!(pick(events).as_deref(), Some("HPE call"));
+        // Late to one that started ten minutes ago.
+        assert_eq!(
+            pick(vec![event("Standup", 90, 120)]).as_deref(),
+            Some("Standup")
+        );
+        // Nothing for one half an hour away or one that's over.
+        assert_eq!(
+            pick(vec![event("Later", 130, 160), event("Done", 40, 95)]),
+            None
+        );
     }
 }

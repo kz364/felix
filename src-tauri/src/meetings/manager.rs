@@ -461,6 +461,11 @@ impl MeetingManager {
             .try_state::<Arc<AudioRecordingManager>>()
             .and_then(|m| m.meeting_microphone());
         let recording = Recording::start(&dir, mode, mic, false)?;
+        // Named after the calendar meeting it's of; the notes keep the name.
+        let event = super::calendar::meeting_now();
+        if let Some(e) = &event {
+            log::info!("Meeting {id} is the calendar's \"{}\"", e.title);
+        }
         let info = MeetingInfo {
             id,
             mode,
@@ -470,7 +475,7 @@ impl MeetingManager {
             mic: recording.mic_label.clone(),
             system_error: recording.system_error.clone(),
             tracks: vec![],
-            title: None,
+            title: event.map(|e| e.title).filter(|t| !t.trim().is_empty()),
             transcript: None,
             transcript_error: None,
             title_is_auto: false,
