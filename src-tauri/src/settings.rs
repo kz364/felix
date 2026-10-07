@@ -782,6 +782,21 @@ pub struct AppSettings {
     /// the Mac account's name.
     #[serde(default)]
     pub user_name: String,
+    /// Notion integration secret for saving meetings to Notion. A secret,
+    /// like the API keys: never logged.
+    #[serde(default)]
+    pub notion_token: String,
+    /// The private page Felix keeps its "Felix meetings" database under
+    /// (a link or an id).
+    #[serde(default)]
+    pub notion_parent: String,
+    /// The team page or database a meeting moves to when shared with the
+    /// people who were in it (a link or an id).
+    #[serde(default)]
+    pub notion_share_parent: String,
+    /// Save each meeting to Notion once it's summarised.
+    #[serde(default)]
+    pub notion_sync: bool,
     /// The languages meetings are held in (ISO codes). Empty: found from
     /// the recording. Meetings go to a model that knows them all.
     #[serde(default)]
@@ -1575,6 +1590,10 @@ pub fn get_default_settings() -> AppSettings {
         meeting_transcriber: Default::default(),
         meeting_model: String::new(),
         user_name: String::new(),
+        notion_token: String::new(),
+        notion_parent: String::new(),
+        notion_share_parent: String::new(),
+        notion_sync: false,
         meeting_languages: Vec::new(),
         meeting_diarize: true,
         meeting_detect_calls: true,

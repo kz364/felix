@@ -23,6 +23,7 @@ pub mod live;
 pub mod llm;
 pub mod manager;
 mod mic;
+pub mod notion;
 pub mod pipeline;
 pub mod remembered;
 pub mod remote;

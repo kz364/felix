@@ -1026,6 +1026,30 @@ async requestCalendarAccess() : Promise<string> {
 async upcomingMeetings() : Promise<Upcoming[]> {
     return await TAURI_INVOKE("upcoming_meetings");
 },
+/**
+ * Save (or save again) a meeting's notes to Notion: for a first upload of
+ * an older meeting, or to retry after an error.
+ */
+async syncMeetingToNotion(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_meeting_to_notion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Move a meeting to the team's Notion page, so the people who were in it
+ * can see it. Only meetings with an invite of colleagues only.
+ */
+async shareMeetingInNotion(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("share_meeting_in_notion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rememberedVoices() : Promise<Result<RememberedVoices, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remembered_voices") };
@@ -2390,6 +2414,25 @@ meeting_model?: string;
  */
 user_name?: string; 
 /**
+ * Notion integration secret for saving meetings to Notion. A secret,
+ * like the API keys: never logged.
+ */
+notion_token?: string; 
+/**
+ * The private page Felix keeps its "Felix meetings" database under
+ * (a link or an id).
+ */
+notion_parent?: string; 
+/**
+ * The team page or database a meeting moves to when shared with the
+ * people who were in it (a link or an id).
+ */
+notion_share_parent?: string; 
+/**
+ * Save each meeting to Notion once it's summarised.
+ */
+notion_sync?: boolean; 
+/**
  * Tell voices apart: everyone in an in-person meeting, the other side
  * (and anyone in the room) on a call.
  */
@@ -2898,7 +2941,29 @@ app_speakers?: Partial<{ [key in number]: string }>;
  * Whether it's a call was worked out rather than chosen (`detect`):
  * it records like a call, and `mode` is settled when it stops.
  */
-mode_auto?: boolean }
+mode_auto?: boolean; 
+/**
+ * The calendar event it was recorded as part of (EventKit's id), so
+ * the invite read for it is that event's, not another that overlaps.
+ */
+event_id?: string | null; 
+/**
+ * Its page in Notion, once saved there (see [`super::notion`]).
+ */
+notion_page_id?: string | null; notion_url?: string | null; 
+/**
+ * Why the last save to Notion failed.
+ */
+notion_error?: string | null; 
+/**
+ * Moved to the team's page, where the people who were in it can see it.
+ */
+notion_shared?: boolean; 
+/**
+ * Everyone on its invite is from the user's own organisation, so it can
+ * be shared. Worked out when meetings are listed, not saved.
+ */
+notion_shareable?: boolean }
 /**
  * The model that tidies and summarises meeting transcripts.
  */
@@ -2932,7 +2997,11 @@ export type MeetingSettingsUpdate = { llm: MeetingLlm | null; cleanup: boolean |
 /**
  * A model id, or empty for the dictation model.
  */
-model: string | null; user_name: string | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; languages: string[] | null }
+model: string | null; user_name: string | null; diarize: boolean | null; detect_calls: boolean | null; auto_stop: boolean | null; max_hours: number | null; hide_from_screen_share: boolean | null; panel: boolean | null; notion_sync: boolean | null; 
+/**
+ * The Notion integration secret.
+ */
+notion_token: string | null; notion_parent: string | null; notion_share_parent: string | null; languages: string[] | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */

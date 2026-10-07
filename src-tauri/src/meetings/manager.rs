@@ -114,6 +114,21 @@ pub struct MeetingInfo {
     /// the invite read for it is that event's, not another that overlaps.
     #[serde(default)]
     pub event_id: Option<String>,
+    /// Its page in Notion, once saved there (see [`super::notion`]).
+    #[serde(default)]
+    pub notion_page_id: Option<String>,
+    #[serde(default)]
+    pub notion_url: Option<String>,
+    /// Why the last save to Notion failed.
+    #[serde(default)]
+    pub notion_error: Option<String>,
+    /// Moved to the team's page, where the people who were in it can see it.
+    #[serde(default)]
+    pub notion_shared: bool,
+    /// Everyone on its invite is from the user's own organisation, so it can
+    /// be shared. Worked out when meetings are listed, not saved.
+    #[serde(default)]
+    pub notion_shareable: bool,
 }
 
 /// The name of a told-apart voice nobody named: the other side of a call
@@ -371,7 +386,13 @@ impl MeetingManager {
         };
         let mut meetings: Vec<MeetingInfo> = entries
             .flatten()
-            .filter_map(|e| read_info(&e.path()))
+            .filter_map(|e| {
+                let mut info = read_info(&e.path())?;
+                info.notion_shareable = info.notion_page_id.is_some()
+                    && !info.notion_shared
+                    && super::calendar::can_share(super::calendar::load(&e.path()).as_ref());
+                Some(info)
+            })
             .collect();
         meetings.sort_by_key(|m| std::cmp::Reverse(m.started_at));
         meetings
@@ -494,6 +515,11 @@ impl MeetingManager {
             app_speakers: BTreeMap::new(),
             mode_auto: chosen.is_none(),
             event_id,
+            notion_page_id: None,
+            notion_url: None,
+            notion_error: None,
+            notion_shared: false,
+            notion_shareable: false,
         };
         write_info(&dir, &info);
         if let Some(id) = &info.event_id {
@@ -1654,6 +1680,11 @@ pub struct MeetingSettingsUpdate {
     pub max_hours: Option<u32>,
     pub hide_from_screen_share: Option<bool>,
     pub panel: Option<bool>,
+    pub notion_sync: Option<bool>,
+    /// The Notion integration secret.
+    pub notion_token: Option<String>,
+    pub notion_parent: Option<String>,
+    pub notion_share_parent: Option<String>,
 }
 
 #[tauri::command]
@@ -1704,6 +1735,18 @@ pub fn change_meeting_settings(
     }
     if let Some(v) = update.panel {
         settings.meeting_panel = v;
+    }
+    if let Some(v) = update.notion_sync {
+        settings.notion_sync = v;
+    }
+    if let Some(v) = update.notion_token {
+        settings.notion_token = v.trim().to_string();
+    }
+    if let Some(v) = update.notion_parent {
+        settings.notion_parent = v.trim().to_string();
+    }
+    if let Some(v) = update.notion_share_parent {
+        settings.notion_share_parent = v.trim().to_string();
     }
     let hide = update.hide_from_screen_share;
     if let Some(v) = hide {

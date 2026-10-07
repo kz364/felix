@@ -103,6 +103,10 @@ const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
     max_hours: null,
     hide_from_screen_share: null,
     panel: null,
+    notion_sync: null,
+    notion_token: null,
+    notion_parent: null,
+    notion_share_parent: null,
     languages: null,
     ...patch,
   });
@@ -309,6 +313,11 @@ const settingUpdaters: {
     meetingUpdate({ hide_from_screen_share: value ?? null }),
   meeting_panel: (value) => meetingUpdate({ panel: value ?? null }),
   meeting_languages: (value) => meetingUpdate({ languages: value ?? null }),
+  notion_sync: (value) => meetingUpdate({ notion_sync: value ?? null }),
+  notion_token: (value) => meetingUpdate({ notion_token: value ?? null }),
+  notion_parent: (value) => meetingUpdate({ notion_parent: value ?? null }),
+  notion_share_parent: (value) =>
+    meetingUpdate({ notion_share_parent: value ?? null }),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

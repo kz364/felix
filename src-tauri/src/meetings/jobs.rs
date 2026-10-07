@@ -64,6 +64,21 @@ fn invite_words(dir: &std::path::Path) -> Vec<String> {
     words
 }
 
+/// The transcript as the summary reads it and Notion shows it: one
+/// `[m:ss] Who: text` per paragraph.
+pub(super) fn transcript_lines(info: &MeetingInfo, paragraphs: &[Paragraph]) -> Vec<String> {
+    paragraphs
+        .iter()
+        .map(|p| {
+            let at = timestamp(p.start_ms);
+            match info.speaker_label(p) {
+                Some(who) => format!("[{at}] {who}: {}", p.text),
+                None => format!("[{at}] {}", p.text),
+            }
+        })
+        .collect()
+}
+
 impl MeetingManager {
     /// Queue work that was waiting or running when Handy last quit.
     pub fn resume_transcriptions(&self) {
@@ -672,6 +687,7 @@ impl MeetingManager {
                         i.title_is_auto = true;
                     }
                 });
+                super::notion::sync_in_background(&self.app, id);
             }
             Err(e) => {
                 log::error!("Meeting {id} couldn't be summarised: {e}");
@@ -742,16 +758,7 @@ impl MeetingManager {
         cleaned?;
         let info = &clued.unwrap_or_else(|| info.clone());
 
-        let lines: Vec<String> = paragraphs_of(&dir, &transcript)
-            .iter()
-            .map(|p| {
-                let at = timestamp(p.start_ms);
-                match info.speaker_label(p) {
-                    Some(who) => format!("[{at}] {who}: {}", p.text),
-                    None => format!("[{at}] {}", p.text),
-                }
-            })
-            .collect();
+        let lines = transcript_lines(info, &paragraphs_of(&dir, &transcript));
         if lines.is_empty() {
             return Err("No speech was found in the recording".into());
         }
