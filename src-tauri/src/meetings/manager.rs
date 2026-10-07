@@ -812,7 +812,9 @@ fn spawn_menu_bar_timer(app: &AppHandle, stop: Arc<AtomicBool>, already: Duratio
             set_title(Some(menu_bar_elapsed(started.elapsed())));
             std::thread::sleep(Duration::from_millis(500));
         }
-        set_title(None);
+        // tray-icon ignores `None` on macOS, which left "Rec 14m" showing
+        // after the meeting ended; an empty title clears it.
+        set_title(Some(String::new()));
     });
 }
 

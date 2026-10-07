@@ -1724,10 +1724,15 @@ const RecorderCard: React.FC<{
 const UPCOMING_REFRESH_MS = 60_000;
 
 /** Meetings coming up on the calendar, each with a button to record it. */
+/** How early a recording can start and still be of a calendar meeting
+ * (`EARLY_MS` in calendar.rs). */
+const LINK_EARLY_MS = 2 * 60 * 1000;
+
 const UpcomingMeetings: React.FC<{
   recording: boolean;
+  meetings: MeetingInfo[];
   onStarted: () => void;
-}> = ({ recording, onStarted }) => {
+}> = ({ recording, meetings, onStarted }) => {
   const { t, i18n } = useTranslation();
   const { getSetting } = useSettings();
   const [events, setEvents] = useState<Upcoming[]>([]);
@@ -1749,7 +1754,17 @@ const UpcomingMeetings: React.FC<{
     };
   }, [load]);
 
-  if (events.length === 0) return null;
+  // A meeting already recorded drops off; recurring ones share an id, so
+  // match this occurrence's time too.
+  const recorded = (e: Upcoming) =>
+    meetings.some(
+      (m) =>
+        m.event_id === e.id &&
+        m.started_at >= e.start_ms - LINK_EARLY_MS &&
+        m.started_at < e.end_ms,
+    );
+  const shown = events.filter((e) => !recorded(e));
+  if (shown.length === 0) return null;
 
   const record = async (event: Upcoming) => {
     setStartingId(event.id);
@@ -1794,7 +1809,7 @@ const UpcomingMeetings: React.FC<{
         {t("meetings.upcoming.title")}
       </div>
       <div className="rounded-xl border border-stone/20 bg-surface px-4 divide-y divide-stone/15">
-        {events.map((e) => (
+        {shown.map((e) => (
           <div key={e.id} className="flex items-center gap-3 py-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -2025,6 +2040,7 @@ export const MeetingsPage: React.FC = () => {
 
       <UpcomingMeetings
         recording={live.recording !== null}
+        meetings={meetings}
         onStarted={refresh}
       />
 
