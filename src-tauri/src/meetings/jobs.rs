@@ -688,6 +688,7 @@ impl MeetingManager {
                     }
                 });
                 super::notion::sync_in_background(&self.app, id);
+                super::slack::send_in_background(&self.app, id);
             }
             Err(e) => {
                 log::error!("Meeting {id} couldn't be summarised: {e}");

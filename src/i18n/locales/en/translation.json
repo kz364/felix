@@ -1477,6 +1477,17 @@
         "cancel": "Cancel",
         "forget": "Forget",
         "namePlaceholder": "Name"
+      },
+      "slack": {
+        "send": {
+          "label": "Send meeting notes to Slack",
+          "description": "Once a meeting's notes are written, its summary and action items are posted to Slack through your workflow, for example as a DM to your agent."
+        },
+        "webhook": {
+          "title": "Slack workflow link",
+          "description": "In Slack, make a Workflow Builder workflow that starts from a webhook, add a text variable named “text”, and add a step that sends a message with it to the person or channel you want. Paste the workflow's webhook link here.",
+          "placeholder": "https://hooks.slack.com/…"
+        }
       }
     },
     "errors": {
@@ -1643,6 +1654,12 @@
       "learned": "Learned {{people}}",
       "nothing": "Nothing clean enough to learn here",
       "stopped": "No longer learning from this call"
+    },
+    "slack": {
+      "send": "Send to Slack",
+      "sendAgain": "Send to Slack again",
+      "sent": "Sent to Slack",
+      "failed": "Couldn't send to Slack: {{error}}"
     }
   }
 }

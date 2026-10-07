@@ -84,7 +84,11 @@ const UserName: React.FC = () => {
 
 /** A text setting saved when the field is left or Enter is pressed. */
 const TextSetting: React.FC<{
-  setting: "notion_token" | "notion_parent" | "notion_share_parent";
+  setting:
+    | "notion_token"
+    | "notion_parent"
+    | "notion_share_parent"
+    | "slack_webhook";
   titleKey: string;
   descriptionKey: string;
   placeholderKey: string;
@@ -160,6 +164,32 @@ const NotionSettings: React.FC = () => {
   );
 };
 
+/** Sending each meeting's notes to Slack, e.g. to the user's agent. */
+const SlackSettings: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  return (
+    <>
+      <ToggleSwitch
+        checked={getSetting("slack_send") ?? false}
+        onChange={(v) => updateSetting("slack_send", v)}
+        isUpdating={isUpdating("slack_send")}
+        label={t("meetings.settings.slack.send.label")}
+        description={t("meetings.settings.slack.send.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <TextSetting
+        setting="slack_webhook"
+        titleKey="meetings.settings.slack.webhook.title"
+        descriptionKey="meetings.settings.slack.webhook.description"
+        placeholderKey="meetings.settings.slack.webhook.placeholder"
+        secret
+      />
+    </>
+  );
+};
+
 /** How meetings are transcribed, told apart, tidied and summarised. */
 export const MeetingSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -181,6 +211,7 @@ export const MeetingSettings: React.FC = () => {
   return (
     <>
       <UserName />
+      <SlackSettings />
       <NotionSettings />
       <SettingContainer
         title={t("meetings.settings.transcriber.title")}

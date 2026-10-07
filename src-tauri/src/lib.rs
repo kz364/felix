@@ -846,6 +846,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::calendar::request_calendar_access,
             meetings::calendar::upcoming_meetings,
             meetings::notion::sync_meeting_to_notion,
+            meetings::slack::send_meeting_to_slack,
             meetings::notion::share_meeting_in_notion,
             meetings::remembered::remembered_voices,
             meetings::remembered::set_remember_voices,

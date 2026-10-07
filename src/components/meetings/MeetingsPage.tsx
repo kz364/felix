@@ -1042,6 +1042,7 @@ const SummarySection: React.FC<{
   const { getSetting } = useSettings();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [notionBusy, setNotionBusy] = useState(false);
+  const [slackBusy, setSlackBusy] = useState(false);
   const [confirmShare, setConfirmShare] = useState(false);
 
   useEffect(() => {
@@ -1079,6 +1080,17 @@ const SummarySection: React.FC<{
       : await commands.syncMeetingToNotion(meeting.id);
     setNotionBusy(false);
     if (result.status === "error") toast.error(result.error);
+  };
+
+  const slackSet = (getSetting("slack_webhook") ?? "").startsWith(
+    "https://hooks.slack.com/",
+  );
+  const toSlack = async () => {
+    setSlackBusy(true);
+    const result = await commands.sendMeetingToSlack(meeting.id);
+    setSlackBusy(false);
+    if (result.status === "error") toast.error(result.error);
+    else toast.success(t("meetings.slack.sent"));
   };
 
   const status = meeting.summary;
@@ -1226,7 +1238,27 @@ const SummarySection: React.FC<{
               {t("meetings.notion.share")}
             </button>
           ))}
+        {summary && !working && slackSet && (
+          <button onClick={toSlack} disabled={slackBusy} className={linkButton}>
+            {slackBusy ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Send className="w-3 h-3" />
+            )}
+            {t(
+              meeting.slack_sent_at
+                ? "meetings.slack.sendAgain"
+                : "meetings.slack.send",
+            )}
+          </button>
+        )}
       </div>
+      {meeting.slack_error && (
+        <div className="px-1 text-sm text-warning inline-flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          {t("meetings.slack.failed", { error: meeting.slack_error })}
+        </div>
+      )}
       {meeting.notion_error && (
         <div className="px-1 text-sm text-warning inline-flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />

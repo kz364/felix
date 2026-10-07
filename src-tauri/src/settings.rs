@@ -797,6 +797,14 @@ pub struct AppSettings {
     /// Save each meeting to Notion once it's summarised.
     #[serde(default)]
     pub notion_sync: bool,
+    /// A Slack Workflow Builder webhook that posts each meeting's notes (its
+    /// `text` variable) where the user chose, e.g. a DM to their agent. A
+    /// secret: anyone with it can post there.
+    #[serde(default)]
+    pub slack_webhook: String,
+    /// Send each meeting's notes to Slack once they're written.
+    #[serde(default)]
+    pub slack_send: bool,
     /// The languages meetings are held in (ISO codes). Empty: found from
     /// the recording. Meetings go to a model that knows them all.
     #[serde(default)]
@@ -1594,6 +1602,8 @@ pub fn get_default_settings() -> AppSettings {
         notion_parent: String::new(),
         notion_share_parent: String::new(),
         notion_sync: false,
+        slack_webhook: String::new(),
+        slack_send: false,
         meeting_languages: Vec::new(),
         meeting_diarize: true,
         meeting_detect_calls: true,

@@ -1039,6 +1039,17 @@ async syncMeetingToNotion(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Send (or send again) a meeting's notes to Slack.
+ */
+async sendMeetingToSlack(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_meeting_to_slack", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Move a meeting to the team's Notion page, so the people who were in it
  * can see it. Only meetings with an invite of colleagues only.
  */
@@ -2433,6 +2444,16 @@ notion_share_parent?: string;
  */
 notion_sync?: boolean; 
 /**
+ * A Slack Workflow Builder webhook that posts each meeting's notes (its
+ * `text` variable) where the user chose, e.g. a DM to their agent. A
+ * secret: anyone with it can post there.
+ */
+slack_webhook?: string; 
+/**
+ * Send each meeting's notes to Slack once they're written.
+ */
+slack_send?: boolean; 
+/**
  * Tell voices apart: everyone in an in-person meeting, the other side
  * (and anyone in the room) on a call.
  */
@@ -2963,7 +2984,15 @@ notion_shared?: boolean;
  * Everyone on its invite is from the user's own organisation, so it can
  * be shared. Worked out when meetings are listed, not saved.
  */
-notion_shareable?: boolean }
+notion_shareable?: boolean; 
+/**
+ * When its notes were last sent to Slack (Unix ms).
+ */
+slack_sent_at?: number | null; 
+/**
+ * Why the last send to Slack failed.
+ */
+slack_error?: string | null }
 /**
  * The model that tidies and summarises meeting transcripts.
  */
@@ -3001,7 +3030,11 @@ model: string | null; user_name: string | null; diarize: boolean | null; detect_
 /**
  * The Notion integration secret.
  */
-notion_token: string | null; notion_parent: string | null; notion_share_parent: string | null; languages: string[] | null }
+notion_token: string | null; notion_parent: string | null; notion_share_parent: string | null; slack_send: boolean | null; 
+/**
+ * The Slack workflow webhook link.
+ */
+slack_webhook: string | null; languages: string[] | null }
 /**
  * What the Meetings page shows about the current recording and transcription.
  */

@@ -28,6 +28,7 @@ pub mod pipeline;
 pub mod remembered;
 pub mod remote;
 pub mod segment;
+pub mod slack;
 pub mod speaker_score;
 pub mod speakers;
 pub mod summary;

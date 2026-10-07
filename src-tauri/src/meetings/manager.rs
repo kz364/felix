@@ -129,6 +129,12 @@ pub struct MeetingInfo {
     /// be shared. Worked out when meetings are listed, not saved.
     #[serde(default)]
     pub notion_shareable: bool,
+    /// When its notes were last sent to Slack (Unix ms).
+    #[serde(default)]
+    pub slack_sent_at: Option<i64>,
+    /// Why the last send to Slack failed.
+    #[serde(default)]
+    pub slack_error: Option<String>,
 }
 
 /// The name of a told-apart voice nobody named: the other side of a call
@@ -520,6 +526,8 @@ impl MeetingManager {
             notion_error: None,
             notion_shared: false,
             notion_shareable: false,
+            slack_sent_at: None,
+            slack_error: None,
         };
         write_info(&dir, &info);
         if let Some(id) = &info.event_id {
@@ -1687,6 +1695,9 @@ pub struct MeetingSettingsUpdate {
     pub notion_token: Option<String>,
     pub notion_parent: Option<String>,
     pub notion_share_parent: Option<String>,
+    pub slack_send: Option<bool>,
+    /// The Slack workflow webhook link.
+    pub slack_webhook: Option<String>,
 }
 
 #[tauri::command]
@@ -1749,6 +1760,12 @@ pub fn change_meeting_settings(
     }
     if let Some(v) = update.notion_share_parent {
         settings.notion_share_parent = v.trim().to_string();
+    }
+    if let Some(v) = update.slack_send {
+        settings.slack_send = v;
+    }
+    if let Some(v) = update.slack_webhook {
+        settings.slack_webhook = v.trim().to_string();
     }
     let hide = update.hide_from_screen_share;
     if let Some(v) = hide {
