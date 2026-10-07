@@ -84,6 +84,10 @@ const MAX_TERMS: usize = 100;
 const TERM_CHARS: usize = 49;
 const TERM_WORDS: usize = 5;
 const ATTEMPTS: usize = 5;
+/// Rate limits can last minutes (MAI on OpenRouter refused a run of chunks
+/// for several): a meeting waits them out this many extra times rather than
+/// stop. Dictation, where someone is waiting, falls back to the Mac instead.
+const RATE_LIMIT_WAITS: usize = 6;
 
 fn shape(provider_id: &str) -> Shape {
     match provider_id {
@@ -331,6 +335,11 @@ impl Remote {
         let mut delay = Duration::from_secs(if self.attempts < ATTEMPTS { 1 } else { 2 });
         let attempts = self.attempts;
         let mut attempt = 0;
+        let mut rate_limit_waits = if self.attempts < ATTEMPTS {
+            0
+        } else {
+            RATE_LIMIT_WAITS
+        };
         while attempt < attempts {
             attempt += 1;
             let keyterms = !self.no_keyterms.load(Ordering::Relaxed);
@@ -378,6 +387,10 @@ impl Remote {
                 self.no_keyterms.store(true, Ordering::Relaxed);
                 attempt -= 1;
                 continue;
+            }
+            if status.as_u16() == 429 && attempt == attempts && rate_limit_waits > 0 {
+                rate_limit_waits -= 1;
+                attempt -= 1;
             }
             let retryable = status.as_u16() == 429 || status.is_server_error();
             if retryable && attempt < attempts {
