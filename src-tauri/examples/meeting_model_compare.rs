@@ -6,6 +6,9 @@
 //!
 //!   cargo run --release --example meeting_model_compare -- <model.gguf> <meeting dir> [call|in_person]
 //!
+//! A model path of `openrouter` (or `openrouter:<model>`) transcribes with
+//! OpenRouter as a meeting would, with your key; it needs LIKE_APP.
+//!
 //! LIKE_APP=<language> runs each chunk as Felix does, with your settings and
 //! vocabulary, held to that language (`auto` for none); otherwise the model
 //! runs bare.
@@ -71,11 +74,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| model_path.clone());
 
-    eprintln!("loading {model_name}...");
-    let load_started = Instant::now();
-    let model = Model::load(&model_path)?;
-    let mut session = model.session()?;
-    eprintln!("loaded in {:.1}s", load_started.elapsed().as_secs_f64());
+    let cloud = model_path
+        .strip_prefix("openrouter")
+        .map(|m| m.trim_start_matches(':').to_string());
+    let mut session = match &cloud {
+        Some(_) => None,
+        None => {
+            eprintln!("loading {model_name}...");
+            let load_started = Instant::now();
+            let model = Model::load(&model_path)?;
+            eprintln!("loaded in {:.1}s", load_started.elapsed().as_secs_f64());
+            Some(model.session()?)
+        }
+    };
 
     let options = RunOptions::default();
     let like_app = std::env::var("LIKE_APP").ok();
@@ -83,9 +94,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => {
             let app_data = Path::new(&std::env::var("HOME")?)
                 .join("Library/Application Support/com.pais.handy");
-            Some(handy_app_lib::eval::Setup::load(&app_data)?)
+            let mut setup = handy_app_lib::eval::Setup::load(&app_data)?;
+            setup.as_in_meetings();
+            // This meeting's invite names, as Felix adds them.
+            setup.add_vocabulary(
+                handy_app_lib::meetings::calendar::name_words(dir, 0, 0)
+                    .iter()
+                    .map(String::as_str),
+            );
+            Some(setup)
         }
         None => None,
+    };
+    let remote = match (&cloud, &setup) {
+        (Some(m), Some(setup)) => {
+            let langs: Vec<String> = like_app.iter().filter(|l| *l != "auto").cloned().collect();
+            Some(
+                setup
+                    .remote("openrouter", Some(m.as_str()).filter(|m| !m.is_empty()))?
+                    .for_languages(&langs),
+            )
+        }
+        (Some(_), None) => return Err("openrouter needs LIKE_APP".into()),
+        _ => None,
     };
     let language = like_app.as_deref().filter(|l| *l != "auto");
     let started = Instant::now();
@@ -113,12 +144,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let this_index = chunk_index;
             chunk_index += 1;
             audio_secs += audio.len() as f64 / 16_000.0;
-            let result = match &setup {
-                Some(setup) => setup.transcribe_meeting(&mut session, &audio, language),
-                None => session
+            let result = match (&remote, &setup, session.as_mut()) {
+                (Some(remote), Some(setup), _) => {
+                    // Rate limits: wait and try again rather than lose the chunk.
+                    let mut tries = 0;
+                    loop {
+                        match tauri::async_runtime::block_on(remote.transcribe(&audio)) {
+                            Err(e) if e.contains("429") && tries < 6 => {
+                                tries += 1;
+                                std::thread::sleep(std::time::Duration::from_secs(10 * tries));
+                            }
+                            other => break other.map(|raw| setup.finish_cloud_text(raw)),
+                        }
+                    }
+                }
+                (_, Some(setup), Some(session)) => {
+                    setup.transcribe_meeting(session, &audio, language)
+                }
+                (_, _, Some(session)) => session
                     .run(&audio, &options)
                     .map(|r| r.text)
                     .map_err(|e| e.to_string()),
+                _ => Err("no model".to_string()),
             };
             match result {
                 Ok(text) => Ok(text),

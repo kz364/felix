@@ -52,6 +52,11 @@ impl Setup {
         }
     }
 
+    /// The vocabulary a meeting gets: without the assistant's name.
+    pub fn as_in_meetings(&mut self) {
+        self.settings = crate::rules::for_meetings(self.settings.clone());
+    }
+
     pub fn vocabulary(&self) -> &[String] {
         &self.settings.custom_words
     }
