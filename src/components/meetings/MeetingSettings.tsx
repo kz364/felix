@@ -82,6 +82,84 @@ const UserName: React.FC = () => {
   );
 };
 
+/** A text setting saved when the field is left or Enter is pressed. */
+const TextSetting: React.FC<{
+  setting: "notion_token" | "notion_parent" | "notion_share_parent";
+  titleKey: string;
+  descriptionKey: string;
+  placeholderKey: string;
+  secret?: boolean;
+}> = ({ setting, titleKey, descriptionKey, placeholderKey, secret }) => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const saved = getSetting(setting) ?? "";
+  const [value, setValue] = useState(saved);
+  useEffect(() => setValue(saved), [saved]);
+  const save = () => {
+    if (value.trim() !== saved) updateSetting(setting, value.trim());
+  };
+  return (
+    <SettingContainer
+      title={t(titleKey)}
+      description={t(descriptionKey)}
+      descriptionMode={secret ? "inline" : "tooltip"}
+      grouped
+      layout="horizontal"
+    >
+      <Input
+        type={secret ? "password" : "text"}
+        value={value}
+        placeholder={t(placeholderKey)}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+        disabled={isUpdating(setting)}
+        autoComplete="off"
+        spellCheck={false}
+        className="w-48"
+      />
+    </SettingContainer>
+  );
+};
+
+/** Saving meetings to Notion, private by default. */
+const NotionSettings: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  return (
+    <>
+      <ToggleSwitch
+        checked={getSetting("notion_sync") ?? false}
+        onChange={(v) => updateSetting("notion_sync", v)}
+        isUpdating={isUpdating("notion_sync")}
+        label={t("meetings.settings.notion.sync.label")}
+        description={t("meetings.settings.notion.sync.description")}
+        descriptionMode="tooltip"
+        grouped
+      />
+      <TextSetting
+        setting="notion_token"
+        titleKey="meetings.settings.notion.token.title"
+        descriptionKey="meetings.settings.notion.token.description"
+        placeholderKey="meetings.settings.notion.token.placeholder"
+        secret
+      />
+      <TextSetting
+        setting="notion_parent"
+        titleKey="meetings.settings.notion.parent.title"
+        descriptionKey="meetings.settings.notion.parent.description"
+        placeholderKey="meetings.settings.notion.parent.placeholder"
+      />
+      <TextSetting
+        setting="notion_share_parent"
+        titleKey="meetings.settings.notion.shareParent.title"
+        descriptionKey="meetings.settings.notion.shareParent.description"
+        placeholderKey="meetings.settings.notion.shareParent.placeholder"
+      />
+    </>
+  );
+};
+
 /** How meetings are transcribed, told apart, tidied and summarised. */
 export const MeetingSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -103,6 +181,7 @@ export const MeetingSettings: React.FC = () => {
   return (
     <>
       <UserName />
+      <NotionSettings />
       <SettingContainer
         title={t("meetings.settings.transcriber.title")}
         description={t("meetings.settings.transcriber.description")}

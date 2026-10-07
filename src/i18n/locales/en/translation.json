@@ -1355,6 +1355,27 @@
         "description": "The downloaded model that transcribes meetings on this Mac. The dictation model shares memory with dictation; another model is loaded alongside it during meetings and makes way while you dictate.",
         "dictation": "Same as dictation ({{model}})"
       },
+      "notion": {
+        "sync": {
+          "label": "Save meetings to Notion",
+          "description": "Each meeting's notes and transcript are saved to a \"Felix meetings\" database in Notion once they're written. They stay private to you until you share a meeting."
+        },
+        "token": {
+          "title": "Notion integration token",
+          "description": "Create an internal integration at notion.so/profile/integrations and copy its secret here. Then connect it to both pages below: open the page, choose the ⋯ menu, then Connections.",
+          "placeholder": "ntn_…"
+        },
+        "parent": {
+          "title": "Your private page",
+          "description": "A page only you can see. Felix keeps its meetings database inside it, so meetings stay private.",
+          "placeholder": "Link to the page"
+        },
+        "shareParent": {
+          "title": "Team page",
+          "description": "The page or database a meeting moves to when you share it with the people who were in it.",
+          "placeholder": "Link to the page"
+        }
+      },
       "userName": {
         "title": "Your name",
         "description": "How your name is written. Your own voice in meetings is always labelled with it, and it's always spelled right when you dictate. Empty uses your Mac account's name.",
@@ -1582,6 +1603,14 @@
       "tentative": "tentative",
       "by": "Written by {{model}}",
       "afterTranscript": "Notes are written once the transcript is done."
+    },
+    "notion": {
+      "open": "Open in Notion",
+      "save": "Save to Notion",
+      "share": "Share with participants",
+      "shareConfirm": "Everyone on the invite will be able to see these notes and the transcript in Notion.",
+      "shareYes": "Share",
+      "failed": "Couldn't save to Notion: {{error}}"
     },
     "wip": "Work in progress: meetings are unfinished and still changing. Keep your own notes for anything important.",
     "panel": {

@@ -8,6 +8,7 @@ import React, {
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -21,12 +22,14 @@ import {
   MessageCircleQuestion,
   Mic,
   Monitor,
+  NotebookText,
   Pause,
   Pencil,
   Play,
   RotateCcw,
   Send,
   Settings2,
+  Share2,
   Sparkles,
   Square,
   Trash2,
@@ -1036,7 +1039,10 @@ const SummarySection: React.FC<{
   player: Player;
 }> = ({ meeting, progress, player }) => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [notionBusy, setNotionBusy] = useState(false);
+  const [confirmShare, setConfirmShare] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1061,6 +1067,18 @@ const SummarySection: React.FC<{
     }
     await navigator.clipboard.writeText(result.data);
     toast.success(t("meetings.summary.copied"));
+  };
+
+  const notionSet =
+    !!getSetting("notion_token") && !!getSetting("notion_parent");
+  const toNotion = async (share: boolean) => {
+    setNotionBusy(true);
+    setConfirmShare(false);
+    const result = share
+      ? await commands.shareMeetingInNotion(meeting.id)
+      : await commands.syncMeetingToNotion(meeting.id);
+    setNotionBusy(false);
+    if (result.status === "error") toast.error(result.error);
   };
 
   const status = meeting.summary;
@@ -1152,7 +1170,69 @@ const SummarySection: React.FC<{
             {t("meetings.summary.regenerate")}
           </button>
         )}
+        {summary &&
+          !working &&
+          (meeting.notion_url ? (
+            <button
+              onClick={() => openUrl(meeting.notion_url ?? "")}
+              className={linkButton}
+            >
+              <NotebookText className="w-3 h-3" />
+              {t("meetings.notion.open")}
+            </button>
+          ) : (
+            notionSet && (
+              <button
+                onClick={() => toNotion(false)}
+                disabled={notionBusy}
+                className={linkButton}
+              >
+                {notionBusy ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <NotebookText className="w-3 h-3" />
+                )}
+                {t("meetings.notion.save")}
+              </button>
+            )
+          ))}
+        {summary &&
+          !working &&
+          meeting.notion_shareable &&
+          !meeting.notion_shared &&
+          (confirmShare ? (
+            <span className="inline-flex items-center gap-2 normal-case tracking-normal font-normal">
+              {t("meetings.notion.shareConfirm")}
+              <button
+                onClick={() => toNotion(true)}
+                className="rounded-full bg-text text-background px-2 py-0.5 cursor-pointer"
+              >
+                {t("meetings.notion.shareYes")}
+              </button>
+              <button
+                onClick={() => setConfirmShare(false)}
+                className="text-text/55 hover:text-text cursor-pointer"
+              >
+                {t("meetings.transcript.cancel")}
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmShare(true)}
+              disabled={notionBusy}
+              className={linkButton}
+            >
+              <Share2 className="w-3 h-3" />
+              {t("meetings.notion.share")}
+            </button>
+          ))}
       </div>
+      {meeting.notion_error && (
+        <div className="px-1 text-sm text-warning inline-flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          {t("meetings.notion.failed", { error: meeting.notion_error })}
+        </div>
+      )}
       {banner && <div className="px-1 text-sm text-text/60">{banner}</div>}
       {summary && (
         <div
