@@ -25,25 +25,84 @@ pub struct Invite {
     /// again.
     #[serde(default)]
     pub version: u32,
+    /// The other attendees' e-mail addresses, lowercased. Fewer than
+    /// `attendees` when someone is listed without one.
+    #[serde(default)]
+    pub emails: Vec<String>,
+    /// The user's own address on the invite, lowercased.
+    #[serde(default)]
+    pub my_email: Option<String>,
 }
 
 /// Bumped when [`Invite`] gains something worth reading the calendar again
-/// for (1: handles).
-pub const VERSION: u32 = 1;
+/// for (1: handles, 2: e-mail addresses, for telling whether a meeting was
+/// only with people from the user's own organisation).
+pub const VERSION: u32 = 2;
+
+/// The address in an attendee's `mailto:` URL, lowercased.
+pub fn email_of(url: Option<&str>) -> Option<String> {
+    let url = url?.trim();
+    let rest = url.get(..7).filter(|p| p.eq_ignore_ascii_case("mailto:"))?;
+    let address = url[rest.len()..].split('?').next()?.trim().to_lowercase();
+    let (local, domain) = address.split_once('@')?;
+    (!local.is_empty() && domain.contains('.')).then_some(address)
+}
+
+/// Everything after the last @, lowercased.
+pub fn domain_of(email: &str) -> Option<&str> {
+    email
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .filter(|d| !d.is_empty())
+}
+
+/// Whether everyone on the invite is from the user's own e-mail domain:
+/// someone else is invited, the user's address is known, every attendee
+/// has an address, and all of them share the user's domain. Only then is
+/// sharing the notes with the invitees not sharing them outside.
+pub fn can_share(invite: Option<&Invite>) -> bool {
+    let Some(invite) = invite else {
+        return false;
+    };
+    let Some(mine) = invite.my_email.as_deref().and_then(domain_of) else {
+        return false;
+    };
+    !invite.attendees.is_empty()
+        && invite.emails.len() >= invite.attendees.len()
+        && invite
+            .emails
+            .iter()
+            .all(|e| domain_of(e).is_some_and(|d| d.eq_ignore_ascii_case(mine)))
+}
 
 pub fn load(dir: &Path) -> Option<Invite> {
     super::summary::load_json(dir, FILE)
 }
 
+/// Keep the invite of the calendar event `event_id` with the meeting when
+/// it starts, so the link survives the event being moved or others
+/// overlapping it.
+pub fn save_for_event(dir: &Path, event_id: &str) {
+    if let Some(invite) = imp::invite_for_event(event_id) {
+        let _ = super::summary::save_json(dir, FILE, &invite);
+    }
+}
+
 /// The event's attendees for a meeting from `start_ms` to `end_ms` (Unix
 /// ms), saved with the meeting the first time. None without Calendar
 /// access or a matching event with attendees.
+/// A meeting linked to its calendar event (see
+/// [`super::manager::MeetingInfo::event_id`]) gets that event's invite, not
+/// whichever event overlaps most.
 pub fn for_meeting(dir: &Path, start_ms: i64, end_ms: i64) -> Option<Invite> {
     let saved = load(dir);
     if let Some(i) = saved.as_ref().filter(|i| i.version >= VERSION) {
         return Some(i.clone());
     }
-    let Some(invite) = imp::invite_between(start_ms, end_ms) else {
+    let linked = super::manager::read_info(dir)
+        .and_then(|i| i.event_id)
+        .and_then(|id| imp::invite_for_event(&id));
+    let Some(invite) = linked.or_else(|| imp::invite_between(start_ms, end_ms)) else {
         return saved;
     };
     let _ = super::summary::save_json(dir, FILE, &invite);
@@ -130,8 +189,9 @@ pub async fn upcoming_meetings() -> Vec<Upcoming> {
 }
 
 /// A meeting starting this much later still counts as the one being
-/// recorded: people join a few minutes early.
-const EARLY_MS: i64 = 10 * 60 * 1000;
+/// recorded: started during the meeting, or up to two minutes before it.
+/// Any earlier is more likely something else than joining early.
+const EARLY_MS: i64 = 2 * 60 * 1000;
 
 /// Of the calendar's meetings, the one a recording started at `now_ms` is
 /// of: under way or about to start, the one starting nearest to now.
@@ -195,11 +255,11 @@ pub fn display_name(name: Option<&str>, url: Option<&str>) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::{display_name, Invite};
+    use super::{display_name, email_of, Invite};
     use block2::RcBlock;
     use objc2::runtime::Bool;
-    use objc2_event_kit::{EKAuthorizationStatus, EKEntityType, EKEventStore};
-    use objc2_foundation::{NSDate, NSError};
+    use objc2_event_kit::{EKAuthorizationStatus, EKEntityType, EKEvent, EKEventStore};
+    use objc2_foundation::{NSDate, NSError, NSString};
 
     pub fn access() -> &'static str {
         let status = unsafe { EKEventStore::authorizationStatusForEntityType(EKEntityType::Event) };
@@ -245,46 +305,78 @@ mod imp {
         };
         let mut best: Option<(i64, Invite)> = None;
         for event in events.iter() {
-            let (Some(attendees), all_day) =
-                (unsafe { event.attendees() }, unsafe { event.isAllDay() })
-            else {
+            let Some(invite) = read_invite(&event) else {
                 continue;
             };
-            if all_day || attendees.count() == 0 {
-                continue;
-            }
             let e_start = (unsafe { event.startDate() }.timeIntervalSince1970() * 1000.0) as i64;
             let e_end = (unsafe { event.endDate() }.timeIntervalSince1970() * 1000.0) as i64;
             let overlap = e_end.min(end_ms) - e_start.max(start_ms);
-            if overlap <= 0 {
-                continue;
-            }
-            let mut invite = Invite {
-                title: unsafe { event.title() }.to_string(),
-                version: super::VERSION,
-                ..Default::default()
-            };
-            for a in attendees.iter() {
-                let name = unsafe { a.name() }.map(|n| n.to_string());
-                let url = unsafe { a.URL() }.absoluteString().map(|u| u.to_string());
-                let Some(n) = display_name(name.as_deref(), url.as_deref()) else {
-                    continue;
-                };
-                if unsafe { a.isCurrentUser() } {
-                    invite.me = Some(n);
-                } else if !invite.attendees.contains(&n) {
-                    let named = name.as_deref().is_some_and(|n| !n.contains('@'));
-                    if !named && !n.contains(' ') {
-                        invite.handles.push(n.clone());
-                    }
-                    invite.attendees.push(n);
-                }
-            }
-            if best.as_ref().is_none_or(|(o, _)| overlap > *o) {
+            if overlap > 0 && best.as_ref().is_none_or(|(o, _)| overlap > *o) {
                 best = Some((overlap, invite));
             }
         }
         best.map(|(_, i)| i)
+    }
+
+    /// The invite of one event, by the id [`super::Upcoming::id`] has.
+    pub fn invite_for_event(id: &str) -> Option<Invite> {
+        if access() != "full" {
+            return None;
+        }
+        let store = unsafe { EKEventStore::new() };
+        let event = unsafe { store.eventWithIdentifier(&NSString::from_str(id)) }?;
+        read_invite(&event)
+    }
+
+    /// The attendees of a timed event that has some.
+    fn read_invite(event: &EKEvent) -> Option<Invite> {
+        if unsafe { event.isAllDay() } {
+            return None;
+        }
+        let attendees = unsafe { event.attendees() }.filter(|a| a.count() > 0)?;
+        let mut invite = Invite {
+            title: unsafe { event.title() }.to_string(),
+            version: super::VERSION,
+            ..Default::default()
+        };
+        for a in attendees.iter() {
+            let name = unsafe { a.name() }.map(|n| n.to_string());
+            let url = unsafe { a.URL() }.absoluteString().map(|u| u.to_string());
+            let email = email_of(url.as_deref());
+            let Some(n) = display_name(name.as_deref(), url.as_deref()) else {
+                // Not a name anyone would say, but still someone invited.
+                if let Some(e) = email.filter(|_| !unsafe { a.isCurrentUser() }) {
+                    if !invite.emails.contains(&e) {
+                        invite.emails.push(e);
+                    }
+                }
+                continue;
+            };
+            if unsafe { a.isCurrentUser() } {
+                invite.me = Some(n);
+                invite.my_email = email;
+                continue;
+            }
+            // Someone with no address is always counted, so there are
+            // fewer addresses than people.
+            match email {
+                Some(e) if invite.attendees.contains(&n) => {
+                    if !invite.emails.contains(&e) {
+                        invite.emails.push(e);
+                    }
+                }
+                Some(e) => {
+                    invite.attendees.push(n.clone());
+                    invite.emails.push(e);
+                }
+                None => invite.attendees.push(n.clone()),
+            }
+            let named = name.as_deref().is_some_and(|n| !n.contains('@'));
+            if !named && !n.contains(' ') && !invite.handles.contains(&n) {
+                invite.handles.push(n);
+            }
+        }
+        Some(invite)
     }
 
     pub fn upcoming(from_ms: i64, to_ms: i64) -> Vec<super::Upcoming> {
@@ -369,6 +461,9 @@ mod imp {
     pub fn invite_between(_: i64, _: i64) -> Option<Invite> {
         None
     }
+    pub fn invite_for_event(_: &str) -> Option<Invite> {
+        None
+    }
     pub fn upcoming(_: i64, _: i64) -> Vec<super::Upcoming> {
         Vec::new()
     }
@@ -407,6 +502,7 @@ mod tests {
             me: Some("Kaspar".into()),
             handles: vec!["Peterlai".into()],
             version: VERSION,
+            ..Default::default()
         };
         super::super::summary::save_json(dir.path(), FILE, &invite).unwrap();
         assert_eq!(name_words(dir.path(), 0, 0), vec!["Sam", "Rivera", "Priya"]);
@@ -442,9 +538,12 @@ mod tests {
         };
         let now = 100 * min;
         let pick = |events| meeting_at(events, now).map(|e| e.title);
-        // Joined five minutes early, while a long block is still on.
-        let events = vec![event("Focus block", 60, 180), event("HPE call", 105, 135)];
+        // Joined a minute early, while a long block is still on.
+        let events = vec![event("Focus block", 60, 180), event("HPE call", 101, 135)];
         assert_eq!(pick(events).as_deref(), Some("HPE call"));
+        // Two minutes early still counts; five does not.
+        assert_eq!(pick(vec![event("Sync", 102, 130)]).as_deref(), Some("Sync"));
+        assert_eq!(pick(vec![event("Sync", 105, 130)]), None);
         // Late to one that started ten minutes ago.
         assert_eq!(
             pick(vec![event("Standup", 90, 120)]).as_deref(),
@@ -455,5 +554,50 @@ mod tests {
             pick(vec![event("Later", 130, 160), event("Done", 40, 95)]),
             None
         );
+    }
+
+    fn invite(me: Option<&str>, emails: &[&str], attendees: &[&str]) -> Invite {
+        Invite {
+            attendees: attendees.iter().map(|a| a.to_string()).collect(),
+            emails: emails.iter().map(|a| a.to_string()).collect(),
+            my_email: me.map(str::to_string),
+            version: VERSION,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_meeting_can_be_shared_only_when_everyone_is_from_the_users_domain() {
+        let same = invite(
+            Some("me@acme.com"),
+            &["sam@acme.com", "priya@acme.com"],
+            &["Sam", "Priya"],
+        );
+        assert!(can_share(Some(&same)));
+        let outside = invite(
+            Some("me@acme.com"),
+            &["sam@acme.com", "pat@gmail.com"],
+            &["Sam", "Pat"],
+        );
+        assert!(!can_share(Some(&outside)));
+        assert!(!can_share(None));
+        // Someone listed by name only, with no address to check.
+        let nameless = invite(Some("me@acme.com"), &["sam@acme.com"], &["Sam", "Priya"]);
+        assert!(!can_share(Some(&nameless)));
+        // Nobody else, or no way to tell the user's own domain.
+        assert!(!can_share(Some(&invite(Some("me@acme.com"), &[], &[]))));
+        let unknown = invite(None, &["sam@acme.com"], &["Sam"]);
+        assert!(!can_share(Some(&unknown)));
+    }
+
+    #[test]
+    fn addresses_come_from_mailto_links_in_lowercase() {
+        assert_eq!(
+            email_of(Some("mailto:Sam.Rivera@Acme.com")).as_deref(),
+            Some("sam.rivera@acme.com")
+        );
+        assert_eq!(email_of(Some("https://example.com")), None);
+        assert_eq!(email_of(Some("mailto:nonsense")), None);
+        assert_eq!(email_of(None), None);
     }
 }

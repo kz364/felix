@@ -1529,6 +1529,7 @@ mod tests {
                 me: Some("Kaspar".into()),
                 handles: vec!["Peterlai".into()],
                 version: crate::meetings::calendar::VERSION,
+                ..Default::default()
             }),
             ..Default::default()
         };

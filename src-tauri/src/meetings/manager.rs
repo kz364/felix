@@ -110,6 +110,10 @@ pub struct MeetingInfo {
     /// it records like a call, and `mode` is settled when it stops.
     #[serde(default)]
     pub mode_auto: bool,
+    /// The calendar event it was recorded as part of (EventKit's id), so
+    /// the invite read for it is that event's, not another that overlaps.
+    #[serde(default)]
+    pub event_id: Option<String>,
 }
 
 /// The name of a told-apart voice nobody named: the other side of a call
@@ -466,6 +470,7 @@ impl MeetingManager {
         if let Some(e) = &event {
             log::info!("Meeting {id} is the calendar's \"{}\"", e.title);
         }
+        let event_id = event.as_ref().map(|e| e.id.clone());
         let info = MeetingInfo {
             id,
             mode,
@@ -488,8 +493,12 @@ impl MeetingManager {
             languages: vec![],
             app_speakers: BTreeMap::new(),
             mode_auto: chosen.is_none(),
+            event_id,
         };
         write_info(&dir, &info);
+        if let Some(id) = &info.event_id {
+            super::calendar::save_for_event(&dir, id);
+        }
         log::info!("Meeting {} started ({:?})", info.id, mode);
 
         let mut settings = crate::settings::get_settings(&self.app);
