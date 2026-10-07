@@ -30,10 +30,21 @@ fn item_line(a: &ActionItem, with_owner: bool) -> String {
     line
 }
 
-/// The message: what the meeting was, then the action items first (the
-/// point of sending it), then decisions and key points.
-pub fn message(title: &str, meta: &str, s: &Summary) -> String {
-    let mut out = format!("Meeting notes from Felix: {title}\n{meta}\n");
+/// Whose notes these are, so the agent reading them knows they're the
+/// user's: "Kaspar's", from the first word of their name.
+fn whose(user: Option<&str>) -> String {
+    match user.and_then(|n| n.split_whitespace().next()) {
+        Some(first) => format!("{first}'s"),
+        None => "My".to_string(),
+    }
+}
+
+/// The message: the whole of the notes, in the order Felix shows them.
+pub fn message(user: Option<&str>, title: &str, meta: &str, s: &Summary) -> String {
+    let mut out = format!(
+        "{} meeting notes from Felix: {title}\n{meta}\n",
+        whose(user)
+    );
     if !s.overview.is_empty() {
         out.push_str(&format!("\n{}\n", s.overview));
     }
@@ -42,6 +53,9 @@ pub fn message(title: &str, meta: &str, s: &Summary) -> String {
             out.push_str(&format!("\n{heading}\n{}\n", lines.join("\n")));
         }
     };
+    let bullets = |v: &[String]| v.iter().map(|p| format!("• {p}")).collect();
+    section("Key points:", bullets(&s.key_points));
+    section("Decisions:", bullets(&s.decisions));
     let items = |pick: &dyn Fn(&ActionItem) -> bool, with_owner: bool| {
         s.action_items
             .iter()
@@ -58,9 +72,6 @@ pub fn message(title: &str, meta: &str, s: &Summary) -> String {
     if s.action_items.is_empty() {
         section("Action items:", vec!["• None".into()]);
     }
-    let bullets = |v: &[String]| v.iter().map(|p| format!("• {p}")).collect();
-    section("Decisions:", bullets(&s.decisions));
-    section("Key points:", bullets(&s.key_points));
     out.trim_end().to_string()
 }
 
@@ -78,7 +89,8 @@ async fn send(app: &AppHandle, id: &str) -> Result<(), String> {
     let notes: Summary =
         summary::load_json(&dir, summary::SUMMARY_FILE).ok_or("The meeting has no notes yet")?;
     let title = info.title.clone().unwrap_or_else(|| notes.title.clone());
-    let text = message(&title, &meta_line(&info), &notes);
+    let user = crate::rules::user_name(&crate::settings::get_settings(app));
+    let text = message(user.as_deref(), &title, &meta_line(&info), &notes);
     let result = async {
         let response = reqwest::Client::new()
             .post(&url)
@@ -141,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn the_message_leads_with_the_users_own_action_items() {
+    fn the_message_is_the_users_whole_notes_under_their_name() {
         let s = Summary {
             overview: "Agreed the revenue model.".into(),
             key_points: vec!["Three revenue drivers".into()],
@@ -156,20 +168,21 @@ mod tests {
             ],
             ..Default::default()
         };
-        let text = message("Finance sync", "Wed 7 Oct · 14:00", &s);
+        let text = message(Some("Sam Rivera"), "Finance sync", "Wed 7 Oct · 14:00", &s);
         assert_eq!(
             text,
-            "Meeting notes from Felix: Finance sync\nWed 7 Oct · 14:00\n\nAgreed the revenue model.\n\n\
+            "Sam's meeting notes from Felix: Finance sync\nWed 7 Oct · 14:00\n\nAgreed the revenue model.\n\n\
+Key points:\n• Three revenue drivers\n\n\
 My action items:\n• Update the feeder model (due by Friday) (tentative) [1:05]\n\n\
 Others' action items:\n• Sam Rivera: Send Sam the deck\n\n\
-No owner yet:\n• Book a follow-up\n\n\
-Key points:\n• Three revenue drivers"
+No owner yet:\n• Book a follow-up"
         );
     }
 
     #[test]
     fn a_meeting_without_action_items_says_so() {
-        let text = message("Chat", "Today", &Summary::default());
+        let text = message(None, "Chat", "Today", &Summary::default());
+        assert!(text.starts_with("My meeting notes from Felix: Chat"));
         assert!(text.ends_with("Action items:\n• None"));
     }
 }
