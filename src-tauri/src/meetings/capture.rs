@@ -126,6 +126,8 @@ trait Input: Send {
     }
     /// Catch up with what changed around it, checked every [`CHECK_EVERY`].
     fn refresh(&mut self) {}
+    /// Add audio from elsewhere to a frame before it's written.
+    fn mix(&mut self, _frame: &mut [f32]) {}
 }
 
 /// The meeting mic: the chosen device, or whatever the system default is.
@@ -181,7 +183,9 @@ impl Input for MicInput {
     }
 }
 
-/// The call's audio: a tap on everything the Mac plays, but Safari.
+/// The call's audio: a tap on everything the Mac plays, with the call tab's
+/// own audio from the browser extension in place of the browser's while it
+/// sends it (see [`super::call_audio`]).
 #[cfg(target_os = "macos")]
 struct SystemInput {
     output: Option<String>,
@@ -208,14 +212,22 @@ impl Input for SystemInput {
     }
 
     fn refresh(&mut self) {
-        // Safari opened (or a call moved into it) since the tap started.
+        // The extension started (or stopped) sending the call.
         let now = super::system_audio::left_out_processes();
         if now == self.left_out {
             return;
         }
         match super::system_audio::leave_out(self.tap, &now) {
             Ok(()) => {
-                log::info!("System audio tap now leaves out {} process(es)", now.len());
+                log::info!(
+                    "System audio tap now leaves out {} process(es){}",
+                    now.len(),
+                    if super::call_audio::live_browser().is_some() {
+                        "; the call comes from the extension"
+                    } else {
+                        ""
+                    }
+                );
                 self.left_out = now;
             }
             Err(e) => {
@@ -223,6 +235,10 @@ impl Input for SystemInput {
                 self.stale = true;
             }
         }
+    }
+
+    fn mix(&mut self, frame: &mut [f32]) {
+        super::call_audio::mix_into(frame);
     }
 
     fn silence_limit(&self) -> Option<Duration> {
@@ -293,6 +309,7 @@ fn spawn_writer(
             let (mut counted, mut counting_since) = (0u64, started);
             let (mut last_check, mut last_open) = (started, started);
             let mut gain = input.gain();
+            let mut mixed = Vec::new();
             loop {
                 let stopping = stop_at.get().copied();
                 if stopping.is_some() {
@@ -323,6 +340,10 @@ fn spawn_writer(
                 let mut loud = false;
                 let mut peak = 0.0f32;
                 resampler.push(&buf, |frame| {
+                    mixed.clear();
+                    mixed.extend_from_slice(frame);
+                    input.mix(&mut mixed);
+                    let frame = &mixed[..];
                     let level = rms(frame);
                     peak = peak.max(level);
                     loud |= level > VOICE_RMS;

@@ -42,6 +42,19 @@ pub enum Message {
         name: String,
         text: String,
     },
+    /// The other people's audio in the call tab: `pcm` is base64 16-bit
+    /// little-endian at `rate`, or empty for `n` samples of silence.
+    CallAudio {
+        app: String,
+        rate: u32,
+        #[serde(default)]
+        n: usize,
+        #[serde(default)]
+        pcm: String,
+    },
+    /// From the host itself, first on each connection: the browser that
+    /// started it, so its own sound can be left out of the tap.
+    Host { browser_pid: i32 },
 }
 
 /// A message as kept with the meeting: when it came, on the recording's clock.
@@ -138,6 +151,14 @@ pub fn run_host() -> i32 {
         };
         if felix.is_none() {
             felix = socket_path().and_then(|p| std::os::unix::net::UnixStream::connect(p).ok());
+            if let Some(s) = felix.as_mut() {
+                let host = Message::Host {
+                    browser_pid: std::os::unix::process::parent_id() as i32,
+                };
+                if let Ok(line) = serde_json::to_string(&host) {
+                    let _ = writeln!(s, "{line}");
+                }
+            }
         }
         let mut sent = false;
         if let Some(s) = felix.as_mut() {
@@ -173,8 +194,24 @@ fn app_of(m: &Message) -> &str {
         Message::Hello { app, .. }
         | Message::Speaking { app, .. }
         | Message::Participants { app, .. }
-        | Message::Caption { app, .. } => app,
+        | Message::Caption { app, .. }
+        | Message::CallAudio { app, .. } => app,
+        Message::Host { .. } => "host",
     }
+}
+
+/// Call audio as samples at the recording's rate, if it's usable.
+fn call_samples(rate: u32, n: usize, pcm: &str) -> Option<Vec<f32>> {
+    use base64::Engine;
+    if rate != super::track::SAMPLE_RATE {
+        return None;
+    }
+    if pcm.is_empty() {
+        // Silence: sent as a count, to keep the pipe quiet.
+        return (n <= super::track::SAMPLE_RATE as usize * 2).then(|| vec![0.0; n]);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(pcm).ok()?;
+    Some(super::call_audio::decode(&bytes))
 }
 
 /// Start listening for the host. Only this user can open the socket.
@@ -197,13 +234,37 @@ pub fn spawn_listener(app: &AppHandle) {
         for stream in listener.incoming().flatten() {
             let app = app.clone();
             std::thread::spawn(move || {
+                let mut browser = None;
+                let mut sending = false;
                 for line in BufReader::new(stream).lines() {
                     let Ok(line) = line else { break };
                     if line.len() > MAX_MESSAGE {
                         continue;
                     }
-                    if let Ok(message) = serde_json::from_str::<Message>(&line) {
-                        heard(&app, message);
+                    match serde_json::from_str::<Message>(&line) {
+                        Ok(Message::Host { browser_pid }) => browser = Some(browser_pid),
+                        Ok(Message::CallAudio { app, rate, n, pcm }) => {
+                            match call_samples(rate, n, &pcm) {
+                                Some(samples) => {
+                                    if !sending {
+                                        log::info!(
+                                            "The extension is sending the {app} call's audio"
+                                        );
+                                        sending = true;
+                                    }
+                                    super::call_audio::push(browser, &samples);
+                                }
+                                None if sending => {
+                                    log::warn!(
+                                        "Unusable call audio from the extension ({rate} Hz)"
+                                    );
+                                    sending = false;
+                                }
+                                None => {}
+                            }
+                        }
+                        Ok(message) => heard(&app, message),
+                        Err(_) => {}
                     }
                 }
             });
@@ -369,6 +430,21 @@ mod tests {
         .unwrap();
         assert!(line.contains("\"at_ms\":1200") && line.contains("\"type\":\"speaking\""));
         assert_eq!(serde_json::from_str::<Logged>(&line).unwrap().message, m);
+    }
+
+    #[test]
+    fn call_audio_is_decoded_and_silence_is_a_count() {
+        let m: Message = serde_json::from_str(
+            r#"{"type":"call_audio","app":"meet","rate":16000,"pcm":"/38AAA=="}"#,
+        )
+        .unwrap();
+        let Message::CallAudio { rate, n, pcm, .. } = m else {
+            panic!("{m:?}")
+        };
+        assert_eq!(call_samples(rate, n, &pcm), Some(vec![1.0, 0.0]));
+        assert_eq!(call_samples(16_000, 3, ""), Some(vec![0.0; 3]));
+        assert_eq!(call_samples(48_000, 0, "/38AAA=="), None);
+        assert_eq!(call_samples(16_000, 1 << 30, ""), None);
     }
 
     #[test]

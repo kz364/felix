@@ -1,6 +1,7 @@
 // Watches a call page (Google Meet, and the Zoom and Teams web clients) for
-// who's talking and sends it to Felix (through the background worker). Reads names only: no audio, no video, and caption
-// text only when the user turns captions on in the extension's popup.
+// who's talking and sends it to Felix (through the background worker). Reads names only: no video, and caption
+// text only when the user turns captions on in the extension's popup. The
+// call's sound is call_audio.js.
 //
 // Talking is read from the page itself. Each participant's tile animates
 // while they talk (Meet's speaking ring and level bars), which shows up as

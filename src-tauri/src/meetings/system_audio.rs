@@ -1,7 +1,8 @@
 //! System audio (the other people on a call) through a Core Audio process
 //! tap, macOS 14.2+. The tap mixes every app's output except Felix's own
-//! (feedback sounds) and Safari's (videos playing during the call, see
-//! [`LEFT_OUT_APPS`]) down to mono; a private aggregate device wraps it so an
+//! (feedback sounds) down to mono, and leaves out the browser too while the
+//! Felix Meetings extension sends the call tab's own audio (see
+//! [`super::call_audio`]); a private aggregate device wraps it so an
 //! IOProc can read it. Needs the "System Audio Recording" permission
 //! (`NSAudioCaptureUsageDescription`), not Screen Recording. Without it the
 //! tap delivers silence.
@@ -91,12 +92,6 @@ unsafe fn default_output_uid() -> Result<Retained<NSString>, String> {
     Retained::from_raw(uid).ok_or_else(|| "The output device has no UID".into())
 }
 
-/// Apps whose sound stays out of the recording: a video playing in Safari
-/// during a call isn't the call. Matched on the app bundle that is
-/// responsible for the process, since Safari plays through a shared
-/// `com.apple.WebKit.GPU` helper.
-const LEFT_OUT_APPS: &[&str] = &["Safari.app", "Safari Technology Preview.app"];
-
 extern "C" {
     /// The app a helper process (XPC service) works for; libSystem, used by
     /// Activity Monitor. Returns the pid itself for an app.
@@ -171,42 +166,23 @@ fn owner(pid: libc::pid_t) -> libc::pid_t {
     }
 }
 
-/// A process's executable.
-fn path(pid: libc::pid_t) -> Option<String> {
-    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: the buffer is the size passed.
-    let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
-    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
-}
-
-/// Whether a process's sound stays out: Felix's own (`own_pid` is
-/// responsible for it, as for its web view), or a [`LEFT_OUT_APPS`] app's
-/// unless that app is where the call is.
-fn left_out(own_pid: i32, owner_pid: i32, owner_path: &str, call_in_safari: bool) -> bool {
-    if owner_pid == own_pid {
-        return true;
-    }
-    !call_in_safari
-        && LEFT_OUT_APPS
-            .iter()
-            .any(|app| owner_path.contains(&format!("/{app}/")))
+/// Whether a process's sound stays out: Felix's own (as for its web view,
+/// whose helper Felix is responsible for), and the browser's whose call
+/// the extension sends.
+fn left_out(owner_pid: i32, own_pid: i32, browser_pid: Option<i32>) -> bool {
+    owner_pid == own_pid || Some(owner_pid) == browser_pid
 }
 
 /// The process objects whose sound the tap leaves out right now.
 pub fn left_out_processes() -> Vec<AudioObjectID> {
     let own = std::process::id() as i32;
-    // A Meet in Safari: its sound is the call, so Safari stays in.
-    let call_in_safari = super::call_apps::current().is_some_and(|a| a.name == "Safari");
+    let browser = super::call_audio::live_browser().map(owner);
     let mut ids: Vec<AudioObjectID> = process_objects()
         .into_iter()
         .filter(|&id| {
             // SAFETY: an i32 property of a process object.
-            let Ok(pid) = (unsafe { get_property::<i32>(id, kAudioProcessPropertyPID, None, 0) })
-            else {
-                return false;
-            };
-            let owner = owner(pid);
-            left_out(own, owner, &path(owner).unwrap_or_default(), call_in_safari)
+            unsafe { get_property::<i32>(id, kAudioProcessPropertyPID, None, 0) }
+                .is_ok_and(|pid| left_out(owner(pid), own, browser))
         })
         .collect();
     ids.sort_unstable();
@@ -340,7 +316,8 @@ impl Drop for SystemTap {
     }
 }
 
-/// Start tapping every app's audio output except Felix's and Safari's.
+/// Start tapping every app's audio output except Felix's (and the call
+/// browser's, while the extension sends its call).
 pub fn start() -> Result<(Source, SystemTap), String> {
     unsafe { start_inner() }
 }
@@ -495,26 +472,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safari_and_felix_stay_out_unless_the_call_is_in_safari() {
-        let safari = "/Applications/Safari.app/Contents/MacOS/Safari";
-        let cryptex = "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app/Contents/MacOS/Safari";
-        let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-        assert!(left_out(10, 20, safari, false));
-        assert!(left_out(10, 20, cryptex, false));
-        assert!(!left_out(10, 20, safari, true));
-        assert!(!left_out(10, 20, chrome, false));
-        // Felix's own sounds and web view, whatever the call.
-        assert!(left_out(
-            10,
-            10,
-            "/Applications/Felix.app/Contents/MacOS/handy",
-            true
-        ));
-        assert!(!left_out(
-            10,
-            20,
-            "/Applications/Safari Helper.app/x",
-            false
-        ));
+    fn felix_always_and_the_call_browser_while_it_sends_stay_out() {
+        assert!(left_out(10, 10, None));
+        assert!(left_out(20, 10, Some(20)));
+        assert!(!left_out(20, 10, None));
+        assert!(!left_out(30, 10, Some(20)));
     }
 }

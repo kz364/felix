@@ -76,10 +76,11 @@ chrome.runtime.onMessage.addListener(() => {
 chrome.runtime.onStartup.addListener(checkForUpdate);
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const matches = chrome.runtime.getManifest().content_scripts[0].matches;
-  for (const tab of await chrome.tabs.query({ url: matches })) {
-    chrome.scripting
-      .executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
-      .catch(() => {});
+  for (const script of chrome.runtime.getManifest().content_scripts) {
+    for (const tab of await chrome.tabs.query({ url: script.matches })) {
+      chrome.scripting
+        .executeScript({ target: { tabId: tab.id }, files: script.js })
+        .catch(() => {});
+    }
   }
 });

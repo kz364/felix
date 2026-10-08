@@ -132,18 +132,24 @@ pub fn echo_mask(
     if echo.is_some_and(|e| !e.has_echo()) {
         return vec![false; mic.len()];
     }
-    // The delay in frames, and the reach either side of it.
+    // The delay in frames (negative: the system track has the sound after
+    // the mic), and the reach either side of it.
     let lag = echo
         .and_then(|e| e.lag_ms)
-        .map_or(0, |ms| (ms / transcript::FRAME_MS as f32).round() as usize);
+        .map_or(0, |ms| (ms / transcript::FRAME_MS as f32).round() as isize);
     let allowed = |i: usize| echo.is_none_or(|e| e.frames.get(i).copied().unwrap_or(false));
+    let last = system.len() as isize - 1;
     let loudest_recent = |i: usize| {
-        let to = i.saturating_sub(lag.saturating_sub(2));
-        let from = i.saturating_sub(lag + ECHO_LOOKBACK_FRAMES);
-        system
-            .get(from..=to.min(system.len().saturating_sub(1)))
-            .map(|w| w.iter().copied().fold(0.0f32, f32::max))
-            .unwrap_or(0.0)
+        let i = i as isize;
+        let to = (i - (lag - 2)).min(last);
+        let from = (i - (lag + ECHO_LOOKBACK_FRAMES as isize)).max(0);
+        if last < 0 || to < from {
+            return 0.0;
+        }
+        system[from as usize..=to as usize]
+            .iter()
+            .copied()
+            .fold(0.0f32, f32::max)
     };
     // Typical echo gain while the other side talks (the user is usually quiet).
     let mut ratios: Vec<f32> = (0..mic.len().min(system.len()))
