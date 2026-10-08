@@ -1,16 +1,24 @@
-// Sends what the other people on a Google Meet call say to Felix (through
+// Sends what the other people on a call in the browser (Google Meet, and the
+// Zoom and Teams web clients) say to Felix (through
 // the background worker), so the meeting recording has the call itself and
 // not a video playing in another tab. Felix then leaves the browser out of
 // the Mac's sound while this comes in.
 //
-// The audio is what Meet plays: the streams on its unmuted <audio> and
+// The audio is what the page plays: the streams on its unmuted <audio> and
 // <video> elements. Never the mic, and the user's own (muted) preview is
 // skipped. Sent as 16 kHz 16-bit PCM, or just a sample count when silent.
+// A client that plays the call another way (decoding it itself) sends
+// nothing, and Felix keeps recording the browser's sound as before.
 
 (() => {
   if (window.__felixCallAudio) return;
   window.__felixCallAudio = true;
 
+  const APP = location.hostname === "meet.google.com"
+    ? "meet"
+    : location.hostname.endsWith("zoom.us")
+      ? "zoom"
+      : "teams";
   const RATE = 16000;
   // Samples per message: 128 ms.
   const CHUNK = 2048;
@@ -25,7 +33,7 @@
 
   function send(msg) {
     try {
-      chrome.runtime.sendMessage({ app: "meet", ...msg });
+      chrome.runtime.sendMessage({ app: APP, ...msg });
     } catch (e) {
       // The extension was reloaded; this page's script is orphaned.
       stop();

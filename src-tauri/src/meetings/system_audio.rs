@@ -1,8 +1,9 @@
 //! System audio (the other people on a call) through a Core Audio process
-//! tap, macOS 14.2+. The tap mixes every app's output except Felix's own
-//! (feedback sounds) down to mono, and leaves out the browser too while the
-//! Felix Meetings extension sends the call tab's own audio (see
-//! [`super::call_audio`]); a private aggregate device wraps it so an
+//! tap, macOS 14.2+, mixed down to mono. What it takes is a [`Scope`]: only
+//! the call app's sound while a desktop call app (Zoom, Teams…) holds the
+//! mic; otherwise every app's but Felix's own (feedback sounds) and, while
+//! the Felix Meetings extension sends the call tab's own audio (see
+//! [`super::call_audio`]), the browser's. A private aggregate device wraps it so an
 //! IOProc can read it. Needs the "System Audio Recording" permission
 //! (`NSAudioCaptureUsageDescription`), not Screen Recording. Without it the
 //! tap delivers silence.
@@ -166,31 +167,97 @@ fn owner(pid: libc::pid_t) -> libc::pid_t {
     }
 }
 
-/// Whether a process's sound stays out: Felix's own (as for its web view,
-/// whose helper Felix is responsible for), and the browser's whose call
-/// the extension sends.
-fn left_out(owner_pid: i32, own_pid: i32, browser_pid: Option<i32>) -> bool {
-    owner_pid == own_pid || Some(owner_pid) == browser_pid
+/// What the tap records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Scope {
+    /// Every app's sound but these processes'.
+    AllBut(Vec<AudioObjectID>),
+    /// Only these processes' (a desktop call app's).
+    Only(Vec<AudioObjectID>),
 }
 
-/// The process objects whose sound the tap leaves out right now.
-pub fn left_out_processes() -> Vec<AudioObjectID> {
-    let own = std::process::id() as i32;
-    let browser = super::call_audio::live_browser().map(owner);
-    let mut ids: Vec<AudioObjectID> = process_objects()
+impl Scope {
+    fn processes(&self) -> &[AudioObjectID] {
+        match self {
+            Scope::AllBut(p) | Scope::Only(p) => p,
+        }
+    }
+
+    fn exclusive(&self) -> bool {
+        matches!(self, Scope::AllBut(_))
+    }
+}
+
+/// A process with audio open, and who it belongs to.
+struct Process {
+    id: AudioObjectID,
+    owner: i32,
+    bundle: String,
+}
+
+/// Whether a bundle id is the app's, or one of its helpers'
+/// (`com.tinyspeck.slackmacgap.helper`).
+fn of_app(bundle: &str, app: &str) -> bool {
+    bundle == app
+        || bundle
+            .strip_prefix(app)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// The scope for these processes. A desktop call app's own processes, and
+/// any helper it's responsible for, when it has any; else everything but
+/// Felix's (its web view's helper too) and the extension's browser.
+fn choose(processes: &[Process], own: i32, browser: Option<i32>, call_app: Option<&str>) -> Scope {
+    let sorted = |mut ids: Vec<AudioObjectID>| {
+        ids.sort_unstable();
+        ids
+    };
+    if let (None, Some(app)) = (browser, call_app) {
+        let owners: Vec<i32> = processes
+            .iter()
+            .filter(|p| of_app(&p.bundle, app))
+            .map(|p| p.owner)
+            .collect();
+        let ids: Vec<AudioObjectID> = processes
+            .iter()
+            .filter(|p| of_app(&p.bundle, app) || owners.contains(&p.owner))
+            .map(|p| p.id)
+            .collect();
+        if !ids.is_empty() {
+            return Scope::Only(sorted(ids));
+        }
+    }
+    Scope::AllBut(sorted(
+        processes
+            .iter()
+            .filter(|p| p.owner == own || Some(p.owner) == browser)
+            .map(|p| p.id)
+            .collect(),
+    ))
+}
+
+/// What the tap should record right now, with `call_app` (a bundle id) the
+/// desktop call app the meeting is on, if any.
+pub fn scope(call_app: Option<&str>) -> Scope {
+    let processes: Vec<Process> = process_objects()
         .into_iter()
-        .filter(|&id| {
+        .filter_map(|id| {
             // SAFETY: an i32 property of a process object.
-            unsafe { get_property::<i32>(id, kAudioProcessPropertyPID, None, 0) }
-                .is_ok_and(|pid| left_out(owner(pid), own, browser))
+            let pid = unsafe { get_property::<i32>(id, kAudioProcessPropertyPID, None, 0) }.ok()?;
+            Some(Process {
+                id,
+                owner: owner(pid),
+                bundle: bundle_id(id).unwrap_or_default(),
+            })
         })
         .collect();
-    ids.sort_unstable();
-    ids
+    let own = std::process::id() as i32;
+    let browser = super::call_audio::live_browser().map(owner);
+    choose(&processes, own, browser, call_app)
 }
 
-/// Change which processes a running tap leaves out.
-pub fn leave_out(tap: AudioObjectID, processes: &[AudioObjectID]) -> Result<(), String> {
+/// Change what a running tap records.
+pub fn set_scope(tap: AudioObjectID, scope: &Scope) -> Result<(), String> {
     unsafe {
         let raw: *mut CATapDescription = get_property(
             tap,
@@ -199,9 +266,8 @@ pub fn leave_out(tap: AudioObjectID, processes: &[AudioObjectID]) -> Result<(), 
             std::ptr::null_mut(),
         )?;
         let description = Retained::from_raw(raw).ok_or("The tap has no description")?;
-        let list: Vec<Retained<NSNumber>> =
-            processes.iter().map(|&id| NSNumber::new_u32(id)).collect();
-        description.setProcesses(&NSArray::from_retained_slice(&list));
+        description.setProcesses(&process_list(scope));
+        description.setExclusive(scope.exclusive());
         let address = AudioObjectPropertyAddress {
             mSelector: kAudioTapPropertyDescription,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -217,12 +283,27 @@ pub fn leave_out(tap: AudioObjectID, processes: &[AudioObjectID]) -> Result<(), 
             NonNull::from(&pointer).cast(),
         );
         if status != 0 {
-            return Err(format!(
-                "Couldn't change what the tap leaves out ({status})"
-            ));
+            return Err(format!("Couldn't change what the tap records ({status})"));
         }
     }
     Ok(())
+}
+
+fn process_list(scope: &Scope) -> Retained<NSArray<NSNumber>> {
+    let list: Vec<Retained<NSNumber>> = scope
+        .processes()
+        .iter()
+        .map(|&id| NSNumber::new_u32(id))
+        .collect();
+    NSArray::from_retained_slice(&list)
+}
+
+/// For the log.
+pub fn describe(scope: &Scope) -> String {
+    match scope {
+        Scope::AllBut(p) => format!("everything but {} process(es)", p.len()),
+        Scope::Only(p) => format!("only the call app's {} process(es)", p.len()),
+    }
 }
 
 /// The UID of the output the Mac plays through right now.
@@ -286,8 +367,6 @@ unsafe extern "C-unwind" fn io_proc(
 /// A running tap; stops and tears down on drop.
 pub struct SystemTap {
     pub tap: AudioObjectID,
-    /// The processes it was started leaving out.
-    pub left_out: Vec<AudioObjectID>,
     aggregate: AudioObjectID,
     proc_id: AudioDeviceIOProcID,
     callback: *mut Callback,
@@ -316,34 +395,26 @@ impl Drop for SystemTap {
     }
 }
 
-/// Start tapping every app's audio output except Felix's (and the call
-/// browser's, while the extension sends its call).
-pub fn start() -> Result<(Source, SystemTap), String> {
-    unsafe { start_inner() }
+/// Start tapping what `scope` says.
+pub fn start(scope: &Scope) -> Result<(Source, SystemTap), String> {
+    unsafe { start_inner(scope) }
 }
 
-unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
+unsafe fn start_inner(scope: &Scope) -> Result<(Source, SystemTap), String> {
     let mut session = SystemTap {
         tap: kAudioObjectUnknown,
-        left_out: left_out_processes(),
         aggregate: kAudioObjectUnknown,
         proc_id: None,
         callback: std::ptr::null_mut(),
     };
 
     // A process object exists only once the process has used audio; one
-    // that starts later is added by [`leave_out`].
-    let excluded: Vec<Retained<NSNumber>> = session
-        .left_out
-        .iter()
-        .map(|&id| NSNumber::new_u32(id))
-        .collect();
-    let excluded = NSArray::from_retained_slice(&excluded);
-
+    // that starts later is taken in by [`set_scope`].
     let description = CATapDescription::initMonoGlobalTapButExcludeProcesses(
         CATapDescription::alloc(),
-        &excluded,
+        &process_list(scope),
     );
+    description.setExclusive(scope.exclusive());
     let tap_uuid = NSUUID::new();
     description.setUUID(&tap_uuid);
     description.setName(&NSString::from_str("Felix meeting"));
@@ -452,10 +523,10 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
         return Err(format!("Couldn't start the tap ({status})"));
     }
     log::info!(
-        "System audio tap started: {} Hz, {} channel(s), leaving out {} process(es)",
+        "System audio tap started: {} Hz, {} channel(s), {}",
         rate,
         format.mChannelsPerFrame,
-        session.left_out.len()
+        describe(scope)
     );
     Ok((
         Source {
@@ -471,11 +542,58 @@ unsafe fn start_inner() -> Result<(Source, SystemTap), String> {
 mod tests {
     use super::*;
 
+    fn p(id: AudioObjectID, owner: i32, bundle: &str) -> Process {
+        Process {
+            id,
+            owner,
+            bundle: bundle.into(),
+        }
+    }
+
+    #[test]
+    fn a_desktop_call_app_is_all_that_is_recorded() {
+        let procs = [
+            p(1, 10, "com.pais.handy"),
+            p(2, 10, "com.apple.WebKit.GPU"),
+            p(3, 20, "com.google.Chrome.helper"),
+            p(4, 30, "com.tinyspeck.slackmacgap"),
+            p(5, 31, "com.tinyspeck.slackmacgap.helper"),
+            p(6, 30, "com.apple.WebKit.GPU"),
+            p(7, 40, "us.zoom.xos"),
+        ];
+        assert_eq!(
+            choose(&procs, 10, None, Some("us.zoom.xos")),
+            Scope::Only(vec![7])
+        );
+        assert_eq!(
+            choose(&procs, 10, None, Some("com.tinyspeck.slackmacgap")),
+            Scope::Only(vec![4, 5, 6])
+        );
+        // Not a prefix of another app's id.
+        assert!(!of_app("us.zoom.xosx", "us.zoom.xos"));
+        // A call app with no sound open yet: everything but Felix.
+        assert_eq!(
+            choose(&procs, 10, None, Some("com.microsoft.teams2")),
+            Scope::AllBut(vec![1, 2])
+        );
+    }
+
     #[test]
     fn felix_always_and_the_call_browser_while_it_sends_stay_out() {
-        assert!(left_out(10, 10, None));
-        assert!(left_out(20, 10, Some(20)));
-        assert!(!left_out(20, 10, None));
-        assert!(!left_out(30, 10, Some(20)));
+        let procs = [
+            p(1, 10, "com.pais.handy"),
+            p(3, 20, "com.google.Chrome.helper"),
+            p(7, 40, "us.zoom.xos"),
+        ];
+        assert_eq!(choose(&procs, 10, None, None), Scope::AllBut(vec![1]));
+        assert_eq!(
+            choose(&procs, 10, Some(20), None),
+            Scope::AllBut(vec![1, 3])
+        );
+        // The extension sending a browser call wins over a desktop app.
+        assert_eq!(
+            choose(&procs, 10, Some(20), Some("us.zoom.xos")),
+            Scope::AllBut(vec![1, 3])
+        );
     }
 }

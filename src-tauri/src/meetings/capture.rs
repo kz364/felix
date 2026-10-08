@@ -183,25 +183,50 @@ impl Input for MicInput {
     }
 }
 
-/// The call's audio: a tap on everything the Mac plays, with the call tab's
-/// own audio from the browser extension in place of the browser's while it
-/// sends it (see [`super::call_audio`]).
+/// The call's audio: a tap on the desktop call app holding the mic, or on
+/// everything the Mac plays, with the call tab's own audio from the browser
+/// extension in place of the browser's while it sends it (see
+/// [`super::call_audio`]).
 #[cfg(target_os = "macos")]
 struct SystemInput {
     output: Option<String>,
     tap: objc2_core_audio::AudioObjectID,
-    left_out: Vec<objc2_core_audio::AudioObjectID>,
-    /// The tap couldn't be changed in place to leave out what it should.
+    scope: super::system_audio::Scope,
+    /// The desktop call app the meeting is on (its bundle id). Kept while
+    /// the app lets go of the mic (some do on mute) until another call app
+    /// takes it.
+    call_app: Option<&'static str>,
+    /// The tap couldn't be changed in place to record what it should.
     stale: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl SystemInput {
+    fn current_scope(&mut self) -> super::system_audio::Scope {
+        match super::call_apps::current() {
+            Some(app) if !app.browser => self.call_app = Some(app.bundle_id),
+            Some(_) => self.call_app = None,
+            None => {}
+        }
+        let scope = super::system_audio::scope(self.call_app);
+        if matches!(scope, super::system_audio::Scope::AllBut(_))
+            && super::call_audio::live_browser().is_none()
+        {
+            // The app quit (or has no sound open): back to everything.
+            self.call_app = None;
+        }
+        scope
+    }
 }
 
 #[cfg(target_os = "macos")]
 impl Input for SystemInput {
     fn open(&mut self) -> Result<Opened, String> {
-        let (source, tap) = super::system_audio::start()?;
+        let scope = self.current_scope();
+        let (source, tap) = super::system_audio::start(&scope)?;
         self.output = super::system_audio::output_uid();
         self.tap = tap.tap;
-        self.left_out = tap.left_out.clone();
+        self.scope = scope;
         self.stale = false;
         Ok((source, Box::new(tap)))
     }
@@ -212,23 +237,24 @@ impl Input for SystemInput {
     }
 
     fn refresh(&mut self) {
-        // The extension started (or stopped) sending the call.
-        let now = super::system_audio::left_out_processes();
-        if now == self.left_out {
+        // A call app took the mic, or the extension started (or stopped)
+        // sending the call.
+        let now = self.current_scope();
+        if now == self.scope {
             return;
         }
-        match super::system_audio::leave_out(self.tap, &now) {
+        match super::system_audio::set_scope(self.tap, &now) {
             Ok(()) => {
                 log::info!(
-                    "System audio tap now leaves out {} process(es){}",
-                    now.len(),
+                    "System audio tap now records {}{}",
+                    super::system_audio::describe(&now),
                     if super::call_audio::live_browser().is_some() {
                         "; the call comes from the extension"
                     } else {
                         ""
                     }
                 );
-                self.left_out = now;
+                self.scope = now;
             }
             Err(e) => {
                 log::warn!("{e}; rebuilding the tap");
@@ -600,7 +626,8 @@ fn system_input() -> Result<(Box<dyn Input>, Opened), String> {
     let mut input = Box::new(SystemInput {
         output: None,
         tap: 0,
-        left_out: Vec::new(),
+        scope: super::system_audio::Scope::AllBut(Vec::new()),
+        call_app: None,
         stale: false,
     });
     let opened = input.open()?;
