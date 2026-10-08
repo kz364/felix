@@ -124,6 +124,8 @@ trait Input: Send {
     fn gain(&mut self) -> f32 {
         1.0
     }
+    /// Catch up with what changed around it, checked every [`CHECK_EVERY`].
+    fn refresh(&mut self) {}
 }
 
 /// The meeting mic: the chosen device, or whatever the system default is.
@@ -179,10 +181,14 @@ impl Input for MicInput {
     }
 }
 
-/// The call's audio: a tap on everything the Mac plays.
+/// The call's audio: a tap on everything the Mac plays, but Safari.
 #[cfg(target_os = "macos")]
 struct SystemInput {
     output: Option<String>,
+    tap: objc2_core_audio::AudioObjectID,
+    left_out: Vec<objc2_core_audio::AudioObjectID>,
+    /// The tap couldn't be changed in place to leave out what it should.
+    stale: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -190,12 +196,33 @@ impl Input for SystemInput {
     fn open(&mut self) -> Result<Opened, String> {
         let (source, tap) = super::system_audio::start()?;
         self.output = super::system_audio::output_uid();
+        self.tap = tap.tap;
+        self.left_out = tap.left_out.clone();
+        self.stale = false;
         Ok((source, Box::new(tap)))
     }
 
     fn moved(&mut self) -> bool {
         // The tap's aggregate device is built on the output it started with.
-        super::system_audio::output_uid() != self.output
+        self.stale || super::system_audio::output_uid() != self.output
+    }
+
+    fn refresh(&mut self) {
+        // Safari opened (or a call moved into it) since the tap started.
+        let now = super::system_audio::left_out_processes();
+        if now == self.left_out {
+            return;
+        }
+        match super::system_audio::leave_out(self.tap, &now) {
+            Ok(()) => {
+                log::info!("System audio tap now leaves out {} process(es)", now.len());
+                self.left_out = now;
+            }
+            Err(e) => {
+                log::warn!("{e}; rebuilding the tap");
+                self.stale = true;
+            }
+        }
     }
 
     fn silence_limit(&self) -> Option<Duration> {
@@ -353,6 +380,7 @@ fn spawn_writer(
                 }
                 if now.duration_since(last_check) >= CHECK_EVERY {
                     last_check = now;
+                    input.refresh();
                     let new_gain = input.gain();
                     if (new_gain - gain).abs() > 0.01 {
                         log::info!(
@@ -548,7 +576,12 @@ impl Recording {
 
 #[cfg(target_os = "macos")]
 fn system_input() -> Result<(Box<dyn Input>, Opened), String> {
-    let mut input = Box::new(SystemInput { output: None });
+    let mut input = Box::new(SystemInput {
+        output: None,
+        tap: 0,
+        left_out: Vec::new(),
+        stale: false,
+    });
     let opened = input.open()?;
     Ok((input, opened))
 }

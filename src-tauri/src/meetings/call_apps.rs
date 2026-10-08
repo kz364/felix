@@ -74,53 +74,10 @@ pub fn holding_call_app(recording: &[String]) -> Option<CallApp> {
 /// Bundle ids of the processes recording from any input right now.
 #[cfg(target_os = "macos")]
 pub fn recording_processes() -> Vec<String> {
-    use objc2::rc::Retained;
-    use objc2_core_audio::{
-        kAudioHardwarePropertyProcessObjectList, kAudioObjectPropertyElementMain,
-        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioProcessPropertyBundleID,
-        kAudioProcessPropertyIsRunningInput, AudioObjectGetPropertyData,
-        AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectPropertyAddress,
-    };
-    use objc2_foundation::NSString;
-    use std::ptr::NonNull;
+    use objc2_core_audio::kAudioProcessPropertyIsRunningInput;
 
-    let address = AudioObjectPropertyAddress {
-        mSelector: kAudioHardwarePropertyProcessObjectList,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain,
-    };
-    let system = kAudioObjectSystemObject as AudioObjectID;
-    let mut size = 0u32;
-    // SAFETY: valid address and out-pointer.
-    let status = unsafe {
-        AudioObjectGetPropertyDataSize(
-            system,
-            NonNull::from(&address),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-        )
-    };
-    if status != 0 || size == 0 {
-        return Vec::new();
-    }
-    let mut ids = vec![0 as AudioObjectID; size as usize / std::mem::size_of::<AudioObjectID>()];
-    // SAFETY: `ids` holds `size` bytes.
-    let status = unsafe {
-        AudioObjectGetPropertyData(
-            system,
-            NonNull::from(&address),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::new_unchecked(ids.as_mut_ptr()).cast(),
-        )
-    };
-    if status != 0 {
-        return Vec::new();
-    }
-    ids.truncate(size as usize / std::mem::size_of::<AudioObjectID>());
-    ids.into_iter()
+    super::system_audio::process_objects()
+        .into_iter()
         .filter(|&id| {
             // SAFETY: a u32 property of a process object.
             unsafe {
@@ -133,20 +90,7 @@ pub fn recording_processes() -> Vec<String> {
             }
             .is_ok_and(|running| running != 0)
         })
-        .filter_map(|id| {
-            // SAFETY: the property is a +1 CFString, toll-free bridged.
-            let raw: *mut NSString = unsafe {
-                super::system_audio::get_property(
-                    id,
-                    kAudioProcessPropertyBundleID,
-                    None,
-                    std::ptr::null_mut(),
-                )
-            }
-            .ok()?;
-            let name = unsafe { Retained::from_raw(raw) }?.to_string();
-            (!name.is_empty()).then_some(name)
-        })
+        .filter_map(super::system_audio::bundle_id)
         .collect()
 }
 
