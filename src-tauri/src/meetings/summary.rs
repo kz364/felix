@@ -153,9 +153,13 @@ fn cleanup_schema() -> Value {
 fn with_vocabulary(
     instructions: &str,
     vocabulary: &[String],
+    people: &[String],
     soundalikes: &[crate::settings::Soundalike],
 ) -> String {
     let mut out = instructions.to_string();
+    if !people.is_empty() {
+        out.push_str(&format!("\n\n{}", people_line(people)));
+    }
     if !vocabulary.is_empty() {
         out.push_str(&format!(
             "\n\nSpell these names and terms exactly like this: {}.",
@@ -173,6 +177,16 @@ fn with_vocabulary(
     out
 }
 
+/// The people in the meeting as the call app and the invite spell them.
+/// Speech recognition writes a name as it sounds ("Terry" for "Teri"), and
+/// a cloud model can't be given them up front.
+pub fn people_line(people: &[String]) -> String {
+    format!(
+        "The people in this meeting, spelled as the call and the invite show them: {}. Speech recognition often mishears a name as a more common spelling or a similar-sounding name (\"Jon\" for \"John\", \"Shawn\" for \"Sean\"); wherever the text means one of these people, spell their name exactly this way.",
+        people.join(", ")
+    )
+}
+
 /// Meeting cleanup's reasoning effort, with [`Llm::careful`]'s model.
 pub const CLEANUP_EFFORT: &str = "medium";
 
@@ -184,13 +198,14 @@ pub async fn clean(
     paragraphs: &[Paragraph],
     label: &(dyn Fn(&Paragraph) -> String + Sync),
     vocabulary: &[String],
+    people: &[String],
     soundalikes: &[crate::settings::Soundalike],
     cleaned: &mut Cleaned,
     mut progress: impl FnMut(usize, usize),
 ) -> Option<String> {
     let careful = llm.careful();
     let llm = careful.as_ref().unwrap_or(llm);
-    let instructions = with_vocabulary(CLEANUP_INSTRUCTIONS, vocabulary, soundalikes);
+    let instructions = with_vocabulary(CLEANUP_INSTRUCTIONS, vocabulary, people, soundalikes);
     let schema = cleanup_schema();
     let todo: Vec<usize> = (0..paragraphs.len())
         .filter(|&i| !cleaned.texts.contains_key(&paragraph_key(&paragraphs[i])))

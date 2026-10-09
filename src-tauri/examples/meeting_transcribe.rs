@@ -123,6 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &speaker,
                 &[],
                 &[],
+                &[],
                 &mut cleaned,
                 |_, _| {},
             )

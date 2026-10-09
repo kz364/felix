@@ -197,6 +197,7 @@ fn spawn_cleanup(app: &AppHandle, dir: &Path, mode: MeetingMode, stop: Arc<Atomi
                     &paragraphs,
                     &label,
                     &settings.custom_words,
+                    &super::jobs::call_names(&dir),
                     &settings.soundalikes,
                     &mut cleaned,
                     |_, _| {},

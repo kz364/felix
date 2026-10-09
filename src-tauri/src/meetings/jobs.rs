@@ -64,6 +64,43 @@ fn invite_words(dir: &std::path::Path) -> Vec<String> {
     words
 }
 
+/// Everyone the call app and the invite name, spelled their way: the
+/// call's participant list and talking tiles, then the invite (not e-mail
+/// handles). The transcript writes names as they sound, so the cleanup and
+/// the summary are told these.
+pub(super) fn call_names(dir: &std::path::Path) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for l in super::extension::load(dir) {
+        if let super::extension::Message::Participants { names, .. }
+        | super::extension::Message::Speaking { names, .. } = l.message
+        {
+            found.extend(names);
+        }
+    }
+    found.extend(super::active_speaker::load(dir).into_iter().map(|s| s.name));
+    if let Some(invite) = super::calendar::load(dir) {
+        found.extend(
+            invite
+                .attendees
+                .iter()
+                .filter(|a| !invite.handles.contains(a))
+                .cloned(),
+        );
+    }
+    distinct_names(found)
+}
+
+fn distinct_names(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if super::extension::is_name(&name) && !out.iter().any(|o| o.eq_ignore_ascii_case(&name)) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// The transcript as the summary reads it and Notion shows it: one
 /// `[m:ss] Who: text` per paragraph.
 pub(super) fn transcript_lines(info: &MeetingInfo, paragraphs: &[Paragraph]) -> Vec<String> {
@@ -719,6 +756,7 @@ impl MeetingManager {
         // Tidying the text and looking for clues to who's who are separate
         // requests to the model: both at once. The clues are found once per
         // transcript; then the names are worked out again with them.
+        let people = call_names(&dir);
         let cleanup = async {
             if !settings.meeting_cleanup {
                 return Ok(());
@@ -741,6 +779,7 @@ impl MeetingManager {
                 &raw,
                 &label,
                 &settings.custom_words,
+                &people,
                 &settings.soundalikes,
                 &mut cleaned,
                 |done, total| self.progress_to(id, Stage::CleaningUp, done, total),
@@ -767,6 +806,7 @@ impl MeetingManager {
         let about = about_meeting(
             info,
             &paragraphs_of(&dir, &transcript),
+            &people,
             self.user_name().as_deref(),
         );
         let context = summary::SummaryContext {
@@ -920,7 +960,12 @@ impl MeetingManager {
 
 /// What the summariser (and the in-meeting questions) are told about the
 /// meeting itself: when, who took part, and how to read "we".
-pub fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph], me: Option<&str>) -> String {
+pub fn about_meeting(
+    info: &MeetingInfo,
+    paragraphs: &[Paragraph],
+    people: &[String],
+    me: Option<&str>,
+) -> String {
     let has_speakers = paragraphs.iter().any(|p| p.speaker.is_some());
     let who = match info.mode {
         super::MeetingMode::Call if has_speakers => {
@@ -946,6 +991,11 @@ pub fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph], me: Option<&s
     } else {
         format!("\nParticipants: {}", participants.join(", "))
     };
+    let spelled = if people.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", summary::people_line(people))
+    };
     let we = match info.mode {
         super::MeetingMode::Call => {
             "\n\"We\" means the user's side (Me and anyone in the room with them), not the whole call. An action item is the user's only if they committed to it themselves; otherwise it belongs to whoever took it on."
@@ -958,7 +1008,7 @@ pub fn about_meeting(info: &MeetingInfo, paragraphs: &[Paragraph], me: Option<&s
     let me = me
         .map(|n| format!("\nThe user (\"Me\") is {n}; spell their name that way."))
         .unwrap_or_default();
-    format!("{}\n{who}{me}{title}{block}{we}", meta_line(info))
+    format!("{}\n{who}{me}{title}{block}{spelled}{we}", meta_line(info))
 }
 
 /// Transcribe a chunk; one the model runs away on is split at its quietest
@@ -1029,6 +1079,24 @@ fn quietest_split(audio: &[f32]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_names_are_kept_once_as_spelled_without_tile_labels() {
+        let names = distinct_names(
+            [
+                "Sam  Rivera",
+                "sam rivera",
+                "Teri",
+                "presenting",
+                "Ara Lee (Host)",
+                "Teri",
+            ]
+            .map(String::from),
+        );
+        assert_eq!(names, ["Sam Rivera", "Teri"]);
+        let line = summary::people_line(&names);
+        assert!(line.contains("Sam Rivera, Teri."), "{line}");
+    }
 
     #[test]
     fn runaway_chunks_split_in_a_pause() {

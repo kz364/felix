@@ -62,7 +62,7 @@ fn main() {
                 }
             })
             .collect();
-        let about = about_meeting(&info, &paragraphs, me.as_deref());
+        let about = about_meeting(&info, &paragraphs, &[], me.as_deref());
         let notes = std::fs::read_to_string(dir.join("notes.md")).unwrap_or_default();
         let notes = if notes.trim().is_empty() {
             "(The user didn't type any notes.)".to_string()

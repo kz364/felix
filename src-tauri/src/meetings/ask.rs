@@ -144,7 +144,12 @@ pub async fn ask_live(app: AppHandle, question: LiveQuestion) -> Result<String, 
         return Ok(String::new());
     }
     let llm = llm(&app)?;
-    let about = about_meeting(&info, &paragraphs, user_name(&app).as_deref());
+    let about = about_meeting(
+        &info,
+        &paragraphs,
+        &super::jobs::call_names(&dir),
+        user_name(&app).as_deref(),
+    );
     let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
     let (task, transcript) = match question {
         LiveQuestion::Missed => (
@@ -188,7 +193,7 @@ fn meeting_context(
     }
     let summary: Option<Summary> = summary::load_json(dir, summary::SUMMARY_FILE);
     let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
-    let about = about_meeting(info, &paragraphs, me);
+    let about = about_meeting(info, &paragraphs, &super::jobs::call_names(dir), me);
     let context = format!(
         "# Meeting\n{about}\n\n# Meeting notes (written from the transcript)\n{}\n# My notes\n{notes}\n\n# Transcript\n{}",
         summary_text(summary.as_ref()),
