@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  FileDown,
   FolderOpen,
   Loader2,
   MessageCircleQuestion,
@@ -1040,6 +1042,7 @@ const SummarySection: React.FC<{
 }> = ({ meeting, progress, player }) => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
+  const titleOf = useMeetingTitle();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [notionBusy, setNotionBusy] = useState(false);
   const [slackBusy, setSlackBusy] = useState(false);
@@ -1068,6 +1071,22 @@ const SummarySection: React.FC<{
     }
     await navigator.clipboard.writeText(result.data);
     toast.success(t("meetings.summary.copied"));
+  };
+
+  const exportMarkdown = async () => {
+    // The id starts with the local date ("2026-10-08_14-00-24").
+    const name = `${meeting.id.slice(0, 10)} ${titleOf(meeting)}`.replace(
+      /[/\\:*?"<>|]/g,
+      "-",
+    );
+    const path = await saveDialog({
+      defaultPath: `${name}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!path) return;
+    const result = await commands.exportMeetingMarkdown(meeting.id, path);
+    if (result.status === "error") toast.error(result.error);
+    else toast.success(t("meetings.summary.exported"));
   };
 
   const notionSet =
@@ -1174,6 +1193,12 @@ const SummarySection: React.FC<{
           <button onClick={copyMarkdown} className={linkButton}>
             <Copy className="w-3 h-3" />
             {t("meetings.summary.copyMarkdown")}
+          </button>
+        )}
+        {(summary || transcribed) && (
+          <button onClick={exportMarkdown} className={linkButton}>
+            <FileDown className="w-3 h-3" />
+            {t("meetings.summary.exportMarkdown")}
           </button>
         )}
         {summary && transcribed && !working && (

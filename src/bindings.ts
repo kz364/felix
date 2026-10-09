@@ -958,6 +958,17 @@ async meetingMarkdown(id: string) : Promise<Result<string, string>> {
 }
 },
 /**
+ * Save [`meeting_markdown`] to a file the user picked.
+ */
+async exportMeetingMarkdown(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_meeting_markdown", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Name a voice in an in-person meeting ("Speaker 2" → "Sam").
  */
 async renameMeetingSpeaker(id: string, speaker: number, name: string) : Promise<Result<null, string>> {

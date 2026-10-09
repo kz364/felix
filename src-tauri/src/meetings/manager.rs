@@ -1099,6 +1099,14 @@ pub fn meeting_markdown(app: AppHandle, id: String) -> Result<String, String> {
     ))
 }
 
+/// Save [`meeting_markdown`] to a file the user picked.
+#[tauri::command]
+#[specta::specta]
+pub fn export_meeting_markdown(app: AppHandle, id: String, path: String) -> Result<(), String> {
+    let markdown = meeting_markdown(app, id)?;
+    std::fs::write(&path, markdown).map_err(|e| format!("Couldn't save {path}: {e}"))
+}
+
 fn output_device_name() -> Option<String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     cpal::default_host()

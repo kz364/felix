@@ -257,6 +257,7 @@ const RESPONSES: Record<string, unknown> = {
   get_meeting_notes:
     "• Launch moved to Thursday\n• Sam to send the pricing sheet",
   meeting_level: 0.4,
+  upcoming_meetings: [],
   get_live_transcript: [
     {
       source: "system",

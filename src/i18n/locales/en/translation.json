@@ -1604,6 +1604,8 @@
       "regenerate": "Write again",
       "copyMarkdown": "Copy as Markdown",
       "copied": "Copied as Markdown",
+      "exportMarkdown": "Export Markdown",
+      "exported": "Saved as Markdown",
       "keyPoints": "Key points",
       "decisions": "Decisions",
       "actionItems": "Action items",
