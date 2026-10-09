@@ -933,10 +933,11 @@ pub fn get_meeting_transcript(
 /// The rough transcript made while recording (`live.json`), for the panel.
 #[tauri::command]
 #[specta::specta]
-pub fn get_live_transcript(app: AppHandle, id: String) -> Result<Vec<Paragraph>, String> {
-    Ok(transcript::paragraphs(&super::live::load(&meeting_dir(
-        &app, &id,
-    )?)))
+pub fn get_live_transcript(
+    app: AppHandle,
+    id: String,
+) -> Result<Vec<super::live::LiveParagraph>, String> {
+    Ok(super::live::named_paragraphs(&meeting_dir(&app, &id)?))
 }
 
 /// The user's own fixes to a transcript, by [`summary::paragraph_key`].

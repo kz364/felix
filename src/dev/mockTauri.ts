@@ -261,18 +261,14 @@ const RESPONSES: Record<string, unknown> = {
     {
       source: "system",
       start_ms: 12_000,
-      end_ms: 30_000,
       text: "Morning! Shall we start with the launch date?",
-      raw: null,
-      speaker: null,
+      name: "Sam Rivera",
     },
     {
       source: "mic",
       start_ms: 31_000,
-      end_ms: 52_000,
       text: "Yes, I think Thursday works better for everyone.",
-      raw: null,
-      speaker: null,
+      name: null,
     },
   ],
   list_meetings: [

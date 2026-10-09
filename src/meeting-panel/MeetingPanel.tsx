@@ -16,7 +16,7 @@ import {
   type MeetingInfo,
   type MeetingPanelState,
   type MeetingState,
-  type Paragraph,
+  type LiveParagraph,
 } from "@/bindings";
 import {
   clock,
@@ -356,7 +356,7 @@ const LiveTranscript: React.FC<{
   help: boolean;
 }> = ({ meeting, scroller, help }) => {
   const { t } = useTranslation();
-  const [paragraphs, setParagraphs] = useState<Paragraph[] | null>(null);
+  const [paragraphs, setParagraphs] = useState<LiveParagraph[] | null>(null);
   const follow = useRef(true);
 
   useEffect(() => {
@@ -393,12 +393,12 @@ const LiveTranscript: React.FC<{
     if (el && follow.current) el.scrollTop = el.scrollHeight;
   }, [paragraphs, scroller]);
 
-  const who = (p: Paragraph) =>
+  const who = (p: LiveParagraph) =>
     meeting.mode !== "call"
       ? null
       : p.source === "mic"
         ? t("meetings.speaker.me")
-        : t("meetings.speaker.them");
+        : (p.name ?? t("meetings.speaker.them"));
 
   return (
     <div className="space-y-3">

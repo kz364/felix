@@ -346,6 +346,74 @@ pub fn load(dir: &Path) -> Vec<Segment> {
     super::summary::load_json(dir, FILE).unwrap_or_default()
 }
 
+/// A paragraph of the live transcript, for the panel.
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+pub struct LiveParagraph {
+    pub source: Source,
+    pub start_ms: u64,
+    pub text: String,
+    /// Who's talking on the call's side, as the call page (the Felix
+    /// Meetings extension) or the call app marked them.
+    pub name: Option<String>,
+}
+
+/// The name marked for most of a stretch of the call's track, if one
+/// covers at least a third of it.
+fn name_of(hints: &[Option<String>], start_ms: u64, end_ms: u64) -> Option<String> {
+    let frame = transcript::FRAME_MS;
+    let from = (start_ms / frame) as usize;
+    let to = ((end_ms / frame) as usize).min(hints.len());
+    let frames = to.saturating_sub(from);
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for name in hints.get(from..to).unwrap_or_default().iter().flatten() {
+        *counts.entry(name).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by_key(|&(name, n)| (n, std::cmp::Reverse(name)))
+        .filter(|&(_, n)| frames > 0 && n * 3 >= frames)
+        .map(|(name, _)| name.to_string())
+}
+
+/// The live transcript with names on the call's side: each line of the
+/// system track gets the name marked while it was said, and paragraphs
+/// break where the name changes.
+pub fn named_paragraphs(dir: &Path) -> Vec<LiveParagraph> {
+    let mut segments = load(dir);
+    let frames = segments
+        .iter()
+        .map(|s| (s.end_ms / transcript::FRAME_MS) as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let hints = super::speakers::name_hints(dir, frames);
+    name_segments(&mut segments, &hints)
+}
+
+fn name_segments(segments: &mut [Segment], hints: &[Option<String>]) -> Vec<LiveParagraph> {
+    let mut names: Vec<String> = Vec::new();
+    for s in segments.iter_mut().filter(|s| s.source == Source::System) {
+        if let Some(name) = name_of(hints, s.start_ms, s.end_ms) {
+            let id = names.iter().position(|n| *n == name).unwrap_or_else(|| {
+                names.push(name);
+                names.len() - 1
+            });
+            // Stands in for a voice, so paragraphs split between names.
+            s.speaker = Some(id as u32);
+        }
+    }
+    transcript::paragraphs(segments)
+        .into_iter()
+        .map(|p| LiveParagraph {
+            name: (p.source == Source::System)
+                .then(|| p.speaker.and_then(|i| names.get(i as usize).cloned()))
+                .flatten(),
+            source: p.source,
+            start_ms: p.start_ms,
+            text: p.text,
+        })
+        .collect()
+}
+
 /// Samples `from..` of a WAV that's still being written (up to its last
 /// flush), at most `max`.
 fn read_from(path: &Path, from: u64, max: u64) -> Option<Vec<f32>> {
@@ -888,6 +956,46 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_calls_lines_get_the_name_marked_while_they_were_said() {
+        let seg = |source, start_ms, end_ms, text: &str| Segment {
+            source,
+            start_ms,
+            end_ms,
+            text: text.into(),
+            echo: false,
+            speaker: None,
+        };
+        let mut segments = vec![
+            seg(Source::System, 0, 3_000, "Morning all."),
+            seg(Source::System, 3_000, 6_000, "Hi Sam."),
+            seg(Source::Mic, 6_000, 8_000, "Hey."),
+            seg(Source::System, 9_000, 12_000, "Shall we start?"),
+        ];
+        let frame = transcript::FRAME_MS as usize;
+        let mut hints = vec![None; 12_000 / frame + 1];
+        for h in &mut hints[..3_000 / frame] {
+            *h = Some("Alex Kim".to_string());
+        }
+        for h in &mut hints[3_000 / frame..6_000 / frame] {
+            *h = Some("Sam Rivera".to_string());
+        }
+        let got = name_segments(&mut segments, &hints);
+        let names: Vec<(Source, Option<&str>, &str)> = got
+            .iter()
+            .map(|p| (p.source, p.name.as_deref(), p.text.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (Source::System, Some("Alex Kim"), "Morning all."),
+                (Source::System, Some("Sam Rivera"), "Hi Sam."),
+                (Source::Mic, None, "Hey."),
+                (Source::System, None, "Shall we start?"),
+            ]
+        );
+    }
 
     #[test]
     fn sign_offs_are_recognised() {

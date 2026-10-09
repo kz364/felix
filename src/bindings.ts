@@ -866,7 +866,7 @@ async meetingTrackPath(id: string, file: string) : Promise<Result<string, string
 /**
  * The rough transcript made while recording (`live.json`), for the panel.
  */
-async getLiveTranscript(id: string) : Promise<Result<Paragraph[], string>> {
+async getLiveTranscript(id: string) : Promise<Result<LiveParagraph[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_live_transcript", { id }) };
 } catch (e) {
@@ -2110,6 +2110,12 @@ streamTextEvent: "stream-text-event"
 /**
  * One part of a paragraph as transcribed, for splitting it.
  */
+export type LiveParagraph = { source: Source; start_ms: number; text: string; 
+/**
+ * Who's talking on the call's side, as the call page (the Felix
+ * Meetings extension) or the call app marked them.
+ */
+name: string | null }
 export type ParagraphPart = { start_ms: number; text: string }
 export type RememberedVoice = { id: number; 
 /**
