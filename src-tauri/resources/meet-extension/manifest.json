@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Felix Meetings",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Tells Felix who is talking on Google Meet, Zoom and Teams calls in the browser, and sends Felix the call's sound, so meeting transcripts get the right names and leave out other tabs. Talks only to Felix on this Mac.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0W0QRkuLAkkW51U7CX2JO2nVrEyok8dUMfRfR0oMrVHs7VMThu67UGadTSxghgHj1mjCZmqa5jmTdSZlxpTJFFjEyPWj2ql7Z9tiSqJYhPREOs2PouA2MHIy13wMne7qwUyulpWNvkNRW6kQ/7/grz/SE+xHrxwb0TkZL5xjIMGvyBRVUyPqkqCLSmGhxTRPR1hCx+ApLFLtv5g5So5P5wTq19nNHk9CWaQGDyETa+ktyUlk8PRnZWit+r4djvyzR8iwybTRaO+v5NQHW01iTe25bhiGl92e4X3ZtgTqbdVacmS+V13UqYmiyg4LjMp8kk2KbQLifc+dOBKclRZSCwIDAQAB",
   "permissions": [
@@ -43,7 +43,8 @@
       "js": [
         "call_audio.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "host_permissions": [

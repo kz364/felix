@@ -52,6 +52,17 @@ pub enum Message {
         #[serde(default)]
         pcm: String,
     },
+    /// What the extension's call audio found: the page's call connections,
+    /// the remote audio tracks it mixes, and its audio context's state.
+    CallAudioStatus {
+        app: String,
+        #[serde(default)]
+        connections: u32,
+        #[serde(default)]
+        tracks: u32,
+        #[serde(default)]
+        state: String,
+    },
     /// From the host itself, first on each connection: the browser that
     /// started it, so its own sound can be left out of the tap.
     Host { browser_pid: i32 },
@@ -195,7 +206,8 @@ fn app_of(m: &Message) -> &str {
         | Message::Speaking { app, .. }
         | Message::Participants { app, .. }
         | Message::Caption { app, .. }
-        | Message::CallAudio { app, .. } => app,
+        | Message::CallAudio { app, .. }
+        | Message::CallAudioStatus { app, .. } => app,
         Message::Host { .. } => "host",
     }
 }
@@ -236,6 +248,7 @@ pub fn spawn_listener(app: &AppHandle) {
             std::thread::spawn(move || {
                 let mut browser = None;
                 let mut sending = false;
+                let mut status = String::new();
                 for line in BufReader::new(stream).lines() {
                     let Ok(line) = line else { break };
                     if line.len() > MAX_MESSAGE {
@@ -261,6 +274,20 @@ pub fn spawn_listener(app: &AppHandle) {
                                     sending = false;
                                 }
                                 None => {}
+                            }
+                        }
+                        Ok(Message::CallAudioStatus {
+                            app,
+                            connections,
+                            tracks,
+                            state,
+                        }) => {
+                            let now = format!(
+                                "{connections} call connection(s), {tracks} audio track(s), audio {state}"
+                            );
+                            if now != status {
+                                log::info!("The extension on the {app} call: {now}");
+                                status = now;
                             }
                         }
                         Ok(message) => heard(&app, message),

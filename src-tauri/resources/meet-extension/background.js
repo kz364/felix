@@ -79,7 +79,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   for (const script of chrome.runtime.getManifest().content_scripts) {
     for (const tab of await chrome.tabs.query({ url: script.matches })) {
       chrome.scripting
-        .executeScript({ target: { tabId: tab.id }, files: script.js })
+        .executeScript({
+          target: { tabId: tab.id },
+          files: script.js,
+          world: script.world || "ISOLATED",
+        })
         .catch(() => {});
     }
   }
