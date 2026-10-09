@@ -578,6 +578,35 @@ impl std::ops::DerefMut for SecretMap {
     }
 }
 
+/// A secret setting (a token): kept as a plain string, shown redacted in
+/// `Debug` so it never reaches the log with the rest of the settings.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+pub struct SecretString(String);
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.0.is_empty() {
+            "\"\""
+        } else {
+            "[REDACTED]"
+        })
+    }
+}
+
+impl std::ops::Deref for SecretString {
+    type Target = String;
+    fn deref(&self) -> &String {
+        &self.0
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /* still handy for composing the initial JSON in the store ------------- */
 /// The container-level `serde(default)` (backed by the `Default` impl below)
 /// guarantees every field — including ones added in the future — falls back to
@@ -785,7 +814,7 @@ pub struct AppSettings {
     /// Notion integration secret for saving meetings to Notion. A secret,
     /// like the API keys: never logged.
     #[serde(default)]
-    pub notion_token: String,
+    pub notion_token: SecretString,
     /// The private page Felix keeps its "Felix meetings" database under
     /// (a link or an id).
     #[serde(default)]
@@ -797,11 +826,19 @@ pub struct AppSettings {
     /// Save each meeting to Notion once it's summarised.
     #[serde(default)]
     pub notion_sync: bool,
-    /// A Slack Workflow Builder webhook that posts each meeting's notes (its
-    /// `text` variable) where the user chose, e.g. a DM to their agent. A
-    /// secret: anyone with it can post there.
+    /// The bot token (`xoxb-…`) of the user's own Slack app, which posts
+    /// each meeting's summary and transcript as files. A secret: never
+    /// logged.
     #[serde(default)]
-    pub slack_webhook: String,
+    pub slack_token: SecretString,
+    /// The channel the notes go to: its id, or its name.
+    #[serde(default)]
+    pub slack_channel: String,
+    /// A Slack Workflow Builder webhook that posts each meeting's notes (its
+    /// `text` variable), used while the Slack app isn't set up. A secret:
+    /// anyone with it can post there.
+    #[serde(default)]
+    pub slack_webhook: SecretString,
     /// Send each meeting's notes to Slack once they're written.
     #[serde(default)]
     pub slack_send: bool,
@@ -1598,11 +1635,13 @@ pub fn get_default_settings() -> AppSettings {
         meeting_transcriber: Default::default(),
         meeting_model: String::new(),
         user_name: String::new(),
-        notion_token: String::new(),
+        notion_token: SecretString::default(),
         notion_parent: String::new(),
         notion_share_parent: String::new(),
         notion_sync: false,
-        slack_webhook: String::new(),
+        slack_token: SecretString::default(),
+        slack_channel: String::new(),
+        slack_webhook: SecretString::default(),
         slack_send: false,
         meeting_languages: Vec::new(),
         meeting_diarize: true,
@@ -2503,6 +2542,8 @@ mod tests {
         let debug_output = format!("{:?}", settings);
 
         assert!(!debug_output.contains("sk-proj-secret-key-12345"));
+        settings.slack_token = "xoxb-secret-token".to_string().into();
+        assert!(!format!("{:?}", settings).contains("xoxb-secret-token"));
         assert!(!debug_output.contains("sk-ant-secret-key-67890"));
         assert!(debug_output.contains("[REDACTED]"));
     }

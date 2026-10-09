@@ -1075,26 +1075,42 @@ pub fn summarize_meeting(app: AppHandle, id: String) -> Result<(), String> {
 #[specta::specta]
 pub fn meeting_markdown(app: AppHandle, id: String) -> Result<String, String> {
     let dir = meeting_dir(&app, &id)?;
-    let info = read_info(&dir).ok_or("The meeting isn't there any more")?;
-    let summary: Option<Summary> = summary::load_json(&dir, summary::SUMMARY_FILE);
-    let notes = std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default();
-    let lines: Vec<String> = pipeline::load(&dir)
-        .map(|t| paragraphs_of(&dir, &t))
-        .unwrap_or_default()
-        .iter()
-        .map(|p| {
-            let at = transcript::timestamp(p.start_ms);
-            match info.speaker_label(p) {
-                Some(who) => format!("**[{at}] {who}:** {}", p.text),
-                None => format!("**[{at}]** {}", p.text),
-            }
-        })
-        .collect();
+    markdown(&dir, true, true)
+}
+
+/// The meeting as Markdown: with its summary and notes, its transcript, or
+/// both.
+pub(super) fn markdown(dir: &Path, notes: bool, transcript: bool) -> Result<String, String> {
+    let info = read_info(dir).ok_or("The meeting isn't there any more")?;
+    let summary: Option<Summary> = notes
+        .then(|| summary::load_json(dir, summary::SUMMARY_FILE))
+        .flatten();
+    let my_notes = if notes {
+        std::fs::read_to_string(dir.join(NOTES_FILE)).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let lines: Vec<String> = if transcript {
+        pipeline::load(dir)
+            .map(|t| paragraphs_of(dir, &t))
+            .unwrap_or_default()
+            .iter()
+            .map(|p| {
+                let at = transcript::timestamp(p.start_ms);
+                match info.speaker_label(p) {
+                    Some(who) => format!("**[{at}] {who}:** {}", p.text),
+                    None => format!("**[{at}]** {}", p.text),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(summary::to_markdown(
         &info.display_title(),
         &meta_line(&info),
         summary.as_ref(),
-        &notes,
+        &my_notes,
         &lines,
     ))
 }
@@ -1705,6 +1721,9 @@ pub struct MeetingSettingsUpdate {
     pub notion_parent: Option<String>,
     pub notion_share_parent: Option<String>,
     pub slack_send: Option<bool>,
+    /// The Slack app's bot token.
+    pub slack_token: Option<String>,
+    pub slack_channel: Option<String>,
     /// The Slack workflow webhook link.
     pub slack_webhook: Option<String>,
 }
@@ -1762,7 +1781,7 @@ pub fn change_meeting_settings(
         settings.notion_sync = v;
     }
     if let Some(v) = update.notion_token {
-        settings.notion_token = v.trim().to_string();
+        settings.notion_token = v.trim().to_string().into();
     }
     if let Some(v) = update.notion_parent {
         settings.notion_parent = v.trim().to_string();
@@ -1773,8 +1792,14 @@ pub fn change_meeting_settings(
     if let Some(v) = update.slack_send {
         settings.slack_send = v;
     }
+    if let Some(v) = update.slack_token {
+        settings.slack_token = v.trim().to_string().into();
+    }
+    if let Some(v) = update.slack_channel {
+        settings.slack_channel = v.trim().to_string();
+    }
     if let Some(v) = update.slack_webhook {
-        settings.slack_webhook = v.trim().to_string();
+        settings.slack_webhook = v.trim().to_string().into();
     }
     let hide = update.hide_from_screen_share;
     if let Some(v) = hide {

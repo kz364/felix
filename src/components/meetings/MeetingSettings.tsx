@@ -8,6 +8,8 @@ import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Slider } from "../ui/Slider";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { Button } from "../ui/Button";
+import { toast } from "sonner";
 import { X } from "lucide-react";
 import {
   getLanguageLabel,
@@ -88,6 +90,8 @@ const TextSetting: React.FC<{
     | "notion_token"
     | "notion_parent"
     | "notion_share_parent"
+    | "slack_token"
+    | "slack_channel"
     | "slack_webhook";
   titleKey: string;
   descriptionKey: string;
@@ -164,10 +168,16 @@ const NotionSettings: React.FC = () => {
   );
 };
 
-/** Sending each meeting's notes to Slack, e.g. to the user's agent. */
+/** Sending each meeting's notes to Slack, e.g. to the user's agent: by
+ * the user's own Slack app (summary and transcript as files), or by a
+ * workflow webhook (the notes as text) until that's set up. */
 const SlackSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  const copyManifest = async () => {
+    await navigator.clipboard.writeText(await commands.slackAppManifest());
+    toast.success(t("meetings.settings.slack.app.copied"));
+  };
   return (
     <>
       <ToggleSwitch
@@ -178,6 +188,30 @@ const SlackSettings: React.FC = () => {
         description={t("meetings.settings.slack.send.description")}
         descriptionMode="tooltip"
         grouped
+      />
+      <SettingContainer
+        title={t("meetings.settings.slack.app.title")}
+        description={t("meetings.settings.slack.app.description")}
+        descriptionMode="inline"
+        grouped
+        layout="horizontal"
+      >
+        <Button size="sm" variant="secondary" onClick={copyManifest}>
+          {t("meetings.settings.slack.app.copy")}
+        </Button>
+      </SettingContainer>
+      <TextSetting
+        setting="slack_token"
+        titleKey="meetings.settings.slack.token.title"
+        descriptionKey="meetings.settings.slack.token.description"
+        placeholderKey="meetings.settings.slack.token.placeholder"
+        secret
+      />
+      <TextSetting
+        setting="slack_channel"
+        titleKey="meetings.settings.slack.channel.title"
+        descriptionKey="meetings.settings.slack.channel.description"
+        placeholderKey="meetings.settings.slack.channel.placeholder"
       />
       <TextSetting
         setting="slack_webhook"

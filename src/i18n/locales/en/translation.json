@@ -1481,11 +1481,27 @@
       "slack": {
         "send": {
           "label": "Send meeting notes to Slack",
-          "description": "Once a meeting's notes are written, its summary and action items are posted to Slack through your workflow, for example as a DM to your agent."
+          "description": "Once a meeting's notes are written, they're posted to Slack: with the Slack app, as a message in your channel with the summary and transcript attached as Markdown files; otherwise through your workflow link, as text."
+        },
+        "app": {
+          "title": "Slack app",
+          "description": "In Slack, go to api.slack.com/apps → Create New App → From a manifest, pick your workspace and paste this manifest. Install it, then copy the Bot User OAuth Token (xoxb-…) from OAuth & Permissions into the field below.",
+          "copy": "Copy app manifest",
+          "copied": "Manifest copied"
+        },
+        "token": {
+          "title": "Slack bot token",
+          "description": "The Felix Meetings app's Bot User OAuth Token. With it and a channel, meetings go through the app.",
+          "placeholder": "xoxb-…"
+        },
+        "channel": {
+          "title": "Slack channel",
+          "description": "Where the notes go: the channel's name or its ID. For a private channel, invite the app there first (/invite @Felix Meetings).",
+          "placeholder": "#meeting-notes"
         },
         "webhook": {
           "title": "Slack workflow link",
-          "description": "In Slack, make a Workflow Builder workflow that starts from a webhook, add a text variable named “text”, and add a step that sends a message with it to the person or channel you want. Paste the workflow's webhook link here.",
+          "description": "Used when the Slack app isn't set up. In Slack, make a Workflow Builder workflow that starts from a webhook, add a text variable named “text”, and add a step that sends a message with it to the person or channel you want. Paste the workflow's webhook link here.",
           "placeholder": "https://hooks.slack.com/…"
         }
       }

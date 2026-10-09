@@ -1101,9 +1101,9 @@ const SummarySection: React.FC<{
     if (result.status === "error") toast.error(result.error);
   };
 
-  const slackSet = (getSetting("slack_webhook") ?? "").startsWith(
-    "https://hooks.slack.com/",
-  );
+  const slackSet =
+    (!!getSetting("slack_token") && !!getSetting("slack_channel")) ||
+    (getSetting("slack_webhook") ?? "").startsWith("https://hooks.slack.com/");
   const toSlack = async () => {
     setSlackBusy(true);
     const result = await commands.sendMeetingToSlack(meeting.id);

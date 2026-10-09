@@ -1061,6 +1061,12 @@ async sendMeetingToSlack(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * The manifest to make the Slack app from.
+ */
+async slackAppManifest() : Promise<string> {
+    return await TAURI_INVOKE("slack_app_manifest");
+},
+/**
  * Move a meeting to the team's Notion page, so the people who were in it
  * can see it. Only meetings with an invite of colleagues only.
  */
@@ -2445,7 +2451,7 @@ user_name?: string;
  * Notion integration secret for saving meetings to Notion. A secret,
  * like the API keys: never logged.
  */
-notion_token?: string; 
+notion_token?: SecretString; 
 /**
  * The private page Felix keeps its "Felix meetings" database under
  * (a link or an id).
@@ -2461,11 +2467,21 @@ notion_share_parent?: string;
  */
 notion_sync?: boolean; 
 /**
- * A Slack Workflow Builder webhook that posts each meeting's notes (its
- * `text` variable) where the user chose, e.g. a DM to their agent. A
- * secret: anyone with it can post there.
+ * The bot token (`xoxb-…`) of the user's own Slack app, which posts
+ * each meeting's summary and transcript as files. A secret: never
+ * logged.
  */
-slack_webhook?: string; 
+slack_token?: SecretString; 
+/**
+ * The channel the notes go to: its id, or its name.
+ */
+slack_channel?: string; 
+/**
+ * A Slack Workflow Builder webhook that posts each meeting's notes (its
+ * `text` variable), used while the Slack app isn't set up. A secret:
+ * anyone with it can post there.
+ */
+slack_webhook?: SecretString; 
 /**
  * Send each meeting's notes to Slack once they're written.
  */
@@ -3049,6 +3065,10 @@ model: string | null; user_name: string | null; diarize: boolean | null; detect_
  */
 notion_token: string | null; notion_parent: string | null; notion_share_parent: string | null; slack_send: boolean | null; 
 /**
+ * The Slack app's bot token.
+ */
+slack_token: string | null; slack_channel: string | null; 
+/**
  * The Slack workflow webhook link.
  */
 slack_webhook: string | null; languages: string[] | null }
@@ -3254,6 +3274,11 @@ export type Rescue = { threshold: number; kept_seconds: number; transcript: stri
  */
 used: boolean }
 export type SecretMap = Partial<{ [key in string]: string }>
+/**
+ * A secret setting (a token): kept as a plain string, shown redacted in
+ * `Debug` so it never reaches the log with the rest of the settings.
+ */
+export type SecretString = string
 export type SecureInputStatus = { 
 /**
  * Secure input is currently enabled (live check)

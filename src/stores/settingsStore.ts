@@ -108,6 +108,8 @@ const meetingUpdate = (patch: Partial<MeetingSettingsUpdate>) =>
     notion_parent: null,
     notion_share_parent: null,
     slack_send: null,
+    slack_token: null,
+    slack_channel: null,
     slack_webhook: null,
     languages: null,
     ...patch,
@@ -321,6 +323,8 @@ const settingUpdaters: {
   notion_share_parent: (value) =>
     meetingUpdate({ notion_share_parent: value ?? null }),
   slack_send: (value) => meetingUpdate({ slack_send: value ?? null }),
+  slack_token: (value) => meetingUpdate({ slack_token: value ?? null }),
+  slack_channel: (value) => meetingUpdate({ slack_channel: value ?? null }),
   slack_webhook: (value) => meetingUpdate({ slack_webhook: value ?? null }),
 };
 
