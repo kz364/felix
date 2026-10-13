@@ -21,9 +21,6 @@ const WINDOW: usize = 16_384;
 const HOP: usize = RATE;
 /// The mic lags what the Mac plays by at most this much.
 const MAX_LAG_MS: usize = 500;
-/// The call audio the browser extension sends reaches the system track
-/// after the speakers have played it, so the mic can be ahead by this much.
-const MAX_LEAD_MS: usize = 1_000;
 /// A window counts only if both tracks have sound in it (RMS).
 const ENERGY_FLOOR: f32 = 0.002;
 /// GCC-PHAT peak above which a window is taken to contain echo. Unrelated
@@ -40,8 +37,7 @@ const FRAME_MS: usize = super::transcript::FRAME_MS as usize;
 /// What the correlation found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EchoReport {
-    /// The speaker-to-mic delay, when there's echo; negative when the
-    /// system track has the sound after the mic (extension call audio).
+    /// The speaker-to-mic delay, when there's echo.
     pub lag_ms: Option<f32>,
     /// Per pipeline frame: inside a window where echo was confirmed.
     pub frames: Vec<bool>,
@@ -83,15 +79,13 @@ fn rms(x: &[f32]) -> f32 {
 }
 
 /// GCC-PHAT between two equal-length windows: the peak's lag (samples the
-/// mic is behind; negative when it's ahead) and its height, over lags
-/// -`max_lead`..=`max_lag`.
+/// mic is behind) and its height, over lags 0..=`max_lag`.
 fn gcc_phat(
     planner: &mut FftPlanner<f32>,
     mic: &[f32],
     system: &[f32],
     max_lag: usize,
-    max_lead: usize,
-) -> (i64, f32) {
+) -> (usize, f32) {
     let n = mic.len() * 2;
     let fft = planner.plan_fft_forward(n);
     let ifft = planner.plan_fft_inverse(n);
@@ -118,12 +112,10 @@ fn gcc_phat(
         })
         .collect();
     ifft.process(&mut r);
-    // Positive lags: the mic is behind the system audio. Negative ones wrap
-    // around to the end.
+    // Positive lags: the mic is behind the system audio.
     let mut best = (0, f32::MIN);
-    let lags = (0..=max_lag as i64).chain(-(max_lead.min(n / 2 - 1) as i64)..0);
-    for lag in lags {
-        let score = r[lag.rem_euclid(n as i64) as usize].re / n as f32;
+    for (lag, v) in r.iter().enumerate().take(max_lag + 1) {
+        let score = v.re / n as f32;
         if score > best.1 {
             best = (lag, score);
         }
@@ -139,7 +131,6 @@ pub fn analyze_samples(mic: &[f32], system: &[f32], frames: usize) -> EchoReport
         return EchoReport::none(frames);
     }
     let max_lag = MAX_LAG_MS * RATE / 1000;
-    let max_lead = MAX_LEAD_MS * RATE / 1000;
     let mut planner = FftPlanner::new();
     // (window start, lag in samples, score) for windows with sound on both.
     let mut windows = Vec::new();
@@ -147,7 +138,7 @@ pub fn analyze_samples(mic: &[f32], system: &[f32], frames: usize) -> EchoReport
     while start + WINDOW <= len {
         let (m, s) = (&mic[start..start + WINDOW], &system[start..start + WINDOW]);
         if rms(m) > ENERGY_FLOOR && rms(s) > ENERGY_FLOOR {
-            let (lag, score) = gcc_phat(&mut planner, m, s, max_lag, max_lead);
+            let (lag, score) = gcc_phat(&mut planner, m, s, max_lag);
             windows.push((start, lag, score));
         }
         start += HOP;
@@ -272,24 +263,6 @@ mod tests {
         assert!((got - 120.0).abs() < 2.0, "{got}");
         assert!(report.share > 0.8);
         assert!(report.frames.iter().filter(|&&f| f).count() > report.frames.len() / 2);
-    }
-
-    #[test]
-    fn call_audio_that_arrives_after_the_mic_heard_it_is_echo_too() {
-        // The extension's copy of the call lands 300 ms after the speakers
-        // played it.
-        let call = voice(1, 30);
-        let late = 300 * RATE / 1000;
-        let noise = voice(9, 30);
-        let mic: Vec<f32> = (0..call.len())
-            .map(|i| 0.1 * call[i] + 0.02 * noise[i])
-            .collect();
-        let system: Vec<f32> = (0..call.len())
-            .map(|i| if i >= late { call[i - late] } else { 0.0 })
-            .collect();
-        let report = analyze_samples(&mic, &system, frames(mic.len()));
-        let got = report.lag_ms.expect("echo found");
-        assert!((got + 300.0).abs() < 2.0, "{got}");
     }
 
     #[test]

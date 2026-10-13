@@ -1,7 +1,6 @@
 // Watches a call page (Google Meet, and the Zoom and Teams web clients) for
-// who's talking and sends it to Felix (through the background worker). Reads names only: no video, and caption
-// text only when the user turns captions on in the extension's popup. The
-// call's sound comes from call_audio.js, which this passes on.
+// who's talking and sends it to Felix (through the background worker). Reads names only: no audio, no video, and caption
+// text only when the user turns captions on in the extension's popup.
 //
 // Talking is read from the page itself. Each participant's tile animates
 // while they talk (Meet's speaking ring and level bars), which shows up as
@@ -33,13 +32,6 @@
   }
 
   send({ type: "hello", version: chrome.runtime.getManifest().version });
-
-  // ---- The call's sound, from call_audio.js in the page's own world ----
-  window.addEventListener("message", (e) => {
-    if (e.source !== window || !e.data || e.data.__felixCallAudio !== true) return;
-    const msg = e.data.msg;
-    if (msg && (msg.type === "call_audio" || msg.type === "call_audio_status")) send(msg);
-  });
 
   // ---- Speaking, from changes inside tiles ----
   const changes = new Map(); // tile element -> count this tick

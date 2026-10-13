@@ -1,10 +1,8 @@
 //! System audio (the other people on a call) through a Core Audio process
 //! tap, macOS 14.2+, mixed down to mono. What it takes is a [`Scope`]: only
 //! the call app's sound while a desktop call app (Zoom, Teams…) holds the
-//! mic; otherwise every app's but Felix's own (feedback sounds) and, while
-//! the Felix Meetings extension sends the call tab's own audio (see
-//! [`super::call_audio`]), the browser's. A private aggregate device wraps it so an
-//! IOProc can read it. Needs the "System Audio Recording" permission
+//! mic; otherwise every app's but Felix's own (feedback sounds). A private
+//! aggregate device wraps it so an IOProc can read it. Needs the "System Audio Recording" permission
 //! (`NSAudioCaptureUsageDescription`), not Screen Recording. Without it the
 //! tap delivers silence.
 
@@ -206,13 +204,13 @@ fn of_app(bundle: &str, app: &str) -> bool {
 
 /// The scope for these processes. A desktop call app's own processes, and
 /// any helper it's responsible for, when it has any; else everything but
-/// Felix's (its web view's helper too) and the extension's browser.
-fn choose(processes: &[Process], own: i32, browser: Option<i32>, call_app: Option<&str>) -> Scope {
+/// Felix's (its web view's helper too).
+fn choose(processes: &[Process], own: i32, call_app: Option<&str>) -> Scope {
     let sorted = |mut ids: Vec<AudioObjectID>| {
         ids.sort_unstable();
         ids
     };
-    if let (None, Some(app)) = (browser, call_app) {
+    if let Some(app) = call_app {
         let owners: Vec<i32> = processes
             .iter()
             .filter(|p| of_app(&p.bundle, app))
@@ -230,7 +228,7 @@ fn choose(processes: &[Process], own: i32, browser: Option<i32>, call_app: Optio
     Scope::AllBut(sorted(
         processes
             .iter()
-            .filter(|p| p.owner == own || Some(p.owner) == browser)
+            .filter(|p| p.owner == own)
             .map(|p| p.id)
             .collect(),
     ))
@@ -252,8 +250,7 @@ pub fn scope(call_app: Option<&str>) -> Scope {
         })
         .collect();
     let own = std::process::id() as i32;
-    let browser = super::call_audio::live_browser().map(owner);
-    choose(&processes, own, browser, call_app)
+    choose(&processes, own, call_app)
 }
 
 /// Change what a running tap records.
@@ -562,38 +559,29 @@ mod tests {
             p(7, 40, "us.zoom.xos"),
         ];
         assert_eq!(
-            choose(&procs, 10, None, Some("us.zoom.xos")),
+            choose(&procs, 10, Some("us.zoom.xos")),
             Scope::Only(vec![7])
         );
         assert_eq!(
-            choose(&procs, 10, None, Some("com.tinyspeck.slackmacgap")),
+            choose(&procs, 10, Some("com.tinyspeck.slackmacgap")),
             Scope::Only(vec![4, 5, 6])
         );
         // Not a prefix of another app's id.
         assert!(!of_app("us.zoom.xosx", "us.zoom.xos"));
         // A call app with no sound open yet: everything but Felix.
         assert_eq!(
-            choose(&procs, 10, None, Some("com.microsoft.teams2")),
+            choose(&procs, 10, Some("com.microsoft.teams2")),
             Scope::AllBut(vec![1, 2])
         );
     }
 
     #[test]
-    fn felix_always_and_the_call_browser_while_it_sends_stay_out() {
+    fn felix_always_stays_out() {
         let procs = [
             p(1, 10, "com.pais.handy"),
             p(3, 20, "com.google.Chrome.helper"),
             p(7, 40, "us.zoom.xos"),
         ];
-        assert_eq!(choose(&procs, 10, None, None), Scope::AllBut(vec![1]));
-        assert_eq!(
-            choose(&procs, 10, Some(20), None),
-            Scope::AllBut(vec![1, 3])
-        );
-        // The extension sending a browser call wins over a desktop app.
-        assert_eq!(
-            choose(&procs, 10, Some(20), Some("us.zoom.xos")),
-            Scope::AllBut(vec![1, 3])
-        );
+        assert_eq!(choose(&procs, 10, None), Scope::AllBut(vec![1]));
     }
 }
