@@ -833,6 +833,7 @@ pub fn run(cli_args: CliArgs) {
             meetings::manager::summarize_meeting,
             meetings::manager::meeting_markdown,
             meetings::manager::export_meeting_markdown,
+            meetings::manager::import_meeting_audio,
             meetings::manager::rename_meeting_speaker,
             meetings::manager::set_paragraph_speaker,
             meetings::manager::paragraph_parts,

@@ -9,7 +9,10 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import {
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -19,6 +22,7 @@ import {
   Clock,
   Copy,
   FileDown,
+  FileAudio,
   FolderOpen,
   Loader2,
   MessageCircleQuestion,
@@ -2014,10 +2018,32 @@ export const MeetingsPage: React.FC = () => {
   });
   const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const refreshList = useCallback(async () => {
     setMeetings(await commands.listMeetings());
   }, []);
+
+  // Any file: it's read by what's in it, and WhatsApp can save a voice
+  // recording as a .jpeg.
+  const importAudio = async () => {
+    const picked = await openDialog({
+      multiple: true,
+      title: t("meetings.import.pick"),
+    });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    if (paths.length === 0) return;
+    setImporting(true);
+    const result = await commands.importMeetingAudio(paths);
+    setImporting(false);
+    if (result.status === "error") {
+      toast.error(result.error);
+      return;
+    }
+    await refreshList();
+    toast.success(t("meetings.import.done"));
+    setOpenId(result.data.id);
+  };
 
   const refresh = useCallback(async () => {
     const [state, list] = await Promise.all([
@@ -2080,13 +2106,28 @@ export const MeetingsPage: React.FC = () => {
         title={t("meetings.heading")}
         description={t("meetings.subheading")}
         actions={
-          <button
-            onClick={() => openSection("meetingSettings")}
-            className="inline-flex items-center gap-1.5 rounded-full border border-stone/25 px-3 py-1 text-sm text-text/70 hover:text-text hover:border-stone/40 cursor-pointer"
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-            {t("meetings.settings.open")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={importAudio}
+              disabled={importing}
+              title={t("meetings.import.hint")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-stone/25 px-3 py-1 text-sm text-text/70 hover:text-text hover:border-stone/40 cursor-pointer disabled:opacity-50"
+            >
+              {importing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileAudio className="w-3.5 h-3.5" />
+              )}
+              {t("meetings.import.button")}
+            </button>
+            <button
+              onClick={() => openSection("meetingSettings")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-stone/25 px-3 py-1 text-sm text-text/70 hover:text-text hover:border-stone/40 cursor-pointer"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              {t("meetings.settings.open")}
+            </button>
+          </div>
         }
       />
       <p className="rounded-xl bg-highlight/15 px-4 py-3 text-sm leading-snug text-text/80">

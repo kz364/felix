@@ -1309,6 +1309,12 @@
     "stop": "Stop",
     "recordingFor": "Recording {{time}}",
     "startedAt": "Started {{time}}",
+    "import": {
+      "button": "Import audio…",
+      "hint": "Make a meeting from recordings made elsewhere, like a voice memo. Several files become one meeting, in the order they were recorded.",
+      "pick": "Choose the recordings",
+      "done": "Imported. Transcribing it now."
+    },
     "upcoming": {
       "title": "Coming up",
       "now": "Now",

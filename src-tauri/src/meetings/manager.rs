@@ -257,7 +257,7 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn write_info(dir: &Path, info: &MeetingInfo) {
+pub(super) fn write_info(dir: &Path, info: &MeetingInfo) {
     let path = dir.join(META_FILE);
     match serde_json::to_vec_pretty(info) {
         Ok(json) => {
@@ -1068,6 +1068,24 @@ pub fn summarize_meeting(app: AppHandle, id: String) -> Result<(), String> {
     }
     app.state::<Arc<MeetingManager>>().queue(Job::Summarize(id));
     Ok(())
+}
+
+/// Make a meeting from audio files recorded elsewhere, and transcribe it.
+#[tauri::command]
+#[specta::specta]
+pub async fn import_meeting_audio(
+    app: AppHandle,
+    paths: Vec<String>,
+) -> Result<MeetingInfo, String> {
+    let manager = app.state::<Arc<MeetingManager>>().inner().clone();
+    let dir = manager.meetings_dir()?;
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let info = tauri::async_runtime::spawn_blocking(move || super::import::import(&dir, &paths))
+        .await
+        .map_err(|e| e.to_string())??;
+    manager.changed();
+    manager.queue(Job::Transcribe(info.id.clone()));
+    Ok(info)
 }
 
 /// The whole meeting as Markdown: summary, notes and transcript.

@@ -969,6 +969,17 @@ async exportMeetingMarkdown(id: string, path: string) : Promise<Result<null, str
 }
 },
 /**
+ * Make a meeting from audio files recorded elsewhere, and transcribe it.
+ */
+async importMeetingAudio(paths: string[]) : Promise<Result<MeetingInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_meeting_audio", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Name a voice in an in-person meeting ("Speaker 2" → "Sam").
  */
 async renameMeetingSpeaker(id: string, speaker: number, name: string) : Promise<Result<null, string>> {
