@@ -3,8 +3,9 @@
 //! ending) shows up as a call app taking (or letting go of) the mic, with no
 //! permissions needed.
 
-/// A call app, found by bundle id (browsers by prefix, since their audio
-/// runs in helper processes such as `com.google.Chrome.helper`).
+/// A call app, found by bundle id or a helper's under it: browsers, and
+/// Electron apps such as Slack (huddles), take the mic in helper processes
+/// like `com.google.Chrome.helper` or `com.tinyspeck.slackmacgap.helper`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallApp {
     pub bundle_id: &'static str,
@@ -56,7 +57,9 @@ pub fn call_app(bundle_id: &str) -> Option<CallApp> {
         .iter()
         .find(|a| {
             bundle_id == a.bundle_id
-                || (a.browser && bundle_id.starts_with(&format!("{}.", a.bundle_id)))
+                || bundle_id
+                    .strip_prefix(a.bundle_id)
+                    .is_some_and(|rest| rest.starts_with('.'))
         })
         .copied()
 }
@@ -116,6 +119,10 @@ mod tests {
         assert!(chrome.browser);
         assert_eq!(chrome.bundle_id, "com.google.Chrome");
         assert!(call_app("com.google.Chromeish").is_none());
+        // A Slack huddle holds the mic in Slack's helper.
+        let slack = call_app("com.tinyspeck.slackmacgap.helper").unwrap();
+        assert_eq!((slack.name, slack.browser), ("Slack", false));
+        assert_eq!(slack.bundle_id, "com.tinyspeck.slackmacgap");
         assert!(call_app("com.pais.handy").is_none());
     }
 
