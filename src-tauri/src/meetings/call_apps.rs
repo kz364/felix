@@ -51,6 +51,23 @@ pub const CALL_APPS: &[CallApp] = &[
     browser("com.brave.Browser", "Brave"),
 ];
 
+impl CallApp {
+    /// What a call in it is called, for a title: "Slack huddle", "Zoom
+    /// call". Not for a browser, which could be any call.
+    pub fn call_title(&self) -> Option<String> {
+        (!self.browser).then(|| match self.name {
+            "Slack" => "Slack huddle".to_string(),
+            name => format!("{name} call"),
+        })
+    }
+
+    /// Calls in it aren't calendar meetings (a huddle, a FaceTime), so an
+    /// event at the same time is something else.
+    pub fn unscheduled(&self) -> bool {
+        matches!(self.name, "Slack" | "FaceTime" | "WhatsApp" | "Discord")
+    }
+}
+
 /// The call app a process belongs to, if it is one.
 pub fn call_app(bundle_id: &str) -> Option<CallApp> {
     CALL_APPS

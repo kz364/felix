@@ -95,6 +95,9 @@ pub fn save_for_event(dir: &Path, event_id: &str) {
 /// [`super::manager::MeetingInfo::event_id`]) gets that event's invite, not
 /// whichever event overlaps most.
 pub fn for_meeting(dir: &Path, start_ms: i64, end_ms: i64) -> Option<Invite> {
+    if never_scheduled(dir) {
+        return None;
+    }
     let saved = load(dir);
     if let Some(i) = saved.as_ref().filter(|i| i.version >= VERSION) {
         return Some(i.clone());
@@ -109,11 +112,23 @@ pub fn for_meeting(dir: &Path, start_ms: i64, end_ms: i64) -> Option<Invite> {
     Some(invite)
 }
 
+/// A call in an app that's never a calendar meeting (a Slack huddle): an
+/// event at the same time is something else, so its invite isn't used.
+fn never_scheduled(dir: &Path) -> bool {
+    super::manager::read_info(dir)
+        .and_then(|i| i.call_app)
+        .and_then(|b| super::call_apps::call_app(&b))
+        .is_some_and(|a| a.unscheduled())
+}
+
 /// The words of the invited people's names, to spell right in this
 /// meeting's transcript only. Not e-mail handles ("Peterlai"): nobody says
 /// those. Read from the saved invite, or else the calendar without saving
 /// (while recording, the end is still a guess).
 pub fn name_words(dir: &Path, start_ms: i64, end_ms: i64) -> Vec<String> {
+    if never_scheduled(dir) {
+        return Vec::new();
+    }
     let Some(invite) = load(dir).or_else(|| imp::invite_between(start_ms, end_ms)) else {
         return Vec::new();
     };

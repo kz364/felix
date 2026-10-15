@@ -101,6 +101,35 @@ fn distinct_names(names: impl IntoIterator<Item = String>) -> Vec<String> {
     out
 }
 
+/// The people heard who have a name: not the user, nor a voice only
+/// numbered ("Them 2", "Speaker 1").
+fn named_people(labels: &[String], me: Option<&str>) -> Vec<String> {
+    let numbered = |l: &str| {
+        ["Them ", "Speaker "]
+            .iter()
+            .any(|p| l.strip_prefix(p).is_some_and(|n| n.parse::<u32>().is_ok()))
+    };
+    labels
+        .iter()
+        .filter(|l| !matches!(l.as_str(), "Me" | "Them" | "Speaker") && !numbered(l))
+        .filter(|l| me.is_none_or(|me| !l.eq_ignore_ascii_case(me)))
+        .cloned()
+        .collect()
+}
+
+/// "Slack huddle with Sam, Teri and Era"; past three, "and N others".
+fn titled_with(base: &str, people: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let names: Vec<&str> = people.iter().map(String::as_str).collect();
+    let list = match names.len() {
+        0 => return base.to_string(),
+        1 => names[0].to_string(),
+        n if n <= SHOWN => format!("{} and {}", names[..n - 1].join(", "), names[n - 1]),
+        n => format!("{} and {} others", names[..SHOWN].join(", "), n - SHOWN),
+    };
+    format!("{base} with {list}")
+}
+
 /// The transcript as the summary reads it and Notion shows it: one
 /// `[m:ss] Who: text` per paragraph.
 pub(super) fn transcript_lines(info: &MeetingInfo, paragraphs: &[Paragraph]) -> Vec<String> {
@@ -312,6 +341,32 @@ impl MeetingManager {
         }
     }
 
+    /// A call titled after its app ("Slack huddle") gains who was on it,
+    /// as far as the voices are named.
+    fn title_with_people(&self, id: &str) {
+        let Ok(dir) = self.dir_of(id) else {
+            return;
+        };
+        let Some(transcript) = pipeline::load(&dir).filter(|t| t.complete) else {
+            return;
+        };
+        let paragraphs = paragraphs_of(&dir, &transcript);
+        let me = self.user_name();
+        self.update_info(id, |i| {
+            let Some(base) = i
+                .call_app
+                .as_deref()
+                .and_then(super::call_apps::call_app)
+                .and_then(|a| a.call_title())
+                .filter(|_| i.title_from_call)
+            else {
+                return;
+            };
+            let people = named_people(&i.participants(&paragraphs), me.as_deref());
+            i.title = Some(titled_with(&base, &people));
+        });
+    }
+
     /// The user's name, for their own voice.
     fn user_name(&self) -> Option<String> {
         crate::rules::user_name(&crate::settings::get_settings(&self.app))
@@ -333,6 +388,7 @@ impl MeetingManager {
                     i.transcript = Some(TranscriptStatus::Done);
                     i.app_speakers = names;
                 });
+                self.title_with_people(id);
                 true
             }
             Err(Stopped::Cancelled) => false,
@@ -719,11 +775,16 @@ impl MeetingManager {
                 log::info!("Meeting {id} summarised by {}", summary.model);
                 self.update_info(id, |i| {
                     i.summary = Some(JobStatus::Done);
-                    if (i.title.is_none() || i.title_is_auto) && !summary.title.is_empty() {
+                    if (i.title.is_none() || i.title_is_auto)
+                        && !i.title_from_call
+                        && !summary.title.is_empty()
+                    {
                         i.title = Some(summary.title.clone());
                         i.title_is_auto = true;
                     }
                 });
+                // The summary may have named more of the voices.
+                self.title_with_people(id);
                 super::notion::sync_in_background(&self.app, id);
                 super::slack::send_in_background(&self.app, id);
             }
@@ -1079,6 +1140,25 @@ fn quietest_split(audio: &[f32]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_huddle_is_titled_with_the_people_named_on_it() {
+        let labels: Vec<String> = ["Me", "Sam Rivera", "Them 2", "Speaker 1", "Teri", "Kaspar"]
+            .map(String::from)
+            .into();
+        let people = named_people(&labels, Some("kaspar"));
+        assert_eq!(people, ["Sam Rivera", "Teri"]);
+        assert_eq!(titled_with("Slack huddle", &[]), "Slack huddle");
+        assert_eq!(
+            titled_with("Slack huddle", &people),
+            "Slack huddle with Sam Rivera and Teri"
+        );
+        let many: Vec<String> = ["A", "B", "C", "D", "E"].map(String::from).into();
+        assert_eq!(
+            titled_with("Zoom call", &many),
+            "Zoom call with A, B, C and 2 others"
+        );
+    }
 
     #[test]
     fn call_names_are_kept_once_as_spelled_without_tile_labels() {

@@ -135,6 +135,10 @@ pub struct MeetingInfo {
     /// Why the last send to Slack failed.
     #[serde(default)]
     pub slack_error: Option<String>,
+    /// The title names the call app ("Slack huddle"), and gains who was on
+    /// the call once the voices are named.
+    #[serde(default)]
+    pub title_from_call: bool,
 }
 
 /// The name of a told-apart voice nobody named: the other side of a call
@@ -325,6 +329,57 @@ impl MeetingManager {
         };
         let _ = self.app.emit("meetings-changed", ());
         Some(info)
+    }
+
+    /// The recording is a call in `app`: note it, and title it after the
+    /// app when nothing better names it. A call in an app that's never
+    /// scheduled (a Slack huddle) isn't the calendar event it overlaps, so
+    /// that's let go: its title, and its invite's names.
+    pub(super) fn on_call_app(&self, id: &str, app: super::call_apps::CallApp) {
+        let Ok(dir) = self.dir_of(id) else {
+            return;
+        };
+        let invite = super::calendar::load(&dir);
+        let unscheduled = app.unscheduled();
+        let Some(info) = self.update_info(id, |i| {
+            i.call_app = Some(app.bundle_id.to_string());
+            let from_invite = invite
+                .as_ref()
+                .is_some_and(|e| i.title.as_ref() == Some(&e.title));
+            if unscheduled && i.event_id.take().is_some() {
+                log::info!(
+                    "Meeting {id} is a {} call, not the calendar's event",
+                    app.name
+                );
+            }
+            let replaceable = i.title.is_none()
+                || i.title_is_auto
+                || i.title_from_call
+                || (unscheduled && from_invite);
+            if let Some(title) = app.call_title().filter(|_| replaceable) {
+                i.title = Some(title);
+                i.title_is_auto = false;
+                i.title_from_call = true;
+            }
+        }) else {
+            return;
+        };
+        if unscheduled {
+            let _ = std::fs::remove_file(dir.join(super::calendar::FILE));
+        }
+        if let Some(a) = self
+            .active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+            .filter(|a| a.info.id == id)
+        {
+            a.info.call_app = info.call_app.clone();
+            a.info.event_id = info.event_id.clone();
+            a.info.title = info.title.clone();
+            a.info.title_from_call = info.title_from_call;
+        }
+        self.changed();
     }
 
     pub fn meetings_dir(&self) -> Result<PathBuf, String> {
@@ -528,6 +583,7 @@ impl MeetingManager {
             notion_shareable: false,
             slack_sent_at: None,
             slack_error: None,
+            title_from_call: false,
         };
         write_info(&dir, &info);
         if let Some(id) = &info.event_id {
@@ -1653,6 +1709,7 @@ pub fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<(), S
     let updated = manager.update_info(&id, |i| {
         i.title = title.clone();
         i.title_is_auto = false;
+        i.title_from_call = false;
     });
     if updated.is_none() {
         return Err("The meeting isn't there any more".into());
@@ -1666,6 +1723,7 @@ pub fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<(), S
         .filter(|a| a.info.id == id)
     {
         a.info.title = title;
+        a.info.title_from_call = false;
     }
     manager.changed();
     Ok(())

@@ -246,6 +246,7 @@ pub fn import(meetings_dir: &Path, paths: &[PathBuf]) -> Result<MeetingInfo, Str
         notion_shareable: false,
         slack_sent_at: None,
         slack_error: None,
+        title_from_call: false,
     };
     super::manager::write_info(&dir, &info);
     // The calendar meeting it was recorded in names it, as when recording.

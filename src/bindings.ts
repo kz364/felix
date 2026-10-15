@@ -3036,7 +3036,12 @@ slack_sent_at?: number | null;
 /**
  * Why the last send to Slack failed.
  */
-slack_error?: string | null }
+slack_error?: string | null; 
+/**
+ * The title names the call app ("Slack huddle"), and gains who was on
+ * the call once the voices are named.
+ */
+title_from_call?: boolean }
 /**
  * The model that tidies and summarises meeting transcripts.
  */

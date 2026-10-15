@@ -78,6 +78,8 @@ struct Watching {
     /// stops being true and then is true again.
     kept: Option<Ending>,
     warned_limit: bool,
+    /// The call app this recording was titled and noted as a call in.
+    noted_app: Option<&'static str>,
 }
 
 struct Watcher {
@@ -200,7 +202,15 @@ impl Watcher {
                 countdown: None,
                 kept: None,
                 warned_limit: false,
+                noted_app: None,
             });
+        }
+        if let Some(call) = held.filter(|c| !c.browser) {
+            let watching = self.watching.as_mut().expect("set above");
+            if watching.noted_app != Some(call.bundle_id) {
+                watching.noted_app = Some(call.bundle_id);
+                m.on_call_app(&id, call);
+            }
         }
 
         if self.check_limit(settings.meeting_max_hours, &id, elapsed) {
